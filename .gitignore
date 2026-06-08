@@ -1,0 +1,8 @@
+.DS_Store
+.cursor/
+__pycache__/
+*.py[cod]
+.env
+wandb/
+checkpoints/
+*.pt
