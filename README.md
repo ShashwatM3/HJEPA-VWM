@@ -16,5 +16,3 @@ All documentation lives under [`AGENT_FILES/`](AGENT_FILES/):
 **Agents:** start with [`AGENT_FILES/AGENT-BEHAVIOUR/PROTOCOL.md`](AGENT_FILES/AGENT-BEHAVIOUR/PROTOCOL.md).
 
 **Operators:** first RunPod setup → [`AGENT_FILES/SETUPS/SETUP.md`](AGENT_FILES/SETUPS/SETUP.md) Path A.
-
-Conversation history: [`CHAT.md`](CHAT.md).
