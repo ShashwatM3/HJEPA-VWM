@@ -2,7 +2,7 @@
 
 > **Agent instruction:** Execute this document top-to-bottom. When finished, the repo trains a coarse-only world model on RunPod: encoder + bottleneck + EMA target branch + coarse flow `F_c`, with SIGReg regularization. Stage 1 must pass non-collapse and baseline-beating gates before Phase 2 begins.
 >
-> **Prerequisites:** Complete **`AGENT_FILES/SETUPS/SETUP.md` Path A** (first time) or **Path B** (subsequent runs). SSv2 at `/workspace/data/ssv2/`; `ssv2_tiny` created by `make_subset.py`. Read [`AGENT_FILES/AGENT-BEHAVIOUR/PROTOCOL.md`](../AGENT-BEHAVIOUR/PROTOCOL.md), [`AGENT_FILES/AGENT-BEHAVIOUR/CODE_DESIGN.md`](../AGENT-BEHAVIOUR/CODE_DESIGN.md), [`AGENT_FILES/KNOWLEDGE/UNDERSTANDING.md`](../KNOWLEDGE/UNDERSTANDING.md) §0–§3 + §2.6, and [`AGENT_FILES/KNOWLEDGE/hierarchical_jepa_flow_architecture_brief.pdf`](../KNOWLEDGE/hierarchical_jepa_flow_architecture_brief.pdf) §1–§7, §9–§11.
+> **Prerequisites:** Complete **`AGENT_FILES/SETUPS/SETUP.md` Path A** (first time) or **Path B** (subsequent runs). SSv2 at `/workspace/data/ssv2/`; `ssv2_tiny` created by `make_subset.py`. Read [`AGENT_FILES/AGENTS.md`](../AGENTS.md), then [`AGENT_FILES/AGENT-BEHAVIOUR/PROTOCOL.md`](../AGENT-BEHAVIOUR/PROTOCOL.md), [`AGENT_FILES/AGENT-BEHAVIOUR/CODE_DESIGN.md`](../AGENT-BEHAVIOUR/CODE_DESIGN.md), [`AGENT_FILES/KNOWLEDGE/UNDERSTANDING.md`](../KNOWLEDGE/UNDERSTANDING.md) §0–§3 + §2.6, and [`AGENT_FILES/KNOWLEDGE/hierarchical_jepa_flow_architecture_brief.pdf`](../KNOWLEDGE/hierarchical_jepa_flow_architecture_brief.pdf) §1–§7, §9–§11.
 
 ---
 

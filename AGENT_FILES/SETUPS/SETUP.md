@@ -22,7 +22,7 @@ This guide mixes **three source types**. Nothing below is guesswork without a la
 |---|---|---|
 | **RunPod official docs** | SSH keys, Connect tab, `/workspace` mount, network volume attach rules, stop vs terminate | Verified against [Use SSH](https://docs.runpod.io/pods/configuration/use-ssh), [Network volumes](https://docs.runpod.io/storage/network-volumes), [Manage Pods](https://docs.runpod.io/pods/manage-pods), [Storage types](https://docs.runpod.io/pods/storage/types). Re-checked when this doc was written. |
 | **This project's specs** | Folder layout (`/workspace/data/ssv2`), `make_subset.py`, `train.py` flags, Phase 1 steps, training time **estimates** | From `AGENT_FILES/PHASES/PHASE_1.md`, `AGENT_FILES/KNOWLEDGE/UNDERSTANDING.md`, `AGENT_FILES/AGENT-BEHAVIOUR/PROTOCOL.md`, and the architecture brief — not from RunPod. |
-| **Your volume inspection (chat)** | Old paths like `something-something-v2`, symlink counts ~168k/25k, `ssv2_raw` layout | From **your** RunPod terminal output pasted in [`CHAT.md`](../../CHAT.md) — factual for your volume at that time; re-verify on the pod in step A7. |
+| **Your volume inspection** | Old paths like `something-something-v2`, symlink counts ~168k/25k, `ssv2_raw` layout | From operator notes at setup time — re-verify on the pod in step A7. |
 
 **Rules used in this doc:**
 - RunPod UI labels (Connect tab, Deploy, Network Volume) follow official docs; **always use the exact SSH command your pod shows** — example IPs/ports in this file are illustrations only.

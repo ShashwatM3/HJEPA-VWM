@@ -4,7 +4,7 @@
 >
 > This file is **reference only** — volume layout, path defaults, troubleshooting.
 >
-> **Provenance:** RunPod-specific claims cite official docs (linked below). Folder layout (`/workspace/data/ssv2`) is **this project's convention**, not RunPod's. Symlink counts are from **your** volume inspection in [`CHAT.md`](../../CHAT.md) — verify on the pod.
+> **Provenance:** RunPod-specific claims cite official docs (linked below). Folder layout (`/workspace/data/ssv2`) is **this project's convention**, not RunPod's. Symlink counts are from operator volume inspection — verify on the pod.
 
 Official RunPod docs (verified):
 - [Connect to a Pod with SSH](https://docs.runpod.io/pods/configuration/use-ssh)

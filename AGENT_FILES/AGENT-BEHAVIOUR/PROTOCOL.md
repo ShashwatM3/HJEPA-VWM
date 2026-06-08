@@ -1,16 +1,19 @@
 # PROTOCOL.md — Agent Operating Procedure
 
 > **Audience:** AI coding agents implementing the Hierarchical JEPA-Flow video world model (v0).
-> **Read this file at the start of every session before touching code.**
+> **Read [`AGENT_FILES/AGENTS.md`](../AGENTS.md) on first clone, then this file at the start of every session before touching code.**
 
 ---
 
 ## 0. Repository layout (agent docs)
 
+Entry point for new agents: **[`AGENT_FILES/AGENTS.md`](../AGENTS.md)** (project summary, filesystem map, read order).
+
 All planning and agent instruction files live under **`AGENT_FILES/`** in this repository:
 
 ```
 AGENT_FILES/
+├── AGENTS.md                    ← entry compass (read first on clone)
 ├── AGENT-BEHAVIOUR/
 │   ├── PROTOCOL.md              ← this file
 │   └── CODE_DESIGN.md
@@ -26,8 +29,6 @@ AGENT_FILES/
     └── SETUP_POD.md
 ```
 
-Conversation history: [`CHAT.md`](../../CHAT.md) (repo root).
-
 When any doc names another file, use the **full path from repo root** (e.g. `AGENT_FILES/PHASES/PHASE_1.md`).
 
 ---
@@ -36,6 +37,7 @@ When any doc names another file, use the **full path from repo root** (e.g. `AGE
 
 | Path | Role | When to read |
 |---|---|---|
+| `AGENT_FILES/AGENTS.md` | **Entry compass** — project summary, filesystem map, mandatory read order. | First clone / first session; when unsure where anything lives. |
 | `AGENT_FILES/KNOWLEDGE/hierarchical_jepa_flow_architecture_brief.pdf` | **Authoritative spec** — what we are building. Locked design from the tech lead. | When a phase doc or UNDERSTANDING.md references a brief section; when verifying a design constraint. |
 | `AGENT_FILES/KNOWLEDGE/UNDERSTANDING.md` | **Expanded comprehension reference** — shape contracts (§2), locked constants (§2.6), modules (§3), forward pass (§4), losses (§5), stop-gradient (§6), EMA (§7), training schedule (§8), diagnostics (§9). | Before writing any function that touches latents, losses, gradients, or training stages. Re-read §2, §2.6, and §6 on every session. |
 | `AGENT_FILES/AGENT-BEHAVIOUR/CODE_DESIGN.md` | **Code style and layout** — flat 5–6 file repo, naming map, docstring template, stop-gradient helper pattern, tooling (black, ruff). | Before creating or renaming any file; before writing docstrings. |
@@ -180,14 +182,15 @@ Thresholds are locked in `AGENT_FILES/KNOWLEDGE/UNDERSTANDING.md` §2.6 (Diagnos
 ## 9. How to execute a phase — session checklist
 
 ```
-[ ] 1. Read AGENT_FILES/AGENT-BEHAVIOUR/PROTOCOL.md (this file).
-[ ] 2. Read AGENT_FILES/AGENT-BEHAVIOUR/CODE_DESIGN.md.
-[ ] 3. Skim AGENT_FILES/KNOWLEDGE/hierarchical_jepa_flow_architecture_brief.pdf sections cited by the phase doc.
-[ ] 4. Read AGENT_FILES/KNOWLEDGE/UNDERSTANDING.md §0–§3 and §2.6 in full.
-[ ] 5. Open AGENT_FILES/PHASES/PHASE_<N>.md; read the Workflow section; execute steps in order.
-[ ] 6. After each major deliverable (file or milestone), run the phase doc's verification command.
-[ ] 7. At phase end, run the Acceptance Gate section verbatim; report metrics to the human.
-[ ] 8. Do not begin the next phase until the human confirms acceptance.
+[ ] 1. Read AGENT_FILES/AGENTS.md (if first session).
+[ ] 2. Read AGENT_FILES/AGENT-BEHAVIOUR/PROTOCOL.md (this file).
+[ ] 3. Read AGENT_FILES/AGENT-BEHAVIOUR/CODE_DESIGN.md.
+[ ] 4. Skim AGENT_FILES/KNOWLEDGE/hierarchical_jepa_flow_architecture_brief.pdf sections cited by the phase doc.
+[ ] 5. Read AGENT_FILES/KNOWLEDGE/UNDERSTANDING.md §0–§3 and §2.6 in full.
+[ ] 6. Open AGENT_FILES/PHASES/PHASE_<N>.md; read the Workflow section; execute steps in order.
+[ ] 7. After each major deliverable (file or milestone), run the phase doc's verification command.
+[ ] 8. At phase end, run the Acceptance Gate section verbatim; report metrics to the human.
+[ ] 9. Do not begin the next phase until the human confirms acceptance.
 ```
 
 ---
