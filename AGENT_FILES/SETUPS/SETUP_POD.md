@@ -2,9 +2,9 @@
 
 > **Start here instead:** [`SETUP.md`](SETUP.md) — full end-to-end operator guides (Path A / Path B).
 >
-> This file is **reference only** — volume layout, path defaults, troubleshooting.
+> **Volume structure (current vs target):** [`VOLUME_LAYOUT.md`](VOLUME_LAYOUT.md) — canonical tree, path contract, migration map.
 >
-> **Provenance:** RunPod-specific claims cite official docs (linked below). Folder layout (`/workspace/data/ssv2`) is **this project's convention**, not RunPod's. Symlink counts are from operator volume inspection — verify on the pod.
+> This file is **reference only** — SSH, troubleshooting. RunPod-specific claims cite official docs (linked below).
 
 Official RunPod docs (verified):
 - [Connect to a Pod with SSH](https://docs.runpod.io/pods/configuration/use-ssh)
@@ -15,52 +15,9 @@ Official RunPod docs (verified):
 
 ---
 
-## Volume layout (target state)
+## Volume layout
 
-After first-time setup ([`SETUP.md`](SETUP.md) Path A, steps A7–A8):
-
-```
-/workspace/                                          ← network volume (persists across pod stops)
-├── hierarchal-jepa-flow-world-model/                ← git repo — CODE ONLY
-├── data/
-│   ├── ssv2/                                        ← full SSv2 (~169k train symlinks)
-│   │   ├── train/
-│   │   ├── validation/
-│   │   └── labels.json
-│   └── ssv2_tiny/                                   ← smoke subset (~4k train); created by make_subset.py
-│       ├── train/
-│       ├── validation/
-│       └── manifest.json
-├── ssv2_raw/                                        ← raw .webm files (read-only)
-│   └── 20bn-something-something-v2/
-├── checkpoints/                                     ← all training checkpoints
-└── hf_cache/                                        ← Hugging Face cache (Phase 3 VAE)
-```
-
-### Path defaults (hardcoded in `config.py`)
-
-| Path | Purpose |
-|---|---|
-| `/workspace/hierarchal-jepa-flow-world-model` | Repo root |
-| `/workspace/data` | Datasets |
-| `/workspace/checkpoints` | Checkpoints |
-| `/workspace/hf_cache` | HF model cache |
-| `JEPA_DATA_ROOT` env var | Replaces `/workspace/data` for local dev only |
-
----
-
-## What “data migration” means
-
-**Not** RunPod documentation — **project convention** to match `config.py` paths.
-
-**Not** re-downloading or re-processing video.
-
-**Is** moving prepared SSv2 on your volume:
-
-- **From:** `/workspace/hierarchal-jepa-flow-world-model/data/something-something-v2/`
-- **To:** `/workspace/data/ssv2/`
-
-Instant `mv` — symlinks still point to `/workspace/ssv2_raw/`. Run once per volume. Full commands in [`SETUP.md`](SETUP.md) step **A8**.
+See [`VOLUME_LAYOUT.md`](VOLUME_LAYOUT.md) for the full current-state inspection, target tree, path defaults for `config.py`, and the migration map (`something-something-v2` → `data/ssv2`). Operator commands for migration: [`SETUP.md`](SETUP.md) step **A8**.
 
 ---
 

@@ -890,6 +890,8 @@ Action and object-interaction heavy; **temporal order matters** (left/right, mov
 
 ### RunPod data layout
 
+Full volume tree (current state vs target): [`AGENT_FILES/SETUPS/VOLUME_LAYOUT.md`](../SETUPS/VOLUME_LAYOUT.md).
+
 ```
 /workspace/data/ssv2/{train,validation,labels.json}      ← full dataset (symlinks)
 /workspace/data/ssv2_tiny/{train,validation,manifest.json}  ← smoke subset (~4k/348)

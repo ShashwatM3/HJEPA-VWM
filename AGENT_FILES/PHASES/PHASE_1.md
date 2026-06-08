@@ -29,6 +29,8 @@
 
 ## §2. RunPod data paths (code defaults)
 
+**Volume reference:** [`AGENT_FILES/SETUPS/VOLUME_LAYOUT.md`](../SETUPS/VOLUME_LAYOUT.md) — current volume contents, target tree, migration map.
+
 **Human operator:** Volume setup is in **[`AGENT_FILES/SETUPS/SETUP.md`](../SETUPS/SETUP.md) Path A** (steps A7–A8). This section is what the **agent hardcodes** in `config.py`.
 
 **Expected layout on the volume:**

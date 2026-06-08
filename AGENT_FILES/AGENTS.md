@@ -26,7 +26,8 @@ This is **not** a video diffusion model. The compressed predictive state is the 
 
 | Order | File | Why |
 |---|---|---|
-| **1** | [`AGENT-BEHAVIOUR/PROTOCOL.md`](AGENT-BEHAVIOUR/PROTOCOL.md) | **How you must behave** — phase execution, escalation, stop-gradient rules, acceptance gates, RunPod layout. Read at the **start of every session**. |
+| **1** | [`AGENT-BEHAVIOUR/PROTOCOL.md`](AGENT-BEHAVIOUR/PROTOCOL.md) | **How you must behave** — phase execution, escalation, stop-gradient rules, acceptance gates. Read at the **start of every session**. |
+| **1b** | [`SETUPS/VOLUME_LAYOUT.md`](SETUPS/VOLUME_LAYOUT.md) | **RunPod volume** — what exists on the network volume today vs target layout; path contract for `config.py`. Read before touching `data.py`, `config.py`, or `make_subset.py`. |
 | **2** | [`AGENT-BEHAVIOUR/CODE_DESIGN.md`](AGENT-BEHAVIOUR/CODE_DESIGN.md) | **How you must write code** — flat 5–6 file layout, naming map, docstrings, `as_target()` pattern, black/ruff. Read before creating or renaming any file. |
 | **3** | [`KNOWLEDGE/UNDERSTANDING.md`](KNOWLEDGE/UNDERSTANDING.md) §0–§3, §2.6, §6 | **What you are building** — shapes, locked constants, modules, stop-gradient table. Re-read §2, §2.6, §6 whenever touching latents or losses. |
 | **4** | [`KNOWLEDGE/hierarchical_jepa_flow_architecture_brief.pdf`](KNOWLEDGE/hierarchical_jepa_flow_architecture_brief.pdf) | **Authoritative spec** from the tech lead. Consult sections cited by the active phase doc. |
@@ -76,8 +77,9 @@ AGENT_FILES/
 │   ├── PHASE_2.md               ← Stages 2+3: F_e, shuffled-c bypass test
 │   └── PHASE_3.md               ← Stage 4: frame generator D + full eval
 └── SETUPS/
+    ├── VOLUME_LAYOUT.md         ← current vs target network volume; path contract (agents + humans)
     ├── SETUP.md                 ← human: Path A (first time) / Path B (push cycle)
-    └── SETUP_POD.md             ← human: RunPod volume, SSH, troubleshooting
+    └── SETUP_POD.md             ← human: SSH, troubleshooting (points to VOLUME_LAYOUT.md)
 ```
 
 | Path | Role |
@@ -90,8 +92,9 @@ AGENT_FILES/
 | `PHASES/PHASE_1.md` | Build spec: empty repo → Stage 1 training + acceptance gates. |
 | `PHASES/PHASE_2.md` | Extends Phase 1; fine flow + hierarchy tests. |
 | `PHASES/PHASE_3.md` | Frame gen + seven-test eval; completes v0. |
+| `SETUPS/VOLUME_LAYOUT.md` | **Canonical** RunPod volume tree: current state, target state, `config.py` paths. |
 | `SETUPS/SETUP.md` | Human operator workflow (not agent implementation steps). |
-| `SETUPS/SETUP_POD.md` | RunPod-specific reference and provenance links. |
+| `SETUPS/SETUP_POD.md` | RunPod SSH and troubleshooting (volume structure → `VOLUME_LAYOUT.md`). |
 
 ### 4.3 Target code layout (after Phase 1 starts)
 
@@ -111,20 +114,11 @@ pyproject.toml
 
 Optional later: `eval.py` (Phase 3). **Disregard** any old Python on the RunPod volume — build fresh from phase docs.
 
-### 4.4 RunPod volume layout (runtime, not in git)
+### 4.4 RunPod network volume (runtime, not in git)
 
-```
-/workspace/
-├── hierarchal-jepa-flow-world-model/   ← this git repo
-├── data/
-│   ├── ssv2/                           ← full SSv2 symlinks + labels.json
-│   └── ssv2_tiny/                      ← ~4k/256 subset (created in Phase 1)
-├── ssv2_raw/                           ← raw .webm (read-only)
-├── checkpoints/                        ← training checkpoints
-└── hf_cache/                           ← Hugging Face cache (Phase 3 VAE)
-```
+**Full reference:** [`SETUPS/VOLUME_LAYOUT.md`](SETUPS/VOLUME_LAYOUT.md) — current volume contents (SSv2 already on disk; `ssv2_tiny` not created yet), target layout after migration, and path defaults for `config.py`.
 
-Override data root locally with env var `JEPA_DATA_ROOT` only — no auto-detection.
+Summary: code lives in `/workspace/hierarchal-jepa-flow-world-model/`; `data/`, `checkpoints/`, `ssv2_raw/`, and `hf_cache/` are **siblings** under `/workspace/`. Override data root locally with env var `JEPA_DATA_ROOT` only — no auto-detection.
 
 ---
 
@@ -156,6 +150,7 @@ One phase per session goal. Do not start Phase 2 until Phase 1 acceptance gates 
 ```
 [ ] Read AGENT_FILES/AGENTS.md (this file) if first clone.
 [ ] Read AGENT-BEHAVIOUR/PROTOCOL.md.
+[ ] Read SETUPS/VOLUME_LAYOUT.md (before data paths or config).
 [ ] Read AGENT-BEHAVIOUR/CODE_DESIGN.md.
 [ ] Read KNOWLEDGE/UNDERSTANDING.md §0–§3 and §2.6; skim brief sections cited by phase doc.
 [ ] Human says "execute Phase N" → open PHASES/PHASE_N.md; follow Workflow in order.

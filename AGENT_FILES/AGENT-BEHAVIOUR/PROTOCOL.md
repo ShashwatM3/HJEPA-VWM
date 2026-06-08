@@ -46,7 +46,8 @@ When any doc names another file, use the **full path from repo root** (e.g. `AGE
 | `AGENT_FILES/PHASES/PHASE_3.md` | **Implementation spec for Phase 3** — Frame Generation (Stage 4) + inference utilities. Completes v0. | When the human says "execute Phase 3." Requires Phase 2 complete. |
 | `AGENT_FILES/AGENT-BEHAVIOUR/PROTOCOL.md` (this file) | **How you operate** — behavior rules, research permission, escalation triggers. | Every session, first. |
 | `AGENT_FILES/SETUPS/SETUP.md` | **Human operator guide** — Path A (first time) and Path B (local changes → train → metrics). Read before first RunPod run. | **Human operator:** before first training run and after each local push cycle. |
-| `AGENT_FILES/SETUPS/SETUP_POD.md` | **RunPod reference** — volume layout, paths, troubleshooting. | When debugging pod/volume/SSH issues. |
+| `AGENT_FILES/SETUPS/VOLUME_LAYOUT.md` | **RunPod volume structure** — current vs target layout, path contract. | Before `config.py` / `data.py` / `make_subset.py`; when verifying data on pod. |
+| `AGENT_FILES/SETUPS/SETUP_POD.md` | **RunPod reference** — SSH, troubleshooting. | When debugging pod/volume/SSH issues. |
 
 **Precedence when documents conflict:**
 1. `AGENT_FILES/KNOWLEDGE/hierarchical_jepa_flow_architecture_brief.pdf` wins on architecture intent.
@@ -68,32 +69,9 @@ When any doc names another file, use the **full path from repo root** (e.g. `AGE
 
 ## 3. Deployment target — RunPod
 
-All code is written for this layout:
+**Canonical volume reference:** [`AGENT_FILES/SETUPS/VOLUME_LAYOUT.md`](../SETUPS/VOLUME_LAYOUT.md) — current volume state (SSv2 on disk; `ssv2_tiny` not yet created), target layout after migration, path table for `config.py`, and who runs `make_subset.py`.
 
-```
-/workspace/
-├── hierarchal-jepa-flow-world-model/   ← git repo (code only; no data inside)
-├── data/
-│   ├── ssv2/                           ← full Something-Something V2 (symlink layout)
-│   │   ├── train/
-│   │   ├── validation/
-│   │   └── labels.json
-│   └── ssv2_tiny/                      ← stratified subset (~4k train / ~256 val)
-│       ├── train/
-│       ├── validation/
-│       └── manifest.json
-├── ssv2_raw/                           ← raw .webm files (read-only)
-├── checkpoints/                        ← all training checkpoints
-└── hf_cache/                           ← Hugging Face cache (sd-vae-ft-mse in Phase 3)
-```
-
-**Path defaults in code:**
-- Repo root: `/workspace/hierarchal-jepa-flow-world-model`
-- Data root: `/workspace/data`
-- Checkpoints: `/workspace/checkpoints`
-- HF cache: `/workspace/hf_cache`
-
-**Override for local dev:** single env var `JEPA_DATA_ROOT` replaces `/workspace/data`. No auto-detection of environment — explicit paths or explicit override only.
+All code is written for the **target** layout: repo at `/workspace/hierarchal-jepa-flow-world-model/`; `data/`, `checkpoints/`, `ssv2_raw/`, and `hf_cache/` as siblings under `/workspace/`. Override data root locally with env var `JEPA_DATA_ROOT` only — no auto-detection.
 
 **Workflow:** local dev → git push → SSH into RunPod (see `AGENT_FILES/SETUPS/SETUP.md` Path B) → `git pull` → run. First-time setup: `AGENT_FILES/SETUPS/SETUP.md` Path A.
 

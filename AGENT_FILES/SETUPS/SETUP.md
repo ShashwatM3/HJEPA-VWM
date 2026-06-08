@@ -10,7 +10,7 @@
 > | **[Path A — First time](#path-a--first-time-end-to-end)** | Your situation **right now**: network volume has SSv2 data, **no v0 code on the pod**, **no `ssv2_tiny` yet**, **SSH not set up yet**. You have the project on your laptop and access to the RunPod website. |
 > | **[Path B — After local changes](#path-b--after-local-changes-end-to-end)** | Code already deployed on the pod once; you edited files locally, **have not pushed yet** → want to run again and watch metrics. |
 >
-> **RunPod infrastructure reference** (volume layout, troubleshooting, SSH details): see [`SETUP_POD.md`](SETUP_POD.md).
+> **Network volume structure** (current vs target): [`VOLUME_LAYOUT.md`](VOLUME_LAYOUT.md). **RunPod infrastructure** (SSH, troubleshooting): [`SETUP_POD.md`](SETUP_POD.md).
 
 ---
 
@@ -663,7 +663,8 @@ Same as **A16**:
 
 | Doc | Role |
 |---|---|
-| [`SETUP_POD.md`](SETUP_POD.md) | RunPod volume layout, migration explained, troubleshooting |
+| [`VOLUME_LAYOUT.md`](VOLUME_LAYOUT.md) | Current vs target volume tree, path contract |
+| [`SETUP_POD.md`](SETUP_POD.md) | SSH, troubleshooting |
 | [`../PHASES/PHASE_1.md`](../PHASES/PHASE_1.md) | What the agent builds; acceptance gates |
 | [`../AGENT-BEHAVIOUR/PROTOCOL.md`](../AGENT-BEHAVIOUR/PROTOCOL.md) | Agent operating rules |
 | [`../PHASES/PHASE_2.md`](../PHASES/PHASE_2.md) / [`../PHASES/PHASE_3.md`](../PHASES/PHASE_3.md) | Later training stages |
