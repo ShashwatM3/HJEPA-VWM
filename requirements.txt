@@ -1,0 +1,11 @@
+torch>=2.1
+torchvision
+decord
+numpy
+wandb
+diffusers
+transformers
+accelerate
+pytest
+black
+ruff

@@ -2,8 +2,11 @@
 .cursor/
 __pycache__/
 *.py[cod]
+.pytest_cache/
+.ruff_cache/
 .env
 wandb/
 checkpoints/
+archive/
 *.pt
 CHAT.md
