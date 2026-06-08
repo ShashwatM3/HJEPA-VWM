@@ -49,7 +49,7 @@ The thesis: a good world model should compress what matters for the future into 
 ### What the model sees and predicts
 
 - **Input:** 4 context frames at 128×128 (`X_ctx`)
-- **Target:** 1 future frame at 128×128 (`y`), sampled ~0.83 seconds after the context window
+- **Target:** 1 future frame at 128×128 (`y`) — the next sampled frame after the context, one stride-2 step ahead. The full 5-frame clip (4 context + 1 target) spans ~0.83 s of source video (≈10 frames at SSv2's ~12 fps).
 - **Dataset:** Something-Something V2 (SSv2) — short clips of human-object interactions where **direction and order matter** (e.g. "Moving something left" vs "right")
 
 ---
@@ -58,56 +58,69 @@ The thesis: a good world model should compress what matters for the future into 
 
 At full maturity (after Phase 3), one training step looks like this:
 
+**How to read this:** solid arrows are forward data flow; dashed arrows are
+**prediction targets** (always stop-gradient). The key chain to internalize is
+`E → e_t → B → c_t`: the detailed latent `e_t` is literally the **input to the
+bottleneck**, not a parallel output. The target branch mirrors it exactly.
+
 ```mermaid
 flowchart TB
     subgraph inputs [Inputs]
-        X_ctx["X_ctx: 4 frames<br/>(T=4, 3, 128, 128)"]
+        X_ctx["X_ctx: 4 context frames<br/>(T=4, 3, 128, 128)"]
         y["y: future frame<br/>(3, 128, 128)"]
     end
 
     subgraph online [Online branch — trainable]
         PE_ctx[PatchEmbed context]
         E[Encoder E]
+        e_t["e_t: detailed latent<br/>256 tokens × 384<br/>(~154 after tubelet dropout)"]
         B[Bottleneck B]
-        PE_ctx --> E --> B
-        E --> e_t["e_t: detailed latent<br/>~154 tokens × 384"]
-        B --> c_t["c_t: abstract latent<br/>32 tokens × 256"]
+        c_t["c_t: abstract latent<br/>32 tokens × 256"]
+        PE_ctx --> E --> e_t --> B --> c_t
     end
 
-    subgraph target [EMA target branch — no grad]
+    subgraph target [EMA target branch — no backprop, outputs detached]
         PE_tgt[PatchEmbed target]
         E_bar[Encoder E_bar]
+        e_plus["e_plus<br/>64 tokens × 384"]
         B_bar[Bottleneck B_bar]
-        PE_tgt --> E_bar --> B_bar
-        E_bar --> e_plus["e_plus (detached)"]
-        B_bar --> c_plus["c_plus (detached)"]
+        c_plus["c_plus<br/>32 tokens × 256"]
+        PE_tgt --> E_bar --> e_plus --> B_bar --> c_plus
     end
 
     subgraph flows [Flow predictors]
-        F_c["F_c: coarse flow<br/>noise → c_plus"]
-        F_e["F_e: fine flow<br/>noise → e_plus"]
-        D["D: frame generator<br/>noise → VAE latent"]
+        F_c["F_c: coarse flow"]
+        c_hat["c_hat<br/>(detached before F_e)"]
+        F_e["F_e: fine flow"]
+        e_hat["e_hat<br/>(detached before D)"]
+        D["D: frame generator"]
+        x_hat["x_hat: predicted<br/>frame latent"]
+        F_c --> c_hat
+        F_e --> e_hat
+        D --> x_hat
     end
 
-    subgraph vae [Frozen VAE — Stage 4 only]
-        VAE[VAE encode/decode]
-    end
+    VAE["Frozen VAE<br/>(Stage 4 only)"]
+    a_y["a_y: patched<br/>VAE latent of y"]
 
     X_ctx --> PE_ctx
     y --> PE_tgt
     y --> VAE
+    VAE --> a_y
 
-    c_t --> F_c
-    c_plus -.->|target| F_c
-    e_t --> F_e
-    c_cond["c_cond: c_plus or c_hat"] --> F_e
-    e_plus -.->|target| F_e
-    e_hat["e_hat (detached)"] --> D
-    VAE --> a_y["a_y: patched VAE latent"]
-    a_y -.->|target| D
+    c_t -->|condition| F_c
+    c_plus -.->|prediction target| F_c
+
+    e_t -->|condition| F_e
+    c_plus -.->|c_cond: Stage 2 teacher| F_e
+    c_hat -->|c_cond: Stage 3 predicted| F_e
+    e_plus -.->|prediction target| F_e
+
+    e_hat -->|cross-attn condition| D
+    a_y -.->|prediction target| D
 ```
 
-**Phase 1** implements only the left column through `F_c` (coarse flow). **Phase 2** adds `F_e`. **Phase 3** adds `D` and the VAE.
+**Phase 1** implements only the online branch, the EMA target branch, and `F_c` (coarse flow). **Phase 2** adds `F_e` (fine flow). **Phase 3** adds `D` and the frozen VAE.
 
 ---
 
@@ -148,12 +161,16 @@ On the **context path only**, 40% of the 256 patch tokens are randomly dropped b
 
 Think of the hierarchy as **headline vs body text**:
 
-| Latent | Symbol | Shape | Role | Bandwidth |
+| Latent | Symbol | Canonical shape | Scalar count | Role |
 |---|---|---|---|---|
-| **Abstract** | `c_t` | 32 × 256 = 8,192 dims | Future-relevant **structure** — what is happening, spatial layout of action | **Small** — forced compression |
-| **Detailed** | `e_t` | ~154 × 384 ≈ 59k dims (train) | **Texture**, local appearance, fine spatial detail | **Large** |
+| **Abstract** | `c_t` | 32 × 256 | 8,192 | Future-relevant **structure** — what is happening, spatial layout of action |
+| **Detailed** | `e_t` | 256 × 384 | 98,304 | **Texture**, local appearance, fine spatial detail |
 
-The bottleneck `B` is the architectural enforcement: it squeezes hundreds of detailed tokens into exactly **32 learned query slots** (Perceiver-style), regardless of input length.
+The abstract latent is roughly **8% of the detailed latent's scalar bandwidth** (8,192 / 98,304 ≈ 0.083). The brief calls this out explicitly: the bottleneck must be *tight enough to prevent copying* — if `c_t` had enough capacity, it would just mirror `e_t` and the hierarchy would be fake.
+
+> **Note on token counts:** `e_t`'s canonical shape is `256 × 384` (4 frames × 8×8 patches). During **training**, tubelet dropout removes 40% of context tokens, so the encoder actually processes ~154 tokens that step. At eval/inference (no dropout) it is the full 256. `F_e` conditions on `e_t` via **cross-attention** (keys/values), so this variable length is handled naturally. (`F_c` never sees `e_t`; it conditions only on the fixed-size 32-token `c_t`.)
+
+The bottleneck `B` is the architectural enforcement: it squeezes the detailed tokens into exactly **32 learned query slots** (Perceiver-style), regardless of input length.
 
 **Future targets** use the same hierarchy on the EMA branch:
 
@@ -238,8 +255,8 @@ where `m` cosine-ramps from 0.996 → 0.9999 over 105k steps.
 Predicts velocity from noise to `c_plus`, conditioned on current `c_t`.
 
 - 6 DiT blocks, dim 256, 8 heads (~5M params)
-- **Conditioning:** Concatenate `[c_t || z_c]` → 64 tokens; self-attention; read out first 32 as velocity
-- **Condition dropout:** 10% of batches replace `c_t` with a learned null embedding
+- **Conditioning:** Concatenate `[z_c || c_t]` → 64 tokens, run self-attention across all 64, then read out the **first 32 tokens (the `z_c` half)** as the velocity prediction. (In code: `models.py` does `torch.cat([z_c, abstract], dim=1)` then returns `x[:, :n_c]`.) The `c_t` half acts purely as conditioning context that the `z_c` tokens attend to.
+- **Condition dropout:** 10% of examples replace `c_t` with a learned null embedding (the `null_condition` parameter), CFG-style
 - **Time:** adaLN-Zero from `τ_c`
 
 **Phase 1 trains only this flow** (plus E and B).
@@ -325,8 +342,8 @@ Each `__getitem__` returns:
 For each batch element:
 
 ```python
-# 1. Get detached future abstract target from EMA branch
-c_plus = TargetBranch(future_frame)   # (32, 256), no grad
+# 1. Get detached future targets from EMA branch (returns BOTH latents)
+e_plus, c_plus = TargetBranch(future_frame)   # detached; F_c uses c_plus
 
 # 2. Sample noise and flow time
 eps_c ~ N(0, I)                       # (32, 256)
@@ -371,7 +388,9 @@ Same pattern for `F_e` (conditioned on `c_hat_final`) and `D` (conditioned on `e
 
 ## 8. Losses and what they train
 
-### Phase 1 total loss
+> Reminder: **stages** are the training-schedule phases (0–4); **implementation phases** (1–3) are how the code is built. Stage 1 = Phase 1; Stages 2–3 = Phase 2; Stage 4 = Phase 3.
+
+### Stage 1 total loss (Phase 1)
 
 ```
 L = L_c + 0.10 · SIGReg(c_t) + 0.02 · SIGReg(e_t)
@@ -379,13 +398,13 @@ L = L_c + 0.10 · SIGReg(c_t) + 0.02 · SIGReg(e_t)
 
 No `L_e` yet. SIGReg on both latents from step 0 prevents `e_t` drifting before fine flow exists.
 
-### Phase 2–3 total loss (latent stages)
+### Stage 2–3 total loss (Phase 2, latent stages)
 
 ```
 L = L_c + 1.0 · L_e + 0.10 · SIGReg(c_t) + 0.02 · SIGReg(e_t)
 ```
 
-### Phase 4 total loss
+### Stage 4 total loss (Phase 3)
 
 ```
 L = L_frame    # only D trains; everything else frozen
@@ -518,6 +537,8 @@ Phase 1 is a **vertical slice**: data loading → encoding → coarse prediction
 9. backward, clip grad 1.0, optimizer step
 10. EMA update: E_bar, B_bar ← blend from E, B
 ```
+
+> **LR schedule subtlety (read the code carefully):** §11 describes the *full* latent schedule — 10k warmup then cosine decay over the remaining 95k of the 105k latent budget. But Phase 1 is shipped as a **standalone** 30k-step deliverable, so `train.py`'s `apply_lr_schedule` cosine-decays to 0 over `stage1_steps` (30k), per `PHASE_1.md` §10.2. When Phase 2 resumes from the 30k checkpoint, the schedule is meant to continue the long 95k cosine instead. Both are intentional; just don't be surprised that the *current* Phase-1 code decays fully by step 30k.
 
 ### Stage 0 — synthetic sanity
 
