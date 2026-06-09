@@ -40,12 +40,18 @@ def _require_torch() -> None:
 
 
 def _read_video_decord(path: Path) -> np.ndarray:
-    """Decode all frames from one SSv2 .webm using decord on CPU."""
+    """Decode all frames from one SSv2 .webm using decord on CPU.
+
+    `num_threads=1` is required: SSv2 ships as VP9-encoded .webm and decord's
+    threaded FFmpeg decoder fails with EAGAIN (-11, "Error sending packet") on
+    some VP9 packets when threads > 1. See dmlc/decord#83, #145, #246. Each
+    DataLoader worker still parallelises across videos.
+    """
     try:
         from decord import VideoReader, cpu
     except ModuleNotFoundError as exc:  # pragma: no cover - RunPod dependency.
         raise RuntimeError("decord is required to read SSv2 videos") from exc
-    reader = VideoReader(str(path), ctx=cpu(0))
+    reader = VideoReader(str(path), ctx=cpu(0), num_threads=1)
     return reader.get_batch(list(range(len(reader)))).asnumpy()
 
 
