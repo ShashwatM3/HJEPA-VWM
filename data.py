@@ -1,4 +1,12 @@
-"""SSv2 dataset and dataloader for HJEPA-VWM Phase 1."""
+"""SSv2 dataset and dataloader for HJEPA-VWM Phase 1 (v0.2).
+
+Each item is a `(context_clip, target_clip)` pair: an 8-frame context window ending
+at `t` and an 8-frame future window ending at `t+k` (`k = cfg.train.horizon_k`), both
+at stride 2, at 256x256, normalized with the frozen encoder's expected statistics
+(NOT [-1, 1]). The same geometric crop and color jitter are applied to both windows.
+There is no tubelet dropout in v0.2 — the dataloader returns full clips and the
+frozen encoder consumes all tokens.
+"""
 
 from __future__ import annotations
 
@@ -20,7 +28,7 @@ except ModuleNotFoundError:  # pragma: no cover - lets docs/tests import without
     DataLoader = object  # type: ignore[misc,assignment]
     F = None  # type: ignore[assignment]
 
-from config import Config
+from config import ENCODER_IMAGE_MEAN, ENCODER_IMAGE_STD, Config
 
 
 def _require_torch() -> None:
@@ -45,9 +53,10 @@ def _resize_shorter_side(frames: Tensor, size: int) -> Tensor:
     """Resize frames so the shorter side equals `size`.
 
     Args:
-        frames: (T, C, H, W) float tensor in [0, 1].
+        frames: (N, C, H, W) float tensor in [0, 1].
+        size: Target shorter-side length.
     Returns:
-        resized: (T, C, H', W') tensor where min(H', W') == size.
+        resized: (N, C, H', W') tensor where min(H', W') == size.
     """
     _require_torch()
     _, _, h, w = frames.shape
@@ -61,11 +70,11 @@ def _crop(frames: Tensor, size: int, split: Literal["train", "validation"]) -> T
     """Crop a resized clip without flips or rotations.
 
     Args:
-        frames: (T, C, H, W) resized clip.
+        frames: (N, C, H, W) resized clip (context+target stacked share one crop).
         size: Spatial crop size.
         split: Training uses random crop; validation uses center crop.
     Returns:
-        cropped: (T, C, size, size) tensor.
+        cropped: (N, C, size, size) tensor.
     """
     _, _, h, w = frames.shape
     if split == "train":
@@ -80,10 +89,13 @@ def _crop(frames: Tensor, size: int, split: Literal["train", "validation"]) -> T
 def _color_jitter(frames: Tensor) -> Tensor:
     """Apply brightness/contrast/saturation jitter without hue changes.
 
+    One sampled set of params is applied to the whole stack so context and target
+    windows stay photometrically consistent.
+
     Args:
-        frames: (T, C, H, W) float tensor in [0, 1].
+        frames: (N, C, H, W) float tensor in [0, 1].
     Returns:
-        jittered: (T, C, H, W) clipped to [0, 1].
+        jittered: (N, C, H, W) clipped to [0, 1].
     """
     brightness = 1.0 + random.uniform(-0.4, 0.4)
     contrast = 1.0 + random.uniform(-0.4, 0.4)
@@ -96,19 +108,30 @@ def _color_jitter(frames: Tensor) -> Tensor:
     return out.clamp(0.0, 1.0)
 
 
-class SSV2Dataset(Dataset):
-    """Load 4-frame context clips and one future frame from SSv2 symlinks.
+def _normalize_encoder(frames: Tensor) -> Tensor:
+    """Normalize [0, 1] frames with the frozen encoder's ImageNet statistics.
 
-    The dataloader returns complete clips. Tubelet dropout happens in the model
-    patchifier path, never in `data.py`.
+    Args:
+        frames: (N, C=3, H, W) float tensor in [0, 1].
+    Returns:
+        normalized: (N, 3, H, W) tensor in the encoder's expected range (not [-1, 1]).
+    """
+    mean = torch.tensor(ENCODER_IMAGE_MEAN, dtype=frames.dtype).view(1, 3, 1, 1)
+    std = torch.tensor(ENCODER_IMAGE_STD, dtype=frames.dtype).view(1, 3, 1, 1)
+    return (frames - mean) / std
+
+
+class SSV2Dataset(Dataset):
+    """Load context/future clip pairs from SSv2 symlinks (v0.2).
 
     Args:
         root: Dataset root with `train/` and `validation/` symlink directories.
         split: `train` or `validation`.
-        cfg: Global config with frame size and stride constants.
+        cfg: Global config with frame size, stride, and horizon constants.
     Returns:
-        Each item is `(context_clip, future_frame)` where context is
-        (T=4, C=3, H=128, W=128) and future is (C=3, H=128, W=128), both in [-1, 1].
+        Each item is `(context_clip, target_clip)`, both
+        (T=8, C=3, H=256, W=256) encoder-normalized float32 tensors. The context
+        window ends at `t`; the target window ends at `t + horizon_k`.
     """
 
     def __init__(self, root: str | Path, split: Literal["train", "validation"], cfg: Config):
@@ -125,23 +148,48 @@ class SSV2Dataset(Dataset):
         """Return the number of videos available in this split."""
         return len(self.paths)
 
-    def __getitem__(self, index: int) -> tuple[Tensor, Tensor]:
-        """Return one normalized context/future sample from a video."""
-        frames_np = _read_video_decord(self.paths[index])
-        total_needed = self.cfg.model.t_ctx + 1
+    def _window_indices(self, num_frames: int) -> tuple[list[int], list[int]]:
+        """Compute context and target frame indices within one video.
+
+        The context window is `T` frames at `stride` ending at `t`; the target window
+        is `T` frames at `stride` ending at `t + k`. Indices are clamped to the last
+        frame for too-short videos (deterministic pad-by-repeat).
+
+        Args:
+            num_frames: Number of decoded frames in the video.
+        Returns:
+            (context_indices, target_indices), each of length `T`.
+        """
+        t_ctx = self.cfg.model.t_ctx
         stride = self.cfg.train.frame_stride
-        max_start = max(0, len(frames_np) - 1 - (total_needed - 1) * stride)
-        start = random.randint(0, max_start) if self.split == "train" else max_start // 2
-        indices = [min(len(frames_np) - 1, start + i * stride) for i in range(total_needed)]
-        frames = torch.from_numpy(frames_np[indices]).float().permute(0, 3, 1, 2) / 255.0
-        frames = _resize_shorter_side(frames, self.cfg.model.h)
-        frames = _crop(frames, self.cfg.model.h, self.split)
+        k = self.cfg.train.horizon_k
+        span = (t_ctx - 1) * stride + k  # first context frame -> last target frame
+        max_start = num_frames - 1 - span
+        if max_start < 0:
+            start = 0
+        elif self.split == "train":
+            start = random.randint(0, max_start)
+        else:
+            start = max_start // 2
+        last = num_frames - 1
+        context = [min(last, start + i * stride) for i in range(t_ctx)]
+        tgt_end = start + (t_ctx - 1) * stride + k
+        target = [min(last, tgt_end - (t_ctx - 1 - i) * stride) for i in range(t_ctx)]
+        return context, target
+
+    def __getitem__(self, index: int) -> tuple[Tensor, Tensor]:
+        """Return one encoder-normalized (context_clip, target_clip) pair."""
+        frames_np = _read_video_decord(self.paths[index])
+        context_idx, target_idx = self._window_indices(len(frames_np))
+        t_ctx = self.cfg.model.t_ctx
+        stacked = torch.from_numpy(frames_np[context_idx + target_idx])
+        stacked = stacked.float().permute(0, 3, 1, 2) / 255.0
+        stacked = _resize_shorter_side(stacked, self.cfg.model.h)
+        stacked = _crop(stacked, self.cfg.model.h, self.split)
         if self.split == "train":
-            frames = _color_jitter(frames)
-        frames = frames * 2.0 - 1.0
-        context_clip = frames[: self.cfg.model.t_ctx]
-        future_frame = frames[self.cfg.model.t_ctx]
-        return context_clip, future_frame
+            stacked = _color_jitter(stacked)
+        stacked = _normalize_encoder(stacked)
+        return stacked[:t_ctx], stacked[t_ctx:]
 
 
 def build_dataloader(
@@ -156,8 +204,8 @@ def build_dataloader(
         split: Dataset split to read.
         batch_size: Optional override for smoke tests.
     Returns:
-        PyTorch DataLoader yielding `(context_clip, future_frame)` batches with shapes
-        (B, 4, 3, 128, 128) and (B, 3, 128, 128).
+        DataLoader yielding `(context_clip, target_clip)` batches, both
+        (B, 8, 3, 256, 256).
     """
     _require_torch()
     dataset = SSV2Dataset(cfg.data.dataset_root(), split, cfg)
@@ -172,20 +220,21 @@ def build_dataloader(
 
 
 def smoke_test_dataloader() -> None:
-    """Load two SSv2-tiny batches and assert Phase 1 data contracts."""
+    """Load two SSv2-tiny batches and assert Phase 1 v0.2 data contracts."""
     cfg = Config()
     loader = build_dataloader(cfg, "train", batch_size=2)
-    for i, (context_clip, future_frame) in enumerate(loader):
+    expected = (cfg.model.t_ctx, 3, cfg.model.h, cfg.model.w)
+    for i, (context_clip, target_clip) in enumerate(loader):
         print(
             context_clip.shape,
-            future_frame.shape,
-            context_clip.min().item(),
-            context_clip.max().item(),
+            target_clip.shape,
+            float(context_clip.min()),
+            float(context_clip.max()),
         )
-        assert context_clip.shape[1:] == (4, 3, 128, 128)
-        assert future_frame.shape[1:] == (3, 128, 128)
-        assert torch.isfinite(context_clip).all()
-        assert torch.isfinite(future_frame).all()
-        assert context_clip.min() >= -1.2 and context_clip.max() <= 1.2
+        assert context_clip.shape[1:] == expected, context_clip.shape
+        assert target_clip.shape[1:] == expected, target_clip.shape
+        assert torch.isfinite(context_clip).all() and torch.isfinite(target_clip).all()
+        # Encoder-normalized (ImageNet stats), so the range is NOT [-1, 1].
+        assert context_clip.min() < -1.0 or context_clip.max() > 1.0
         if i == 1:
             break

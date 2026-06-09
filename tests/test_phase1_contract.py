@@ -11,18 +11,19 @@ def test_config_exposes_locked_phase1_constants(monkeypatch):
 
     cfg = config.Config()
 
-    assert cfg.model.t_ctx == 4
-    assert cfg.model.h == 128
-    assert cfg.model.w == 128
-    assert cfg.model.n_ctx == 256
-    assert cfg.model.n_tgt == 64
+    assert cfg.model.t_ctx == 8
+    assert cfg.model.h == 256
+    assert cfg.model.w == 256
+    assert cfg.model.n_ctx == 1024
+    assert cfg.model.n_tgt == 1024
     assert cfg.model.n_c == 32
-    assert cfg.model.d_e == 384
+    assert cfg.model.d_e == 1024
     assert cfg.model.d_c == 256
+    assert cfg.model.encoder_repo == "facebook/vjepa2-vitl-fpc64-256"
     assert cfg.train.stage1_steps == 30_000
     assert cfg.train.total_latent_steps == 105_000
-    assert cfg.train.lambda_e_reg == 0.02
-    assert cfg.train.lambda_c_reg == 0.10
+    assert cfg.train.lambda_var == 0.10
+    assert cfg.train.var_floor_std_target == 1.0
     assert cfg.data.data_root == "/tmp/jepa-data"
     assert cfg.data.full_root == "/tmp/jepa-data/ssv2"
     assert cfg.data.tiny_root == "/tmp/jepa-data/ssv2_tiny"

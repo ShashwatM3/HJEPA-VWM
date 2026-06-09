@@ -1,7 +1,9 @@
-"""Phase 1 training entry point for HJEPA-VWM.
+"""Phase 1 training entry point for HJEPA-VWM (v0.2 — frozen encoder).
 
-Implements Stage 0 synthetic sanity and Stage 1 coarse-dynamics training only.
-Fine flow, Stage 2/3, VAE, and frame generator are intentionally not included.
+Implements Stage 0 synthetic sanity and Stage 1 coarse-dynamics training only:
+frozen V-JEPA 2 encoder + trainable bottleneck + EMA bottleneck + coarse flow F_c,
+with a variance floor on c_t. Fine flow, Stages 2-4, VAE, and the frame generator
+are intentionally out of scope.
 """
 
 from __future__ import annotations
@@ -24,9 +26,18 @@ except ModuleNotFoundError:  # pragma: no cover
 
 from config import Config
 from data import build_dataloader
-from diagnostics import coarse_baselines, gradient_health, latent_std_stats
-from losses import flow_matching_loss, interpolate, phase1_total_loss, velocity_target
-from models import _build_phase1_modules
+from diagnostics import (
+    coarse_baselines,
+    cross_video_cosine,
+    effective_rank,
+    gradient_health,
+    variance_stats,
+)
+from losses import flow_matching_loss, interpolate, variance_floor, velocity_target
+from models import build_phase1_modules
+
+# Module bundle order throughout: (encoder E, bottleneck B, target_bottleneck B_EMA,
+# coarse_flow F_c).
 
 
 def _require_torch() -> None:
@@ -51,13 +62,13 @@ def set_seed(seed: int) -> None:
 
 
 def ema_cosine(step: int, start: float, end: float, total: int) -> float:
-    """Cosine-ramp EMA momentum from 0.996 toward 0.9999.
+    """Cosine-ramp EMA momentum from `start` toward `end` over `total` steps.
 
     Args:
         step: Global optimizer step.
-        start: Initial EMA momentum.
-        end: Final EMA momentum.
-        total: Latent-stage schedule denominator, 105000.
+        start: Initial EMA momentum (0.996).
+        end: Final EMA momentum (0.9999).
+        total: Latent-stage schedule denominator (105000).
     Returns:
         Momentum value for the current step.
     """
@@ -66,7 +77,7 @@ def ema_cosine(step: int, start: float, end: float, total: int) -> float:
 
 
 def lr_scale(step: int, warmup_steps: int, max_steps: int) -> float:
-    """Phase 1 linear warmup then cosine decay LR multiplier."""
+    """Linear warmup then cosine-decay LR multiplier for Stage 1."""
     if step < warmup_steps:
         return max(1e-8, (step + 1) / warmup_steps)
     progress = (step - warmup_steps) / max(1, max_steps - warmup_steps)
@@ -74,16 +85,20 @@ def lr_scale(step: int, warmup_steps: int, max_steps: int) -> float:
 
 
 def make_optimizer(
-    online_encoder: nn.Module,
-    bottleneck: nn.Module,
-    coarse_flow: nn.Module,
-    cfg: Config,
+    bottleneck: nn.Module, coarse_flow: nn.Module, cfg: Config
 ) -> torch.optim.Optimizer:
-    """Create AdamW param groups with locked Phase 1 learning rates."""
+    """Create AdamW param groups for the trainable modules only (E is frozen).
+
+    Args:
+        bottleneck: Trainable bottleneck B.
+        coarse_flow: Coarse flow F_c.
+        cfg: Config with locked Phase 1 learning rates.
+    Returns:
+        AdamW optimizer over B and F_c (the encoder is not in any group).
+    """
     _require_torch()
     return torch.optim.AdamW(
         [
-            {"params": online_encoder.parameters(), "lr": cfg.train.lr_encoder, "name": "E"},
             {"params": bottleneck.parameters(), "lr": cfg.train.lr_bottleneck, "name": "B"},
             {"params": coarse_flow.parameters(), "lr": cfg.train.lr_coarse_flow, "name": "F_c"},
         ],
@@ -95,7 +110,7 @@ def make_optimizer(
 def apply_lr_schedule(
     optimizer: torch.optim.Optimizer, base_lrs: list[float], step: int, cfg: Config
 ) -> float:
-    """Apply Phase 1 LR schedule to optimizer param groups."""
+    """Apply the Stage 1 LR schedule to optimizer param groups."""
     scale = lr_scale(step, cfg.train.warmup_steps, cfg.train.stage1_steps)
     for group, base_lr in zip(optimizer.param_groups, base_lrs, strict=True):
         group["lr"] = base_lr * scale
@@ -103,27 +118,19 @@ def apply_lr_schedule(
 
 
 def device_for_training() -> torch.device:
-    """Choose CUDA when available, otherwise CPU for local smoke commands.
-
-    The production target is RunPod GPU, but this helper keeps Stage 0 runnable
-    on a laptop when only synthetic checks are needed.
-
-    Returns:
-        PyTorch device used for module construction and batch tensors.
-    """
+    """Choose CUDA when available, otherwise CPU for local smoke commands."""
     _require_torch()
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 def _update_ema(online: nn.Module, target: nn.Module, momentum: float) -> None:
-    """Update one EMA module from its online counterpart.
+    """Update the EMA bottleneck from the online bottleneck.
 
-    Keeping EMA in `train.py` preserves the CODE_DESIGN boundary: models carry
-    parameters, while the training loop owns optimizer/EMA state transitions.
+    Models carry parameters; the training loop owns the optimizer/EMA transitions.
 
     Args:
-        online: Trainable online module.
-        target: EMA module with no backprop.
+        online: Trainable bottleneck B.
+        target: EMA bottleneck B_EMA (no backprop).
         momentum: EMA coefficient m.
     """
     with torch.no_grad():
@@ -141,9 +148,36 @@ def autocast_context(device: torch.device, cfg: Config):
     return nullcontext()
 
 
+def _coarse_forward(
+    encoder: nn.Module,
+    bottleneck: nn.Module,
+    target_bottleneck: nn.Module,
+    context_clip: Tensor,
+    target_clip: Tensor,
+) -> tuple[Tensor, Tensor]:
+    """Compute the online `c_t` and the detached target `c_plus`.
+
+    Args:
+        encoder: Frozen V-JEPA 2 encoder E.
+        bottleneck: Trainable bottleneck B.
+        target_bottleneck: EMA bottleneck B_EMA.
+        context_clip: (B, 8, 3, 256, 256) encoder-normalized context window.
+        target_clip: (B, 8, 3, 256, 256) encoder-normalized future window.
+    Returns:
+        (abstract, target_abstract): c_t (grad) and c_plus (stop-grad).
+    """
+    with torch.no_grad():
+        detailed = encoder(context_clip)
+    abstract = bottleneck(detailed)
+    with torch.no_grad():
+        target_detailed = encoder(target_clip)
+    target_abstract = target_bottleneck(target_detailed)  # B_EMA + as_target inside
+    return abstract, target_abstract
+
+
 def train_step(
     batch: tuple[Tensor, Tensor],
-    modules: tuple[nn.Module, nn.Module, nn.Module, nn.Module, nn.Module],
+    modules: tuple[nn.Module, nn.Module, nn.Module, nn.Module],
     optimizer: torch.optim.Optimizer,
     step: int,
     cfg: Config,
@@ -152,70 +186,56 @@ def train_step(
     """Run one Stage 1 coarse-dynamics training step.
 
     Args:
-        batch: `(context_clip, future_frame)` with shapes (B, 4, 3, 128, 128) and (B, 3, 128, 128).
-        modules: `(patch_embed, online_encoder, bottleneck, target_branch, coarse_flow)`.
-        optimizer: AdamW over E/B/F_c.
+        batch: `(context_clip, target_clip)`, both (B, 8, 3, 256, 256).
+        modules: `(encoder, bottleneck, target_bottleneck, coarse_flow)`.
+        optimizer: AdamW over B and F_c.
         step: Global Stage 1 step.
         cfg: Training config.
         device: CUDA or CPU device.
     Returns:
         Scalar metrics for logging.
     """
-    patch_embed, online_encoder, bottleneck, target_branch, coarse_flow = modules
-    context_clip, future_frame = (x.to(device, non_blocking=True) for x in batch)
+    encoder, bottleneck, target_bottleneck, coarse_flow = modules
+    context_clip, target_clip = (x.to(device, non_blocking=True) for x in batch)
     optimizer.zero_grad(set_to_none=True)
     with autocast_context(device, cfg):
-        tokens, kept_mask = patch_embed.forward_context(context_clip)
-        detailed = online_encoder(tokens)
-        abstract = bottleneck(detailed, kept_mask)
-        target_detailed, target_abstract = target_branch(future_frame)
+        abstract, target_abstract = _coarse_forward(
+            encoder, bottleneck, target_bottleneck, context_clip, target_clip
+        )
         eps_c = torch.randn_like(target_abstract)
         tau_c = torch.rand(target_abstract.shape[0], device=device)
         z_c = interpolate(target_abstract, eps_c, tau_c)
         u_c = velocity_target(target_abstract, eps_c)
         u_c_hat = coarse_flow(z_c, tau_c, abstract)
-        coarse_loss = flow_matching_loss(u_c_hat, u_c)
-        loss, parts = phase1_total_loss(
-            coarse_loss,
-            detailed,
-            abstract,
-            cfg.train.lambda_e_reg,
-            cfg.train.lambda_c_reg,
-            cfg.train.sigreg_m,
-            cfg.train.sigreg_knots,
-        )
+        flow_loss = flow_matching_loss(u_c_hat, u_c)
+        var_loss = variance_floor(abstract, cfg.train.var_floor_std_target)
+        loss = flow_loss + cfg.train.lambda_var * var_loss
     loss.backward()
     grad_norm = torch.nn.utils.clip_grad_norm_(
-        list(online_encoder.parameters())
-        + list(bottleneck.parameters())
-        + list(coarse_flow.parameters()),
-        cfg.train.grad_clip,
+        list(bottleneck.parameters()) + list(coarse_flow.parameters()), cfg.train.grad_clip
     )
     optimizer.step()
     momentum = ema_cosine(
         step, cfg.train.ema_m_start, cfg.train.ema_m_end, cfg.train.ema_schedule_steps
     )
-    _update_ema(online_encoder, target_branch.target_encoder, momentum)
-    _update_ema(bottleneck, target_branch.target_bottleneck, momentum)
-    metrics = {name: float(value.detach().float().item()) for name, value in parts.items()}
-    metrics.update(
-        {
-            "loss": float(loss.detach().float().item()),
-            "grad_norm": float(grad_norm),
-            "ema_m": momentum,
-        }
-    )
-    return metrics
+    _update_ema(bottleneck, target_bottleneck, momentum)
+    return {
+        "loss": float(loss.detach().float().item()),
+        "L_flow": float(flow_loss.detach().float().item()),
+        "L_var": float(var_loss.detach().float().item()),
+        "grad_norm": float(grad_norm),
+        "ema_m": momentum,
+    }
 
 
 def save_checkpoint(
     path: Path,
     step: int,
-    modules: tuple[nn.Module, nn.Module, nn.Module, nn.Module, nn.Module],
+    modules: tuple[nn.Module, nn.Module, nn.Module, nn.Module],
     optimizer: torch.optim.Optimizer,
     cfg: Config,
 ) -> None:
-    """Save Phase 1 checkpoint to `/workspace/checkpoints`.
+    """Save a Phase 1 checkpoint (encoder excluded — reloaded from HF).
 
     Args:
         path: Destination checkpoint path.
@@ -225,14 +245,12 @@ def save_checkpoint(
         cfg: Config serialized as nested dicts.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    patch_embed, online_encoder, bottleneck, target_branch, coarse_flow = modules
+    _, bottleneck, target_bottleneck, coarse_flow = modules
     torch.save(
         {
             "global_step": step,
-            "patch_embed": patch_embed.state_dict(),
-            "online_encoder": online_encoder.state_dict(),
             "bottleneck": bottleneck.state_dict(),
-            "target_branch": target_branch.state_dict(),
+            "target_bottleneck": target_bottleneck.state_dict(),
             "coarse_flow": coarse_flow.state_dict(),
             "optimizer": optimizer.state_dict(),
             "config": json.loads(json.dumps(cfg, default=lambda o: getattr(o, "__dict__", str(o)))),
@@ -243,41 +261,89 @@ def save_checkpoint(
 
 def load_checkpoint(
     path: str | Path,
-    modules: tuple[nn.Module, nn.Module, nn.Module, nn.Module, nn.Module],
+    modules: tuple[nn.Module, nn.Module, nn.Module, nn.Module],
     optimizer: torch.optim.Optimizer | None = None,
 ) -> int:
-    """Load a Phase 1 checkpoint and return its global step."""
+    """Load a Phase 1 checkpoint and return its global step (encoder untouched)."""
     ckpt = torch.load(path, map_location="cpu")
-    patch_embed, online_encoder, bottleneck, target_branch, coarse_flow = modules
-    patch_embed.load_state_dict(ckpt["patch_embed"])
-    online_encoder.load_state_dict(ckpt["online_encoder"])
+    _, bottleneck, target_bottleneck, coarse_flow = modules
     bottleneck.load_state_dict(ckpt["bottleneck"])
-    target_branch.load_state_dict(ckpt["target_branch"])
+    target_bottleneck.load_state_dict(ckpt["target_bottleneck"])
     coarse_flow.load_state_dict(ckpt["coarse_flow"])
     if optimizer is not None and "optimizer" in ckpt:
         optimizer.load_state_dict(ckpt["optimizer"])
     return int(ckpt.get("global_step", 0))
 
 
+def _build_and_init(cfg: Config, device: torch.device, load_encoder: bool = True):
+    """Build modules on device and initialize B_EMA from B.
+
+    Args:
+        cfg: Global config.
+        device: Target device.
+        load_encoder: When False, encoder is None (for non-encoder smoke paths).
+    Returns:
+        Module bundle `(encoder, bottleneck, target_bottleneck, coarse_flow)`.
+    """
+    encoder, bottleneck, target_bottleneck, coarse_flow = build_phase1_modules(
+        cfg, load_encoder=load_encoder
+    )
+    bottleneck = bottleneck.to(device)
+    target_bottleneck = target_bottleneck.to(device)
+    coarse_flow = coarse_flow.to(device)
+    if encoder is not None:
+        encoder = encoder.to(device)
+    target_bottleneck.copy_weights_from(bottleneck)
+    return encoder, bottleneck, target_bottleneck, coarse_flow
+
+
 def run_stage0(cfg: Config) -> None:
-    """Run synthetic Stage 0 sanity: forward, backward, optimizer, EMA update."""
+    """Run synthetic Stage 0 sanity: load+freeze E, forward, backward, EMA update."""
     _require_torch()
     set_seed(cfg.seed)
     device = device_for_training()
-    modules = tuple(module.to(device) for module in _build_phase1_modules(cfg))
-    _, online_encoder, bottleneck, target_branch, coarse_flow = modules
-    target_branch.copy_weights_from_online(online_encoder, bottleneck)
-    optimizer = make_optimizer(online_encoder, bottleneck, coarse_flow, cfg)
+    modules = _build_and_init(cfg, device, load_encoder=True)
+    encoder, bottleneck, target_bottleneck, coarse_flow = modules
+    assert sum(p.numel() for p in encoder.parameters() if p.requires_grad) == 0, "E not frozen"
+    optimizer = make_optimizer(bottleneck, coarse_flow, cfg)
     batch = (
-        torch.randn(2, 4, 3, 128, 128, device=device),
-        torch.randn(2, 3, 128, 128, device=device),
+        torch.randn(2, cfg.model.t_ctx, 3, cfg.model.h, cfg.model.w, device=device),
+        torch.randn(2, cfg.model.t_ctx, 3, cfg.model.h, cfg.model.w, device=device),
     )
-    before = next(target_branch.target_encoder.parameters()).detach().clone()
+    enc_before = next(encoder.parameters()).detach().clone()
+    ema_before = next(target_bottleneck.parameters()).detach().clone()
     metrics = train_step(batch, modules, optimizer, 0, cfg, device)
-    after = next(target_branch.target_encoder.parameters()).detach().clone()
+    enc_after = next(encoder.parameters()).detach().clone()
+    ema_after = next(target_bottleneck.parameters()).detach().clone()
     assert math.isfinite(metrics["loss"]), metrics
-    assert not torch.equal(before, after), "EMA target parameters did not update"
+    assert torch.equal(enc_before, enc_after), "Frozen encoder params changed"
+    assert not torch.equal(ema_before, ema_after), "B_EMA did not update"
     print(f"Stage 0 sanity passed: {metrics}")
+
+
+def run_diagnostics(
+    batch: tuple[Tensor, Tensor],
+    modules: tuple[nn.Module, nn.Module, nn.Module, nn.Module],
+    cfg: Config,
+    device: torch.device,
+) -> dict[str, float]:
+    """Run Phase 1 diagnostics on a fixed validation batch."""
+    encoder, bottleneck, target_bottleneck, coarse_flow = modules
+    context_clip, target_clip = (x.to(device, non_blocking=True) for x in batch)
+    with torch.no_grad():
+        abstract, target_abstract = _coarse_forward(
+            encoder, bottleneck, target_bottleneck, context_clip, target_clip
+        )
+        eps_c = torch.randn_like(target_abstract)
+        tau_c = torch.rand(target_abstract.shape[0], device=device)
+        z_c = interpolate(target_abstract, eps_c, tau_c)
+    metrics: dict[str, float] = {}
+    metrics.update(variance_stats(abstract))
+    metrics.update(cross_video_cosine(abstract))
+    metrics.update(effective_rank(abstract))
+    metrics.update(coarse_baselines(coarse_flow, z_c, tau_c, abstract, target_abstract, eps_c))
+    metrics.update(gradient_health(nn.ModuleList([bottleneck, coarse_flow])))
+    return metrics
 
 
 def run_training(cfg: Config, steps: int, resume: str | None = None) -> None:
@@ -285,10 +351,9 @@ def run_training(cfg: Config, steps: int, resume: str | None = None) -> None:
     _require_torch()
     set_seed(cfg.seed)
     device = device_for_training()
-    modules = tuple(module.to(device) for module in _build_phase1_modules(cfg))
-    _, online_encoder, bottleneck, target_branch, coarse_flow = modules
-    target_branch.copy_weights_from_online(online_encoder, bottleneck)
-    optimizer = make_optimizer(online_encoder, bottleneck, coarse_flow, cfg)
+    modules = _build_and_init(cfg, device, load_encoder=True)
+    _, bottleneck, target_bottleneck, coarse_flow = modules
+    optimizer = make_optimizer(bottleneck, coarse_flow, cfg)
     start_step = load_checkpoint(resume, modules, optimizer) if resume else 0
     base_lrs = [group["lr"] for group in optimizer.param_groups]
     train_loader = build_dataloader(cfg, "train")
@@ -299,7 +364,8 @@ def run_training(cfg: Config, steps: int, resume: str | None = None) -> None:
         import wandb
 
         wandb.init(
-            project="hjepa-vwm", config=json.loads(json.dumps(cfg, default=lambda o: o.__dict__))
+            project="hjepa-vwm",
+            config=json.loads(json.dumps(cfg, default=lambda o: getattr(o, "__dict__", str(o)))),
         )
     except Exception as exc:  # pragma: no cover - W&B optional for smoke.
         wandb = None
@@ -326,39 +392,9 @@ def run_training(cfg: Config, steps: int, resume: str | None = None) -> None:
     save_checkpoint(checkpoint_dir / f"phase1_step{steps}.pt", steps, modules, optimizer, cfg)
 
 
-def run_diagnostics(
-    batch: tuple[Tensor, Tensor],
-    modules: tuple[nn.Module, nn.Module, nn.Module, nn.Module, nn.Module],
-    cfg: Config,
-    device: torch.device,
-) -> dict[str, float]:
-    """Run Phase 1 diagnostics on a fixed validation batch."""
-    patch_embed, online_encoder, bottleneck, target_branch, coarse_flow = modules
-    context_clip, future_frame = (x.to(device, non_blocking=True) for x in batch)
-    with torch.no_grad():
-        tokens, kept_mask = patch_embed.forward_context(context_clip)
-        detailed = online_encoder(tokens)
-        abstract = bottleneck(detailed, kept_mask)
-        _, target_abstract = target_branch(future_frame)
-        eps_c = torch.randn_like(target_abstract)
-        tau_c = torch.rand(target_abstract.shape[0], device=device)
-        z_c = interpolate(target_abstract, eps_c, tau_c)
-    metrics = latent_std_stats(detailed, abstract)
-    metrics.update(coarse_baselines(coarse_flow, z_c, tau_c, abstract, target_abstract, eps_c))
-    metrics.update(gradient_health(nn.ModuleList([online_encoder, bottleneck, coarse_flow])))
-    return metrics
-
-
 def parse_args() -> argparse.Namespace:
-    """Parse the Phase 1 training CLI.
-
-    The phase docs require `--data`, `--steps`, `--resume`, `--seed`, and
-    `--stage0-only` so the same entry point handles sanity, smoke, and full runs.
-
-    Returns:
-        Parsed CLI namespace used to populate `Config`.
-    """
-    parser = argparse.ArgumentParser(description="Train HJEPA-VWM Phase 1.")
+    """Parse the Phase 1 training CLI."""
+    parser = argparse.ArgumentParser(description="Train HJEPA-VWM Phase 1 (v0.2).")
     parser.add_argument("--data", choices=["ssv2", "ssv2_tiny"], default="ssv2_tiny")
     parser.add_argument("--steps", type=int, default=30_000)
     parser.add_argument("--resume", default=None)
@@ -368,11 +404,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
-    """Run the requested Phase 1 command.
-
-    The entry point selects Stage 0 synthetic sanity or Stage 1 training while
-    keeping later phases out of scope until their phase docs are opened.
-    """
+    """Run the requested Phase 1 command (Stage 0 sanity or Stage 1 training)."""
     args = parse_args()
     cfg = Config()
     cfg.data.dataset = args.data

@@ -4,7 +4,7 @@ Hierarchical JEPA-Flow video world model — planning docs and Phase 1 implement
 
 ## Architecture
 
-HJEPA-VWM trains a video world model whose internal state is a two-level latent hierarchy: a detailed latent `e_t` for local visual detail and a compressed abstract latent `c_t` for future-relevant structure. Phase 1 predicts future abstract latents with a coarse flow model `F_c` against a stop-gradient EMA target branch. This is not a video diffusion model; the compressed predictive state is the core object being tested.
+HJEPA-VWM trains a video world model whose internal state is a two-level latent hierarchy: a detailed latent `e_t` (from a **frozen pretrained V-JEPA 2 ViT-L/16 encoder**, `D_e=1024`) for local visual detail and a compressed abstract latent `c_t` (from a trainable bottleneck `B`, 32×256) for future-relevant structure. Phase 1 predicts the future abstract latent `c⁺_{t+k}` with a conditional rectified-flow model `F_c`, against a stop-gradient **EMA bottleneck** target (`B_EMA`); collapse is prevented by a **variance floor on `c_t`** (no SIGReg). This is not a video diffusion model; the compressed predictive state is the core object being tested.
 
 ## For coding agents
 
@@ -35,13 +35,16 @@ See `AGENT_FILES/SETUPS/VOLUME_LAYOUT.md` and `AGENT_FILES/SETUPS/SETUP.md` step
 
 Phase 1 implements:
 
-- `config.py` — locked constants and path defaults
+- `config.py` — locked constants and path defaults (frozen encoder repo, `D_e=1024`)
 - `make_subset.py` — symlink-only SSv2-tiny creation
-- `data.py` — SSv2 clips: 4 context frames + 1 future frame at 128x128
-- `models.py` — patchifier, online encoder `E`, bottleneck `B`, EMA target branch, coarse flow `F_c`
-- `losses.py` — rectified-flow matching and SIGReg
-- `diagnostics.py` — latent std/effective-rank health, F_c baselines, gradient health
+- `data.py` — SSv2 clips: 8 context frames + 8-frame future clip (horizon `k`) at 256×256, encoder-normalized
+- `models.py` — frozen encoder `E` (V-JEPA 2 ViT-L/16), bottleneck `B`, EMA bottleneck `B_EMA`, coarse flow `F_c`
+- `losses.py` — rectified-flow matching and the variance floor on `c_t`
+- `diagnostics.py` — the three required `c_t` monitors (variance, cross-video cosine, effective rank), F_c baselines, gradient health
 - `train.py` — Stage 0 synthetic sanity and Stage 1 training loop
+
+> The frozen encoder downloads `facebook/vjepa2-vitl-fpc64-256` (~1.2 GB) from Hugging Face on first
+> run and is never trained or checkpointed (reloaded from HF).
 
 Phase 1 does not include `FineFlow`, frame generation, VAE loading, Stage 2–4 logic, or shuffled-c diagnostics.
 
@@ -104,20 +107,21 @@ Expected runtime: about 4–5 hours for 30k steps on an A100 80GB with `ssv2_tin
 
 ## Verification
 
-Local lightweight tests:
+Local lightweight tests (no encoder download — `smoke_test_models` synthesizes `e_t`):
 
 ```bash
 pytest tests/test_phase1_contract.py -q
+python -c "from models import smoke_test_models; smoke_test_models()"
+python -c "from diagnostics import smoke_test_diagnostics; smoke_test_diagnostics()"
 python -m py_compile config.py make_subset.py data.py models.py losses.py diagnostics.py train.py
 ```
 
-RunPod checks after dependencies are installed:
+RunPod checks after dependencies are installed (these download the frozen encoder):
 
 ```bash
 python -c "from config import Config; print(Config())"
 python -c "from data import smoke_test_dataloader; smoke_test_dataloader()"
-python -c "from models import smoke_test_models; smoke_test_models()"
-python -c "from diagnostics import smoke_test_diagnostics; smoke_test_diagnostics()"
+python -c "from models import smoke_test_encoder; smoke_test_encoder()"   # loads + verifies frozen E
 python train.py --stage0-only
 ```
 

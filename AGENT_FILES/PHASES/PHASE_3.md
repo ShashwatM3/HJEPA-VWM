@@ -1,5 +1,12 @@
-# PHASE_3.md — Frame Generation (Stage 4) + Inference
+# PHASE_3.md — Frame Generation (Stage 4) + Inference — v0.2 (frozen encoder)
 
+> **⚠️ v0.2 update.** Inherits the **frozen encoder** (`D_e=1024`), **EMA bottleneck** (`B_EMA`), and
+> **variance floor** (no SIGReg). `e_hat` (the fine-flow output `D` conditions on) now has the
+> encoder-derived dim — `1024` for the clip-level default, shape per the §14 #35 decision. Frames are
+> processed at **256×256** (VAE latent `(B,4,32,32)`), and the **render target is frame `t+k`** (the
+> last frame of the future clip) under the recommended default. Numbers below tagged `128`/`384`/
+> `TargetBranch` are updated inline; exact `e_hat`/`D` token counts lock with the §14 #35 decision.
+>
 > **Agent instruction:** Execute this document top-to-bottom. Completes **v0**. Adds frozen VAE + frame generator `D`, Stage 4 training, multi-step inference rollout, and standalone evaluation with all seven bypass tests from brief §9.
 >
 > **Prerequisites:** Phase 2 acceptance gates passed ([`AGENT_FILES/PHASES/PHASE_2.md`](PHASE_2.md)). Checkpoint at step 105k. Latent hierarchy verified (shuffled-c ≥ 2.0).
@@ -60,31 +67,34 @@ inference_heun_steps: int = 4   # for c_hat and e_hat rollout at eval/inference
 Load via `diffusers.AutoencoderKL.from_pretrained(vae_model_id, cache_dir=hf_cache_dir)`.
 
 - `requires_grad=False`, always `eval()`.
-- **Encode:** `future_frame` `(B,3,128,128)` in **[-1,1]** → latent `(B,4,16,16)`.
+- **Encode:** render-target frame (frame `t+k`) `(B,3,256,256)` in **[-1,1]** → latent `(B,4,32,32)`.
   - Use `.latent_dist.mode()` (deterministic) for training targets per brief §4.4.
   - Multiply by `vae_scale_factor` when storing/using latents if your diffusers version expects it — **pick one convention and use it consistently in D and decode**. Document in code comment.
+  - **Note:** the VAE uses its own [-1,1] pixel range; the *encoder* path uses the V-JEPA processor
+    normalization. Keep the two normalizations separate.
 - **Decode:** latent → RGB `[-1,1]` for visualization.
 
 ### 3.2 VAE latent patchify for D
 
-Per `AGENT_FILES/KNOWLEDGE/UNDERSTANDING.md` §2.4 and §3.8:
+Per `AGENT_FILES/KNOWLEDGE/UNDERSTANDING.md` §2.4 and §3.8 (resolution 256):
 
-1. VAE latent `a_y`: `(B, 4, 16, 16)`.
-2. Patchify with **2×2 spatial patches** → `(B, 64, 16)` where 16 = 4×2×2.
+1. VAE latent `a_y`: `(B, 4, 32, 32)`.
+2. Patchify with **2×2 spatial patches** → `(B, 256, 16)` where 16 = 4×2×2.
 3. Linear proj 16 → 512 for transformer.
-4. Add 2D sin-cos pos embed on 8×8 grid.
+4. Add 2D sin-cos pos embed on 16×16 grid.
 
 ### 3.3 `FrameGenerator` (`D`)
 
 - 12 DiT blocks, dim 512, 8 heads, MLP ratio 4 (~38M params).
-- Self-attention on 64 VAE-latent tokens.
-- Cross-attention: queries from VAE tokens; keys/values from `as_target(e_hat)` projected 384→512.
+- Self-attention on 256 VAE-latent tokens.
+- Cross-attention: queries from VAE tokens; keys/values from `as_target(e_hat)` projected **1024→512**
+  (`e_hat` carries the encoder-derived dim; token count per §14 #35).
 - adaLN-Zero on flow time `τ_x`.
-- Output: proj 512→16, unpatchify → `(B, 4, 16, 16)` velocity in patched space.
+- Output: proj 512→16, unpatchify → `(B, 4, 32, 32)` velocity in patched space.
 
 ### 3.4 Smoke test
 
-- Encode random frame → patchify → D forward with random `e_hat` → velocity shape `(B,64,16)`.
+- Encode random frame → patchify → D forward with random `e_hat` → velocity shape `(B,256,16)`.
 - Backprop L_frame updates **D only** — no grad to E, B, flows, VAE.
 
 ---
@@ -94,7 +104,7 @@ Per `AGENT_FILES/KNOWLEDGE/UNDERSTANDING.md` §2.4 and §3.8:
 Stage 4 only:
 
 ```python
-a_y = vae.encode(future_frame)           # patched to (B, 64, 16)
+a_y = vae.encode(target_frame_tk)        # frame t+k; patched to (B, 256, 16)
 eps_x ~ N(0, I)
 tau_x ~ U(0,1)
 z_x = interpolate(a_y, eps_x, tau_x)
@@ -151,7 +161,7 @@ Expose:
 
 ```python
 def predict_next_frame(context_clip, models, cfg) -> Tensor:
-    """Returns (B, 3, 128, 128) in [-1, 1]."""
+    """Returns (B, 3, 256, 256) in [-1, 1] (rendered frame t+k)."""
 ```
 
 ---
@@ -163,14 +173,14 @@ def predict_next_frame(context_clip, models, cfg) -> Tensor:
 At `step >= 105_000`:
 
 ```python
-for p in chain(E.parameters(), B.parameters(), F_c.parameters(), F_e.parameters()):
+# E is already frozen; freeze the trainable latent modules too:
+for p in chain(B.parameters(), F_c.parameters(), F_e.parameters()):
     p.requires_grad = False
-# EMA branch already no grad
-# VAE already frozen
+# B_EMA already no grad; VAE already frozen; E already frozen
 # Only D.train(); D parameters require grad
 ```
 
-**No EMA updates** during Stage 4 (encoder not training).
+**No EMA updates** during Stage 4 (bottleneck frozen).
 
 ### 6.2 Optimizer
 
@@ -181,11 +191,10 @@ New AdamW param group for D only, lr `2e-4`, same betas/weight decay.
 ### 6.3 Stage 4 training step
 
 ```
-1. Load context_clip, future_frame (encoder frozen — still need future for VAE target)
+1. Load context_clip, target frame t+k (latent stack frozen — need frame t+k for VAE target)
 2. With torch.no_grad():
-     e_t = E(context); c_t = B(e_t, mask)
+     e_t = E(context); c_t = B(e_t)            # frozen encoder + frozen bottleneck
      # Build e_hat for conditioning via one-step fine flow at random tau:
-     target_detailed, target_abstract = TargetBranch(future_frame)
      sample eps_e, tau_e, z_e, u_e, u_e_hat = F_e(..., c_cond=c_plus or c_hat per Stage 4 policy)
      
      # Locked: use predicted coarse at inference-like path for D conditioning
@@ -193,7 +202,7 @@ New AdamW param group for D only, lr `2e-4`, same betas/weight decay.
      # Compute e_hat one-step from F_e with c_cond = as_target(c_hat)
      e_hat = one_step_e(...)
 
-3. a_y = vae.encode_patchified(future_frame)
+3. a_y = vae.encode_patchified(target_frame_tk)
 4. Sample eps_x, tau_x; flow matching through D
 5. L_frame only; backward; step
 ```

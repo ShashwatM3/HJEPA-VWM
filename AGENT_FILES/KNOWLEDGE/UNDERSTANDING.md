@@ -1,7 +1,25 @@
 # UNDERSTANDING.md
 ## Hierarchical JEPA-Flow Video World Model — Comprehension Reference
 
-> **Purpose.** This is an agent-facing comprehension reference for the architecture defined in [`hierarchical_jepa_flow_architecture_brief.pdf`](hierarchical_jepa_flow_architecture_brief.pdf) (same directory). It expands every component of the brief to the level of detail an implementation agent needs to write correct code: explicit shape contracts, exact gradient flow, exact training-stage semantics, exact constants. **There are no unresolved questions in this document.** Every choice not explicitly fixed by the brief has been resolved — either by external research with citation, or by deliberate decision recorded in §14. Where alternatives existed, one was chosen and the others discarded.
+> **⚠️ v0.2 UPDATE BANNER (read first).** This document has been updated in place to reflect the
+> supervisor's flow-matching / frozen-encoder / multi-horizon update. The authoritative spec is now
+> [`BRIEF_V0_2.md`](BRIEF_V0_2.md) (the edited brief), with the conceptual walkthrough in
+> [`SUPERVISOR_FEEDBACK_EXPLAINED.md`](SUPERVISOR_FEEDBACK_EXPLAINED.md) and the encoder rationale in
+> [`FROZEN_ENCODER_RESEARCH.md`](FROZEN_ENCODER_RESEARCH.md). Key changes folded in below:
+> **(1)** encoder `E` is a **frozen pretrained V-JEPA 2 ViT-L/16** (dim `D_e=1024`), shared by both
+> branches — not trained from scratch; **(2)** EMA is on the **bottleneck only** (`B_EMA`); there is
+> no `E_bar`; **(3)** the target is clip-level `c⁺_{t+k} = B_EMA(E(x_{≤t+k}))`; **(4)** collapse
+> prevention is a **variance floor on `c_t` only** (`L = L_flow + 0.1·L_var`) — **SIGReg / VICReg /
+> covariance removed**; **(5)** context is **8 frames @256** (tubelet-2 → `N_ctx=1024`); **(6)**
+> tubelet dropout on the encoder input is **removed**; **(7)** required monitors now include the
+> **cross-video cosine similarity of `c_t`**; **(8)** multi-horizon prediction is **Phase 4**
+> (deferred — see [`../PHASES/PHASE_4.md`](../PHASES/PHASE_4.md)). The original (pre-update) baseline
+> is preserved verbatim in [`BRIEF_V0_1.md`](BRIEF_V0_1.md). Where this banner and §2.6 conflict with
+> older prose elsewhere in this file, **the banner and §2.6 win.**
+>
+> **Purpose.** This is an agent-facing comprehension reference for the architecture defined in
+> [`BRIEF_V0_2.md`](BRIEF_V0_2.md) (and historically the original PDF, preserved as
+> [`BRIEF_V0_1.md`](BRIEF_V0_1.md)). It expands every component of the brief to the level of detail an implementation agent needs to write correct code: explicit shape contracts, exact gradient flow, exact training-stage semantics, exact constants. **There are no unresolved questions in this document.** Every choice not explicitly fixed by the brief has been resolved — either by external research with citation, or by deliberate decision recorded in §14. Where alternatives existed, one was chosen and the others discarded.
 >
 > **How to use.**
 > - Read top to bottom once at the start of any implementation session.
@@ -35,7 +53,7 @@
 
 ## 1. The thesis in one paragraph
 
-We are training a **video world model** whose internal representation is a **hierarchy of two latents**: an abstract latent `c_t` carrying the future-relevant structure of a short context clip, and a detailed latent `e_t` carrying texture and local visual information. The model learns by predicting **future latents**, not future pixels: from `c_t` it predicts `c_plus` (the future abstract state), and from `e_t` plus a coarse condition it predicts `e_plus` (the future detailed state). Both predictions are performed by **flow-matching networks** that learn a continuous-time velocity field transforming Gaussian noise into the future target latent. Future targets `e_plus` and `c_plus` come from an **EMA target encoder** — a slow-moving exponential-moving-average copy of the online encoder — and are always stop-gradient. **The frame decoder is a separate, later-stage module trained only after the latent world model is verified working; it never updates the encoder.** The single most important property of this design — the property all the bypass tests in §9 exist to verify — is that the abstract latent `c_t` must carry **real predictive signal** and must not collapse, copy, or be bypassed by the detailed latent or by the frame decoder.
+We are training a **video world model** whose internal representation is a **hierarchy of two latents**: an abstract latent `c_t` carrying the future-relevant structure of a short context clip, and a detailed latent `e_t` carrying texture and local visual information. **`e_t` is produced by a frozen pretrained video encoder `E` (V-JEPA 2 ViT-L/16); `c_t` is produced by a trainable bottleneck `B` on top of it.** The model learns by predicting **future latents**, not future pixels: from `c_t` it predicts `c_plus` (the future abstract state), and from `e_t` plus a coarse condition it predicts `e_plus` (the future detailed state). Both predictions are performed by **flow-matching networks** that learn a continuous-time velocity field transforming Gaussian noise into the future target latent. The future abstract target is **clip-level**, `c_plus = c⁺_{t+k} = B_EMA(E(x_{≤t+k}))`: the **same frozen encoder** on the future clip, then a **slow-moving EMA copy of the bottleneck**. Targets are always stop-gradient. Because the encoder is frozen and shared, **only the bottleneck has an EMA copy** (`B_EMA`); there is no `E_bar`. **The frame decoder is a separate, later-stage module trained only after the latent world model is verified working; it never updates the encoder or bottleneck.** The single most important property of this design — the property all the bypass tests in §9 exist to verify — is that the abstract latent `c_t` must carry **real predictive signal** and must not collapse, copy, or be bypassed by the detailed latent or by the frame decoder.
 
 This is **not** a video diffusion model. A normal video diffusion model trains a denoiser directly on pixel-space or VAE-latent-space targets; nothing forces it to develop a compressed predictive state. Here, the compressed state is the entire point, and the generative components (the flows, the frame decoder) exist only to teach and to render it.
 
@@ -49,26 +67,29 @@ These are the canonical names and shapes used throughout the codebase. **Any fun
 
 | Symbol | What it is | Shape (without batch) | dtype | Origin |
 |---|---|---|---|---|
-| `X_ctx` | Context clip: the 4 frames immediately preceding the prediction target | `(T=4, C=3, H=128, W=128)` | float32 from loader, bf16 after AMP cast | Dataloader |
-| `y` | Future frame to be predicted (single frame at time `t+1` after the context) | `(C=3, H=128, W=128)` | float32 → bf16 | Dataloader |
+| `X_ctx` | Context clip: the 8 frames immediately preceding the prediction target | `(T=8, C=3, H=256, W=256)` | float32 from loader, bf16 after AMP cast | Dataloader |
+| `X_tgt` | Future clip ending at `t+k` (the prediction target clip) | `(T=8, C=3, H=256, W=256)` | float32 → bf16 | Dataloader |
 
-Pixel values are normalized to **[-1, 1]** (see §13 and §14 #11).
+**v0.2:** the prediction target is a **clip** `x_{≤t+k}` (length-`T` window ending at `t+k`), not a single frame. For Phases 1–3 a single fixed horizon `k` is used; Phase 4 generalizes to `k∈{4,8,16,32}`.
+
+Pixel values use the **frozen encoder's expected normalization** (the V-JEPA processor / ImageNet stats), **not** [-1, 1]. The VAE's [-1, 1] range is a separate Stage-4 concern (see §13 and §14 #11/#27).
 
 ### 2.2 Latents produced by the encoder/bottleneck
 
 | Symbol | What it is | Shape | dtype | Produced by | Branch |
 |---|---|---|---|---|---|
-| `e_t` | Detailed latent of the context clip | `(N_ctx=256, D_e=384)` | bf16 | Online encoder `E` | online (trainable) |
+| `e_t` | Detailed latent of the context clip | `(N_ctx=1024, D_e=1024)` | bf16 | **Frozen** encoder `E` | frozen (no grad) |
 | `c_t` | Abstract latent of the context clip | `(N_c=32, D_c=256)` | bf16 | Online bottleneck `B` | online (trainable) |
-| `e_plus` | Detailed latent of the future frame | `(N_tgt=64, D_e=384)` | bf16, **stop-grad** | EMA target encoder `E_bar` | target (no grad) |
-| `c_plus` | Abstract latent of the future frame | `(N_c=32, D_c=256)` | bf16, **stop-grad** | EMA bottleneck `B_bar` | target (no grad) |
+| `e_plus` | Detailed latent of the future clip | `(N_tgt=1024, D_e=1024)` | bf16, **stop-grad** | **Same frozen** encoder `E` | frozen (no grad) |
+| `c_plus` | Abstract latent of the future clip (`c⁺_{t+k}`) | `(N_c=32, D_c=256)` | bf16, **stop-grad** | EMA bottleneck `B_EMA` | target (no grad) |
 
-Token counts derived from the patch geometry:
-- `N_ctx = 4 frames × (128 / 16)² = 4 × 64 = 256` — context patched with a 1×16×16 tubelet (per-frame 16×16 patches, no temporal merging).
-- `N_tgt = 1 frame × (128 / 16)² = 1 × 64 = 64` — target is a single frame.
+Token counts derived from the encoder's patch geometry (V-JEPA 2: patch 16, **tubelet 2**):
+- `N_ctx = (T/2) × (256 / 16)² = 4 × 256 = 1024` — 8 context frames merged into 4 temporal tokens × 16×16 spatial.
+- `N_tgt = 1024` — the target is a clip with the **same geometry** as the context (clip-level target, v0.2).
+- `D_e = 1024` — fixed by the frozen V-JEPA 2 ViT-L/16 embedding dimension.
 - `N_c = 32` — fixed by the bottleneck's 32 learned query slots, regardless of input length.
 
-During training with tubelet dropout (§3.2.1), `e_t` has a variable post-dropout token count `N_ctx_post ≈ 154` (60% of 256, rounded per-batch); during eval the full 256 is used.
+**No tubelet dropout** in v0.2 (the frozen encoder never saw dropped tokens at pretraining), so `e_t` always has the full `N_ctx=1024` tokens. `e_t` is **frozen** (no grad); only `c_t` is trainable.
 
 ### 2.3 Predictions produced by the flow networks
 
@@ -78,10 +99,10 @@ During training with tubelet dropout (§3.2.1), `e_t` has a variable post-dropou
 | `u_c` | Ground-truth coarse velocity | `(N_c=32, D_c=256)` | bf16 | `c_plus - ε_c` | Constant along trajectory (rectified flow) |
 | `u_c_hat` | Predicted coarse velocity | `(N_c=32, D_c=256)` | bf16 | `F_c(z_c, τ_c, c_t)` | Target of L_c |
 | `c_hat` | One-step prediction of `c_plus`, used as coarse condition for F_e in Stage 3 | `(N_c=32, D_c=256)` | bf16, **stop-grad** when fed to F_e | `(z_c + (1 − τ_c) · u_c_hat).detach()` | One-step Euler — see §14 #5 |
-| `z_e` | Noised version of `e_plus` at flow-time `τ_e` | `(N_tgt=64, D_e=384)` | bf16 | `(1-τ_e)·ε_e + τ_e·e_plus` | `ε_e ~ N(0, I)`, `τ_e ~ U(0,1)`, independently sampled from `τ_c` |
-| `u_e` | Ground-truth fine velocity | `(N_tgt=64, D_e=384)` | bf16 | `e_plus - ε_e` |  |
-| `u_e_hat` | Predicted fine velocity | `(N_tgt=64, D_e=384)` | bf16 | `F_e(z_e, τ_e, e_t, c_cond)` | `c_cond` is `c_plus` (Stage 2) or `stopgrad(c_hat)` (Stage 3) |
-| `e_hat` | Predicted future detailed latent; conditioning into D in Stage 4 | `(N_tgt=64, D_e=384)` | bf16, **stop-grad** when fed to D | Full ODE rollout of F_e (4 Heun steps) at inference; one-step at Stage 4 training-time | See §14 #5 |
+| `z_e` | Noised version of `e_plus` at flow-time `τ_e` | `(N_tgt=64, D_e=1024)` | bf16 | `(1-τ_e)·ε_e + τ_e·e_plus` | `ε_e ~ N(0, I)`, `τ_e ~ U(0,1)`, independently sampled from `τ_c` |
+| `u_e` | Ground-truth fine velocity | `(N_tgt=64, D_e=1024)` | bf16 | `e_plus - ε_e` |  |
+| `u_e_hat` | Predicted fine velocity | `(N_tgt=64, D_e=1024)` | bf16 | `F_e(z_e, τ_e, e_t, c_cond)` | `c_cond` is `c_plus` (Stage 2) or `stopgrad(c_hat)` (Stage 3) |
+| `e_hat` | Predicted future detailed latent; conditioning into D in Stage 4 | `(N_tgt=64, D_e=1024)` | bf16, **stop-grad** when fed to D | Full ODE rollout of F_e (4 Heun steps) at inference; one-step at Stage 4 training-time | See §14 #5 |
 
 ### 2.4 Frame-generator-stage quantities (Stage 4 only)
 
@@ -92,7 +113,13 @@ During training with tubelet dropout (§3.2.1), `e_t` has a variable post-dropou
 | `u_x` | Ground-truth velocity in patched VAE latent space | `(N_vae=64, D_vae_token=16)` | `a_y - ε_x` |
 | `u_x_hat` | Predicted velocity | `(N_vae=64, D_vae_token=16)` | `D(z_x, τ_x, stopgrad(e_hat))`, after D's own unpatchify-projection |
 
-The VAE used is `stabilityai/sd-vae-ft-mse` (frozen). For a 128×128 RGB input it produces a 4×16×16 latent. D's internal model dim is 512; it patchifies the 4×16×16 latent to 8×8=64 tokens of dim 16, projects to 512 for its transformer blocks, then projects back to dim 16 and unpatchifies.
+The VAE used is `stabilityai/sd-vae-ft-mse` (frozen). **v0.2 (256×256):** it produces a `4×32×32`
+latent; patchified with 2×2 spatial patches → **256 tokens** of dim 16, projected to 512 for D's
+transformer blocks, then back to dim 16 and unpatchified. D's internal model dim is 512.
+
+> The `N_vae=64` figures in the §2.4 table rows above are the **128-baseline** numbers; at 256 they
+> become **256** tokens. These (and the exact `e_hat` token count D conditions on) lock when Phase 3
+> is finalized against the §14 #35 detailed-target-geometry decision.
 
 ### 2.5 Flow-time scalars
 
@@ -110,17 +137,18 @@ The VAE used is `stabilityai/sd-vae-ft-mse` (frozen). For a 128×128 RGB input i
 
 | Constant | Value | Where it's used |
 |---|---|---|
-| Number of context frames `T` | 4 | Context clip |
-| Frame spatial size `H × W` | 128 × 128 | All frames |
-| Patch size (T × H × W) | 1 × 16 × 16 | All patchifiers |
-| `N_ctx` (context tokens) | 256 | Output of context patchifier |
-| `N_tgt` (target tokens) | 64 | Output of target patchifier |
+| Number of context frames `T` | **8** | Context clip |
+| Frame spatial size `H × W` | **256 × 256** | All frames |
+| Encoder patch / tubelet (T × H × W) | **2 × 16 × 16** (V-JEPA 2 native) | Frozen encoder tokenization |
+| `N_ctx` (context tokens) | **1024** | Frozen-encoder output `((8/2)·(256/16)²)` |
+| `N_tgt` (target tokens) | **1024** | Future-**clip** target, same geometry |
 | `N_c` (abstract tokens) | 32 | Bottleneck query slot count |
-| `D_e` (detailed latent dim) | 384 | Encoder, F_e, target encoder |
+| `D_e` (detailed latent dim) | **1024** | Frozen encoder output, F_e memory |
 | `D_c` (abstract latent dim) | 256 | Bottleneck output, F_c |
-| Encoder depth | 12 | Online + EMA target encoder |
-| Encoder heads | 6 | Online + EMA target encoder |
-| Encoder MLP ratio | 4 | Online + EMA target encoder |
+| Encoder | **Frozen V-JEPA 2 ViT-L/16** (depth 24, dim 1024, 16 heads, MLP 4, 3D-RoPE) | Shared by both branches; `requires_grad=False` |
+| Encoder HF source | `facebook/vjepa2-vitl-fpc64-256` (V-JEPA 2 ViT-L) | Load + freeze; verify exact repo ID at load |
+| Encoder native resolution | **256 (matches our resolution exactly)** | Frozen encoder input |
+| Bottleneck input projection | 1024 → 256 | First proj in B (`D_e → d_c`) |
 | Bottleneck ConvNeXt blocks | 2 | Before cross-attention in B |
 | Bottleneck cross-attn heads | 8 | In B |
 | F_c blocks | 6 | Coarse flow |
@@ -134,7 +162,7 @@ The VAE used is `stabilityai/sd-vae-ft-mse` (frozen). For a 128×128 RGB input i
 | D heads | 8 | Frame generator |
 | D MLP ratio | 4 | Frame generator |
 | Frame VAE | `stabilityai/sd-vae-ft-mse` | Frozen image VAE for Stage 4 |
-| VAE downsampling | 8× | Yields 16×16 latent for 128×128 input |
+| VAE downsampling | 8× | Yields 32×32 latent for 256×256 input (v0.2) |
 | VAE latent channels | 4 | Single source of truth |
 
 #### Training
@@ -153,17 +181,18 @@ The VAE used is `stabilityai/sd-vae-ft-mse` (frozen). For a 128×128 RGB input i
 | Weight decay | 0.05 | Brief §7 |
 | Gradient clipping (global norm) | 1.0 | Brief §7 |
 | Precision | bf16 AMP | Brief §7 |
-| LR (encoder E, from scratch) | 2e-4 | Brief §7 |
+| LR (encoder E) | **n/a — frozen** | v0.2 (§14 #28) |
 | LR (bottleneck B) | 2e-4 | Brief §7 |
 | LR (F_c) | 4e-4 | Brief §7 |
 | LR (F_e) | 4e-4 | Brief §7 |
 | LR (frame generator D) | 2e-4 | Brief §7 |
 | LR schedule (latent stages 1–3 combined) | 10k warmup, cosine decay over remaining 95k | Brief §7 + §14 #7 |
 | LR schedule (Stage 4) | 3k warmup, cosine decay over remaining 42k | §14 #7 |
-| Tubelet dropout (context only) | 40% | Brief §7 |
+| Tubelet dropout (context only) | **removed (0%)** | v0.2 (§14 #29) — frozen encoder |
 | Condition dropout (flows) | 10% | Brief §7 |
 | EMA momentum `m` start | 0.996 | Brief §3 |
 | EMA momentum `m` end | 0.9999 | Brief §3 |
+| EMA scope | **bottleneck only (`B → B_EMA`)** | v0.2 (§14 #28) — encoder frozen |
 | EMA cosine schedule denominator `S` | 105,000 (sum of latent stages) | §14 #9 |
 
 #### Losses
@@ -171,10 +200,10 @@ The VAE used is `stabilityai/sd-vae-ft-mse` (frozen). For a 128×128 RGB input i
 | Constant | Value | Source |
 |---|---|---|
 | `λ_fine` (L_e weight in total loss) | 1.0 | Brief §4.3 |
-| `λ_e_reg` (SIGReg(e) weight) | 0.02 | Brief §4.3 |
-| `λ_c_reg` (SIGReg(c) weight) | 0.10 | Brief §4.3 |
-| SIGReg `M` (random projections) | 1024 | `lucas-maes/le-wm` reference impl |
-| SIGReg `knots` (integration knots) | 17 | `lucas-maes/le-wm` reference impl |
+| `λ_var` (variance-floor weight) | **0.10** | v0.2 supervisor (§14 #30) |
+| Variance-floor std target | **1.0** (hinge: `max(0, 1.0 − Std(c_j))`) | v0.2 supervisor |
+| Variance floor applies to | **`c_t` only** | v0.2 supervisor |
+| SIGReg / VICReg / covariance loss | **removed (none)** | v0.2 supervisor (§14 #30) |
 
 #### Diagnostic thresholds (§9)
 
@@ -184,23 +213,23 @@ The VAE used is `stabilityai/sd-vae-ft-mse` (frozen). For a 128×128 RGB input i
 | F_c vs batch-mean baseline (val L_c ratio) after Stage 1 step 10k | ≤ 0.50 |
 | Shuffled-c test (L_e ratio shuffled/real) by end Stage 2 | ≥ 1.5 |
 | Shuffled-c test by end Stage 3 | ≥ 2.0 |
-| Per-dim std collapse warning | >15% of dims with std < 0.1× median |
-| Per-dim std collapse hard stop | >30% of dims |
+| Per-dim std collapse warning (`c_t`) | >15% of dims with std < 0.1× median |
+| Per-dim std collapse hard stop (`c_t`) | >30% of dims |
+| **Cross-video cosine of `c_t` — healthy** | **well below ~0.5 (distinct videos → distinct `c_t`)** |
+| **Cross-video cosine of `c_t` — concerning** | **drifting toward 1.0** |
 | Effective rank `c_t` (D=256) — healthy | > 60 |
 | Effective rank `c_t` — concerning | < 20 |
 | Effective rank `c_t` — hard stop | < 5 |
-| Effective rank `e_t` (D=384) — healthy | > 90 |
-| Effective rank `e_t` — concerning | < 30 |
-| Effective rank `e_t` — hard stop | < 8 |
+| Effective rank `e_t` (D=1024) — reference only | frozen encoder; `e_t` cannot collapse (not trained) |
 
 #### Data
 
 | Constant | Value | Source |
 |---|---|---|
 | Frame stride (within a clip) | 2 | §14 #12 |
-| Pixel normalization | [-1, 1] | §14 #11 |
-| Resize policy (train) | shorter-side to 128, then random-crop to 128×128 | §14 R9 |
-| Resize policy (eval) | shorter-side to 128, then center-crop to 128×128 | §14 R9 |
+| Pixel normalization | **encoder's expected normalization** (V-JEPA processor); VAE uses [-1,1] separately in Stage 4 | §14 #27 |
+| Resize policy (train) | shorter-side to **256**, then random-crop to **256×256** | §14 R9 (v0.2) |
+| Resize policy (eval) | shorter-side to **256**, then center-crop to **256×256** | §14 R9 (v0.2) |
 | Horizontal flip | OFF | §14 R10 |
 | Temporal flip | OFF | §14 R10 |
 | Color jitter | brightness=0.4, contrast=0.4, saturation=0.4 (no hue) | §14 R10 |
@@ -211,86 +240,102 @@ The VAE used is `stabilityai/sd-vae-ft-mse` (frozen). For a 128×128 RGB input i
 
 For each module: input, output, parameter budget, behavioral requirements. Every implementation choice is fixed in this section — there are no "either/or"s.
 
-### 3.1 Patchification / tokenization
+### 3.1 Tokenization — handled by the frozen encoder
 
-There are **two patchifiers**, both with patch shape 1×16×16 (temporal × height × width). Both share the same `Conv3d` projection weights — they are the same operator applied to different input lengths.
+In v0.2 we **do not implement our own patchifier or position embeddings.** Tokenization, the 3D
+RoPE position encoding, and the spatio-temporal patch/tubelet projection are all **internal to the
+frozen V-JEPA 2.1 encoder**. We feed it pixel clips (after its own preprocessing/normalization) and
+read out per-tubelet features.
 
-**Context patchifier (input to online encoder):**
-1. Apply `Conv3d` with kernel `(1, 16, 16)`, stride `(1, 16, 16)`, out-channels `D_e=384`. Input `(B, 3, 4, 128, 128)` → output `(B, 384, 4, 8, 8)`.
-2. Reshape to `(B, 256, 384)` (flatten spatial-temporal).
-3. **Add absolute 3D sin-cos position embeddings** factorized along (T, H, W), then summed (V-JEPA v1 convention, see §12). Implementation: precompute three 1D sin-cos tables of lengths 4 (temporal), 8 (height), 8 (width), each of dim 384; for token at index `(t, h, w)` add `pe_t[t] + pe_h[h] + pe_w[w]`. These are constants, not learned.
-4. Apply tubelet dropout (random 40% drop, see §3.2.1).
+- **Context input:** `(B, T=8, C=3, 256, 256)` → encoder → `e_t` of shape `(B, N_ctx=1024, D_e=1024)`.
+- **Target input:** `(B, T=8, C=3, 256, 256)` (future clip ending at `t+k`) → **same frozen encoder**
+  → `e_plus` of shape `(B, N_tgt=1024, D_e=1024)`.
+- Patch geometry (V-JEPA 2): patch 16, **tubelet 2** → `(8/2) × (256/16) × (256/16) = 4 × 16 × 16 =
+  1024` tokens. 3D-RoPE is relative and tolerates our off-native resolution (256 vs native 384) and
+  short clip length.
+- The encoder's own input normalization (via its HF `AutoVideoProcessor`) is used — **not** [-1,1].
 
-**Target patchifier (input to target encoder):**
-1. Apply the same `Conv3d`. Input `(B, 3, 1, 128, 128)` → output `(B, 384, 1, 8, 8)`.
-2. Reshape to `(B, 64, 384)`.
-3. **Add the same 3D sin-cos position embeddings, but with the temporal index set to `T=4`** — i.e., the target is positioned at "the frame immediately after the 4-frame context window." Spatial indices match the context's spatial indices. (The temporal table must therefore have length ≥ 5 in the precomputation; use length 8 for headroom.)
-4. **No tubelet dropout on the target side, ever.**
+### 3.2 Encoder `E` — frozen pretrained V-JEPA 2 ViT-L/16
 
-### 3.2 Online encoder `E` — VideoViT-Small
+`E` is the **pretrained, frozen** video encoder. We do **not** train it and there is **no** separate
+target encoder `E_bar` — the same frozen `E` is applied to both the context clip and the future clip.
 
-Standard ViT-Small dimensions: **depth 12, dim 384, 6 attention heads, MLP ratio 4, no [CLS] token, LayerNorm (pre-norm)**.
+- **Source:** V-JEPA 2 ViT-L/16 (HF `vjepa2` family; repo `facebook/vjepa2-vitl-fpc64-256`).
+  Embedding dim **1024**, depth 24, 16 heads, MLP ratio 4, 3D-RoPE, no [CLS]. Native resolution
+  **256** — exactly our input resolution, so no off-native RoPE stretch.
+  > The originally-picked ViT-B/16 (`D_e=768`) has **no `transformers` repo** (torch.hub only); ViT-L
+  > via HF is the verified clean path and its native 256 matches our resolution (see
+  > [`FROZEN_ENCODER_RESEARCH.md`](FROZEN_ENCODER_RESEARCH.md) decision banner).
+- **Load + freeze:** `requires_grad=False` on all params; always `eval()`; forward under
+  `torch.no_grad()`.
+- **Input:** context (or future) clip `(B, 8, 3, 256, 256)`.
+- **Output:** `e_t` (or `e_plus`) of shape `(B, 1024, 1024)` — `last_hidden_state` /
+  `get_vision_features(...)`.
+- **Parameter budget:** ≈ 80M (frozen — not in any optimizer group).
+- **API sketch:** see [`FROZEN_ENCODER_RESEARCH.md`](FROZEN_ENCODER_RESEARCH.md) §7.
 
-- **Input:** context tokens of shape `(N_ctx_post_dropout ≈ 154, 384)` during training, `(256, 384)` during eval.
-- **Output:** `e_t` of the same shape as input (one output token per input token).
-- **Attention:** full self-attention over all tokens. At ≤256 tokens this is cheap.
-- **Parameter budget:** ≈ 22M (matches ViT-S).
-- **Norm style:** pre-norm.
+#### 3.2.1 No tubelet dropout (v0.2)
 
-#### 3.2.1 Tubelet dropout
-
-Applied only to the context side, with `p_tub = 0.40`. Implementation:
-
-1. After position embeddings are added (so dropped tokens still carry their position info on the *remaining* tokens), select a random 60% of the 256 tokens to keep (per-example mask, sampled fresh each step).
-2. Pass only the kept tokens through `E`.
-3. **Output `e_t` therefore has a variable token count during training** (~154 expected, varies). The flows F_c and F_e use cross-attention with `e_t` as keys/values, so variable length is naturally supported.
-4. Save the binary kept-mask so the bottleneck (§3.3) can reconstruct the spatial grid for ConvNeXt mixing.
-
-The EMA target encoder `E_bar` never has tubelet dropout — it always processes all 64 target tokens.
+Tubelet dropout is **removed.** A frozen pretrained encoder never saw dropped tokens at pretraining,
+so masking its input feeds it out-of-distribution data. `e_t` therefore always has the full
+`N_ctx=1024` tokens. If a shortcut-prevention knob is wanted later, apply light masking **inside the
+trainable bottleneck**, not at the encoder input (decision: §14 #29).
 
 ### 3.3 Bottleneck `B`
 
-Compresses `e_t` (~154 context tokens of dim 384, post-dropout) into `c_t` (32 abstract tokens of dim 256). Or compresses `e_plus` (64 target tokens of dim 384) into `c_plus` (32 tokens of dim 256) on the EMA branch — same architecture, applied to a different input length.
+Compresses `e_t` (1024 context tokens of dim **1024**) into `c_t` (32 abstract tokens of dim 256). The **same architecture** compresses `e_plus` (1024 future-clip tokens of dim 1024) into `c_plus` (32 tokens of dim 256) on the EMA branch. **This is the only trainable module on the encoder side.**
 
 **Structure (fixed):**
 
-1. **Spatial-grid reconstruction + per-frame 2D ConvNeXt mixing (2 blocks).**
-   - **Context side:** using the kept-mask from §3.2.1, scatter the ~154 surviving `e_t` tokens back into a `(B, 4, 8, 8, 384)` grid, with dropped slots filled with zero vectors. Reshape to `(B·4, 8, 8, 384)` so each of the 4 frame grids is a separate "image" for the conv.
-   - **Target side:** reshape `e_plus` directly to `(B, 1, 8, 8, 384)` → `(B, 8, 8, 384)`.
-   - Apply 2 ConvNeXt-V2-style blocks to the spatial grid. Each block: `Conv2d` 7×7 depthwise with channel dim 384 → LayerNorm → pointwise linear 384→4·384 → GELU → pointwise linear 4·384→384, with a residual connection. Weights shared between the two blocks's structure but each block has its own parameters. The same B is applied to all 4 context frame grids (weights shared across the 4) and to the 1 target grid.
-   - After the ConvNeXt blocks, flatten spatial back to tokens: context becomes `(B, 256, 384)` (including the zero-filled dropped slots), target stays `(B, 64, 384)`.
-   - **Drop the zero-filled positions back out** for the context side (using the kept-mask) so the cross-attention sees only real tokens: back to `(B, ~154, 384)`.
+0. **Input projection 1024 → (mixer width).** First project the frozen `e_t` from `D_e=1024` down to
+   the mixer/working width before ConvNeXt. (No kept-mask, no zero-fill — tubelet dropout is removed
+   in v0.2, so all 1024 tokens are real.)
+
+1. **Spatial-grid reconstruction + per-temporal-slot 2D ConvNeXt mixing (2 blocks).**
+   - Reshape the 1024 tokens into a `(B, 4, 16, 16, ·)` grid (4 temporal tokens × 16×16 spatial), then
+     to `(B·4, 16, 16, ·)` so each of the 4 temporal slots is a separate "image" for the conv.
+   - Apply 2 ConvNeXt-V2-style blocks: `Conv2d` 7×7 depthwise → LayerNorm → pointwise linear
+     (×4 expansion) → GELU → pointwise linear, with a residual. Each block has its own parameters;
+     weights shared across the 4 temporal-slot grids (and applied identically to the target grid).
+   - Flatten spatial back to `(B, 1024, ·)`.
 
 2. **Cross-attention to 32 learned query embeddings.** A single cross-attention layer:
-   - Queries: 32 learnable embeddings of dim 256 (parameters of B, no per-input conditioning), broadcast to batch.
-   - Keys, values: post-mixer tokens projected from dim 384 to dim 256 by a linear layer, then used as `(N_input, 256)` keys/values.
+   - Queries: 32 learnable embeddings of dim 256 (parameters of B), broadcast to batch.
+   - Keys, values: post-mixer tokens projected to dim 256, used as `(N_input=1024, 256)` keys/values.
    - 8 attention heads.
    - Output: 32 tokens of dim 256.
 
-3. **Output MLP block.** One transformer-style block on the 32 output tokens: LayerNorm → linear 256→1024 → GELU → linear 1024→256, with residual. Final LayerNorm.
+3. **Output MLP block.** One transformer-style block on the 32 output tokens: LayerNorm → linear
+   256→1024 → GELU → linear 1024→256, with residual. Final LayerNorm.
 
-**Parameter budget:** ≈ 3M.
+**Parameter budget:** ≈ 4–5M (slightly larger than v0.1 due to the 1024→256 input projection).
 
 **Outputs:**
-- Online branch: `c_t = B(e_t, kept_mask_ctx)` — `(32, 256)`.
-- Target branch: `c_plus = B_bar(e_plus, None)` — `(32, 256)`, then `.detach()`.
+- Online branch: `c_t = B(e_t)` — `(32, 256)`.
+- Target branch: `c_plus = B_EMA(e_plus)` — `(32, 256)`, then `.detach()`.
 
-### 3.4 EMA target branch (`E_bar`, `B_bar`)
+### 3.4 EMA target branch (`B_EMA` only)
 
-Structurally identical to the online branch. Updated only by EMA (§7), never by backprop.
+In v0.2 the encoder is **frozen and shared**, so there is **no `E_bar`** — the same frozen `E`
+produces both `e_t` (context) and `e_plus` (future clip). Only the **bottleneck** has an EMA copy.
 
-- `E_bar`: takes `(64, 384)` target tokens (single frame, no dropout). Outputs `e_plus` of shape `(64, 384)`.
-- `B_bar`: takes `e_plus`. Outputs `c_plus` of shape `(32, 256)`.
+- `E` (shared, frozen): future clip `(B, 8, 3, 256, 256)` → `e_plus` `(B, 1024, 1024)`.
+- `B_EMA`: takes `e_plus`. Outputs `c_plus` `(B, 32, 256)`, then `.detach()` (stop-grad).
 
 **Implementation requirements:**
-- Separate `nn.Module` instances (not weight-sharing — they are independent parameter copies that the EMA rule keeps approximately aligned).
-- `param.requires_grad = False` on every parameter.
-- Permanently in `eval()` mode (deterministic — no dropout). Since this architecture uses only LayerNorm (no BatchNorm) this is largely a no-op for normalization layers; but it does ensure tubelet dropout in `E_bar`'s patchifier is disabled (which is already the design rule, but `eval()` reinforces it).
-- Initialized at Stage 0 by copying `E.state_dict()` into `E_bar` and `B.state_dict()` into `B_bar`.
+- `B_EMA` is a separate `nn.Module` copy of `B`; independent parameters kept aligned by the EMA rule.
+- `param.requires_grad = False` on every `B_EMA` parameter; permanently `eval()`.
+- Initialized at Stage 0 by copying `B.state_dict()` into `B_EMA`. (No encoder copy needed.)
+- EMA updates run on `B → B_EMA` only (§7).
 
-### 3.5 Asymmetry between context and target representations
+### 3.5 Symmetry between context and target representations (v0.2)
 
-The target encoder processes the **full unmasked future frame**. There is no target-side masking or dropout. All 64 target tokens become prediction targets. The asymmetry between context (multi-frame, 256 tokens, with tubelet dropout) and target (single frame, 64 tokens, no dropout) is the architectural expression of the I-JEPA design principle: the target encoder runs on a fully visible input to produce semantically rich representations that the predictor must regress against.
+Both branches now use the **same frozen encoder** on length-`T` clips, so context and target have
+**identical geometry** (`1024` tokens, dim `1024`). The target is the future clip `x_{≤t+k}` (the
+window ending `k` frames later). The bottleneck (`B` online, `B_EMA` target) is the only difference
+between the two paths. This is cleaner than v0.1's context/target asymmetry and follows the
+supervisor's `c⁺_{t+k} = B_EMA(E(x_{≤t+k}))` target definition. The I-JEPA principle still holds —
+the target representation is produced by a stable (EMA) module and is stop-gradient.
 
 ### 3.6 Coarse flow `F_c`
 
@@ -359,30 +404,24 @@ Render the predicted future frame from `stopgrad(e_hat)`, in the latent space of
 This section traces one training batch through the **Stage 3** latent path — the most complete latent stage (coarse + fine flows, predicted-coarse conditioning after ramp). Shapes omit batch dim `B` unless noted. Every `.detach()` / `as_target()` placement is explicit.
 
 **Batch from dataloader:**
-- `X_ctx`: `(4, 3, 128, 128)` — context frames, pixels in **[-1, 1]**
-- `y`: `(3, 128, 128)` — future frame, **[-1, 1]**
+- `X_ctx`: `(8, 3, 256, 256)` — context clip, encoder-normalized
+- `X_tgt`: `(8, 3, 256, 256)` — future clip ending at `t+k`, encoder-normalized
 
-### Step 1 — Context patchify + tubelet dropout
-
-```
-tokens_ctx, kept_mask = patchify_context(X_ctx)
-# tokens_ctx: (N_ctx_post ≈ 154, 384) after 40% tubelet dropout
-# kept_mask: (256,) binary, for bottleneck grid reconstruction
-```
-
-Position embeddings added **before** dropout; surviving tokens retain their spatial-temporal coordinates.
-
-### Step 2 — Online encoder
+### Step 1 — Frozen encoder on context (no grad)
 
 ```
-e_t = E(tokens_ctx)
-# e_t: (N_ctx_post ≈ 154, 384)
+with torch.no_grad():
+    e_t = E(X_ctx)        # frozen V-JEPA 2 ViT-L/16; e_t: (1024, 1024)
 ```
 
-### Step 3 — Online bottleneck
+No patchifier / pos-embed / tubelet dropout on our side — all internal to the frozen encoder.
+
+### Step 2 — (folded into Step 1; `e_t` is the frozen encoder output)
+
+### Step 3 — Online bottleneck (trainable)
 
 ```
-c_t = B(e_t, kept_mask)
+c_t = B(e_t)
 # c_t: (32, 256)
 ```
 
@@ -390,10 +429,9 @@ c_t = B(e_t, kept_mask)
 
 ```
 with torch.no_grad():
-    tokens_tgt = patchify_target(y)           # (64, 384), no dropout
-    e_plus = E_bar(tokens_tgt)                # (64, 384)
-    c_plus = as_target(B_bar(e_plus))         # (32, 256), detached
-    e_plus = as_target(e_plus)                # (64, 384), detached
+    e_plus = E(X_tgt)                  # SAME frozen encoder; (1024, 1024)
+    c_plus = as_target(B_EMA(e_plus))  # (32, 256), detached  (= c⁺_{t+k})
+    e_plus = as_target(e_plus)         # (1024, 1024), detached
 ```
 
 ### Step 5 — Sample flow noise and times
@@ -459,12 +497,11 @@ u_e_hat = F_e(z_e, tau_e, memory)               # (64, 384)
 ```
 L_c = mean((u_c_hat - u_c) ** 2)
 L_e = mean((u_e_hat - u_e) ** 2)
-L_reg_e = SIGReg(e_t)    # online detailed latent only
-L_reg_c = SIGReg(c_t)    # online abstract latent only
-L = L_c + 1.0 * L_e + 0.02 * L_reg_e + 0.10 * L_reg_c
+L_var = variance_floor(c_t)        # (1/d) Σ_j max(0, 1.0 - Std(c_j)); c_t only
+L = L_c + 1.0 * L_e + 0.10 * L_var
 ```
 
-See §5 for gradient routing.
+See §5 for gradient routing. (No SIGReg — removed in v0.2.)
 
 ### Step 13 — Backward + clip + optimizer step
 
@@ -475,20 +512,20 @@ optimizer.step()
 optimizer.zero_grad()
 ```
 
-Trainable in Stage 3: `E`, `B`, `F_c`, `F_e`. Not trainable: `E_bar`, `B_bar`, detached targets.
+Trainable in Stage 3: `B`, `F_c`, `F_e`. Not trainable: **frozen `E`**, `B_EMA`, detached targets.
 
 **Verify:** `c_hat` path into `F_e` uses `as_target(c_hat)` so **no gradient from L_e reaches F_c**.
 
-### Step 14 — EMA update (latent stages only)
+### Step 14 — EMA update (latent stages only; bottleneck only)
 
 ```
 m = ema_cosine(step, start=0.996, end=0.9999, total=105_000)
-for p_online, p_ema in zip(E.params, E_bar.params):
+for p_online, p_ema in zip(B.parameters(), B_EMA.parameters()):
     p_ema.lerp_(p_online, 1 - m)
-# Same for B → B_bar
+# No encoder EMA — E is frozen and shared.
 ```
 
-No EMA update during Stage 4 (encoder frozen).
+No EMA update during Stage 4 (bottleneck frozen too).
 
 ### Stage 4 forward (frame generator) — abbreviated
 
@@ -529,9 +566,9 @@ L_c = mean_square(F_c(z_c, τ_c, c_t) - u_c)
 
 | Receives gradients from L_c | Does NOT receive gradients |
 |---|---|
-| `E`, `B`, `F_c` | `E_bar`, `B_bar`, `c_plus`, `e_plus` |
+| `B`, `F_c` | `E` (frozen), `B_EMA`, `c_plus`, `e_plus` |
 
-`c_t` is **not** stop-gradient on the conditioning path — the encoder must learn predictive abstract states.
+`c_t` is **not** stop-gradient on the conditioning path — the **bottleneck** must learn predictive abstract states (the encoder `E` is frozen, so the learning happens in `B`).
 
 ### 5.2 Fine JEPA-flow loss `L_e`
 
@@ -555,38 +592,39 @@ L_e = mean_square(F_e(z_e, τ_e, e_t, c_cond) - u_e)
 
 During Stage 3 ramp, `c_cond` is a convex mix; only the `c_hat` portion is detached — the `c_plus` portion is already stop-grad from EMA.
 
-### 5.3 SIGReg — Gaussian latent regularization
+### 5.3 Variance floor — collapse prevention (v0.2; replaces SIGReg)
 
-**Sketched Isotropic Gaussian Regularization** (LeJEPA / Balestriero & LeCun, arXiv:2511.08544). Reference implementation: `lucas-maes/le-wm`.
+**SIGReg / VICReg / covariance losses are removed.** Collapse prevention is minimal: a **variance
+floor on `c_t` only** (supervisor directive). The frozen encoder cannot collapse, so `e_t` needs no
+regularization; only the bottleneck output `c_t` can collapse.
 
-Applied to **online latents only**: `e_t` and `c_t` (brief §4.3 names `e_t` and `c_t` explicitly — not EMA branch outputs).
-
-Mechanism (summary):
-1. Flatten tokens per batch: `(B, N, D) → (B·N, D)` or pool — match reference impl structure.
-2. Draw `M=1024` random 1D projection directions (Cramér-Wold).
-3. Project latents; test each projection against N(0,1) via **Epps-Pulley** characteristic-function statistic.
-4. Integrate over `knots=17` points with trapezoidal rule.
-5. Return scalar loss.
-
-Hyperparameters `M` and `knots` are **not** sensitive per LeJEPA ablations — only λ weights matter for tuning.
+Mechanism:
+1. Flatten `c_t` across slots/features per batch (so each of the `d` feature dimensions has a column
+   of values across the batch).
+2. Compute the **per-dimension standard deviation** `Std(c_j)`.
+3. Hinge each dimension at a target std of **1.0**: `max(0, 1.0 − Std(c_j))`.
+4. Average over the `d` dimensions.
 
 ```
-L_reg = λ_e_reg · SIGReg(e_t) + λ_c_reg · SIGReg(c_t)
-λ_e_reg = 0.02,  λ_c_reg = 0.10
+L_var = (1 / d) · Σ_j max(0, 1.0 − Std(c_j))
+L_reg = λ_var · L_var,   λ_var = 0.10   (i.e. total adds 0.1 · L_var)
 ```
 
-SIGReg is active from **Stage 1 step 0** (both latents), even before `F_e` exists — prevents `e_t` drift that would complicate Stage 2 entry.
-
-**Why SIGReg specifically:** flow networks start from `N(0,I)` noise; regularizing latents toward isotropic Gaussian aligns the representation distribution with the generative source distribution.
+`L_var` is active from **Stage 1 step 0** (on `c_t`). It is a **guardrail, not a teacher**: it only
+prevents `c_t` from going constant. The **flow-matching objective** is what makes `c_t` meaningful.
+Do **not** over-weight `λ_var` or add covariance/SIGReg terms (§14 #30).
 
 ### 5.4 Total latent objective (Stages 1–3)
 
 ```
-L_latent = L_c + λ_fine · L_e + λ_e_reg · SIGReg(e_t) + λ_c_reg · SIGReg(c_t)
+L_latent = L_c + λ_fine · L_e + 0.1 · L_var(c_t)
 λ_fine = 1.0
 ```
 
-**Stage 1 only:** `L_latent = L_c + λ_e_reg · SIGReg(e_t) + λ_c_reg · SIGReg(c_t)` (no L_e).
+(`L_c` is the coarse flow-matching loss `L_flow` of §5.1, conditioned on `c_t`.)
+
+**Stage 1 only:** `L_latent = L_c + 0.1 · L_var(c_t)` (no L_e). This matches the supervisor's
+`L = L_flow + 0.1·L_var` for the coarse stage.
 
 ### 5.5 Frame generator loss `L_frame` (Stage 4 only)
 
@@ -610,49 +648,57 @@ Complete enumeration. Use centralized `as_target(x)` helper in code (`AGENT_FILE
 
 | # | Tensor / module | Stop-grad? | Where | Rationale |
 |---|---|---|---|---|
-| 1 | `e_plus` | **Always yes** | After `E_bar` output | EMA target — predicted, never optimized |
-| 2 | `c_plus` | **Always yes** | After `B_bar` output | Same |
+| 0 | Encoder `E` | **Frozen — no grad ever** | All stages, both branches | Pretrained, never updated |
+| 1 | `e_plus` (= `e_{t+k}`) | **Always yes** | After frozen `E` on future clip | Target side — predicted, never optimized |
+| 2 | `c_plus` (= `c⁺_{t+k}`) | **Always yes** | After `B_EMA` output | EMA target — never optimized |
 | 3 | `c_hat` → `F_e` input | **Yes** | Stage 3+ before `c_cond` | Prevents L_e from backprop into F_c |
 | 4 | `e_hat` → `D` input | **Yes** | Stage 4 always | Frame gen must not rewrite world model |
-| 5 | `E_bar`, `B_bar` | **No backprop ever** | All stages | EMA update only |
-| 6 | `e_t`, `c_t` on flow conditioning | **No** | Latent training | Encoder/bottleneck must learn predictive structure |
+| 5 | `B_EMA` | **No backprop ever** | All stages | EMA update only |
+| 6 | `c_t` on flow conditioning | **No** | Latent training | Bottleneck must learn predictive structure |
 | 7 | `u_c_hat` → `c_hat` → `F_e` | **Partial** | `c_hat` detached; `u_c_hat` not detached w.r.t. L_c | L_c trains F_c; L_e must not |
-| 8 | VAE encode/decode | **Always yes** | Stage 4 | Frozen pretrained encoder |
+| 8 | VAE encode/decode | **Always yes** | Stage 4 | Frozen pretrained VAE |
 | 9 | Latent stack in Stage 4 | **Frozen (no grad)** | `requires_grad=False` | Only D trains |
 
-**Invariant:** Anything from `E_bar` or `B_bar` is detached. Nothing from `E` or `B` is detached on the path into losses as conditioning (except where explicitly noted for `c_hat` into `F_e`).
+**Invariant:** The encoder `E` and `B_EMA` are detached/frozen on every path. `e_t` is from a frozen
+encoder (already no-grad). `c_t` from the trainable `B` is **not** detached on the conditioning path
+(except `c_hat` into `F_e`, row 3).
 
 ---
 
 ## 7. EMA: what, where, how, schedule
 
-### What is EMA'd
+### What is EMA'd (v0.2)
 
-Only the **target branch** copies: `E_bar` (target encoder) and `B_bar` (target bottleneck). Flow networks and frame generator are **not** EMA'd.
+Only the **bottleneck**: `B_EMA` (target bottleneck). The encoder is **frozen** (nothing to EMA — it
+is identical on both branches). Flow networks and frame generator are **not** EMA'd.
 
 ### Initialization (Stage 0)
 
 At training start, before any optimizer step:
 
 ```
-E_bar.load_state_dict(E.state_dict())
-B_bar.load_state_dict(B.state_dict())
+B_EMA.load_state_dict(B.state_dict())
+# Encoder E is loaded pretrained and frozen; no target-encoder copy exists.
 ```
 
 ### Update rule (after each optimizer step, Stages 1–3)
 
 ```
 m = ema_cosine(step, m_start=0.996, m_end=0.9999, S=105_000)
-θ_ema ← m · θ_ema + (1 - m) · θ_online
+θ_B_EMA ← m · θ_B_EMA + (1 - m) · θ_B
 ```
 
-Implemented as `p_ema.lerp_(p_online, 1 - m)` in PyTorch.
+Implemented as `p_ema.lerp_(p_online, 1 - m)` in PyTorch, over `B`'s parameters only.
 
-The schedule is **parametric** (cosine in step index), not tied to loss dynamics. `S = 105_000` = sum of latent training stages (30k + 25k + 50k). During Stage 4, EMA updates **do not run** (encoder frozen).
+The schedule is **parametric** (cosine in step index). `S = 105_000` = sum of latent training stages
+(30k + 25k + 50k). During Stage 4, EMA updates **do not run** (bottleneck frozen too).
 
 ### Why EMA targets exist
 
-The online encoder chases a moving target if trained against its own immediate outputs. The slow EMA branch provides **stable future representations** to predict, following I-JEPA / V-JEPA practice. Without EMA + stop-grad, representations collapse or chase the predictor every step.
+The bottleneck chases a moving target if trained against its own immediate outputs. The slow EMA copy
+provides **stable future abstract representations** to predict, following I-JEPA / V-JEPA practice.
+Without EMA + stop-grad, representations collapse or chase the predictor every step. (In v0.2 only the
+bottleneck can move, since the encoder is frozen — so only the bottleneck needs the EMA safeguard.)
 
 ---
 
@@ -675,23 +721,23 @@ Stages 0–5 from the brief. **v0 implements Stages 0–4 only.** Stage 5 is opt
 
 **Train:** nothing. **Loss:** none.
 
-Pass condition: dataloader loads batches; all modules construct; `E_bar`/`B_bar` initialized from online copies; one synthetic forward + backward + EMA update completes without NaN; bf16 AMP stable.
+Pass condition: dataloader loads batches; all modules construct; **frozen `E` loads with `requires_grad=False`**; `B_EMA` initialized from `B`; one synthetic forward + backward + EMA update completes without NaN; bf16 AMP stable.
 
 ### Stage 1 — Coarse dynamics
 
-**Train:** `E`, `B`, `F_c`. **Frozen:** `E_bar`, `B_bar` (no grad, EMA updated).
+**Train:** `B`, `F_c`. **Frozen:** `E` (pretrained), `B_EMA` (no grad, EMA updated).
 
-**Loss:** `L_c + λ_e_reg·SIGReg(e_t) + λ_c_reg·SIGReg(c_t)`.
+**Loss:** `L_c + 0.1·L_var(c_t)`  (= supervisor's `L_flow + 0.1·L_var`).
 
 **Pass condition:**
-- `c_t` non-collapsed (effective rank > 60, std health).
+- `c_t` non-collapsed (effective rank > 60, variance health, cross-video cosine well below ~0.5).
 - `F_c` beats **copy baseline** (val L_c ratio ≤ 0.70) and **batch-mean baseline** (≤ 0.50) after step ≥ 10k.
 
 Copy baseline = predict future abstract state equals current `c_t`. Batch-mean = predict `c_plus` as mean of batch's `c_plus`.
 
 ### Stage 2 — Fine teacher-forcing
 
-**Train:** `E`, `B`, `F_c`, `F_e`. **Condition:** `c_cond = c_plus`.
+**Train:** `B`, `F_c`, `F_e` (E frozen). **Condition:** `c_cond = c_plus`.
 
 **Loss:** full `L_latent`.
 
@@ -701,7 +747,7 @@ Copy baseline = predict future abstract state equals current `c_t`. Batch-mean =
 
 ### Stage 3 — Predicted-coarse fine training
 
-**Train:** same modules. **Condition ramp:** linear mix from `c_plus` to `as_target(c_hat)` over first **5,000** steps of Stage 3 (steps 55k→60k), then 100% predicted-coarse.
+**Train:** `B`, `F_c`, `F_e` (E frozen). **Condition ramp:** linear mix from `c_plus` to `as_target(c_hat)` over first **5,000** steps of Stage 3 (steps 55k→60k), then 100% predicted-coarse.
 
 **Loss:** full `L_latent`.
 
@@ -725,7 +771,7 @@ Brief: small LR fine-tune of `D`, maybe brief `F_e` unfreeze. Enter only if all 
 
 | Module | LR | AdamW β | Weight decay |
 |---|---|---|---|
-| `E` | 2e-4 | (0.9, 0.95) | 0.05 |
+| `E` | **frozen (no optimizer group)** | — | — |
 | `B` | 2e-4 | (0.9, 0.95) | 0.05 |
 | `F_c` | 4e-4 | (0.9, 0.95) | 0.05 |
 | `F_e` | 4e-4 | (0.9, 0.95) | 0.05 |
@@ -739,9 +785,14 @@ Latent LR schedule: **10k warmup**, cosine decay over remaining **95k** steps (S
 
 Run every **500–1,000** steps on a **fixed validation batch** (cache at init). Thresholds from §2.6.
 
-### 9.1 Latent std
+> **v0.2 required minimum monitors (supervisor):** variance of `c_t` (§9.1), cross-video cosine
+> similarity of `c_t` (§9.1b), effective rank of `c_t` (§9.2). All on `c_t` (the only thing that can
+> collapse — the encoder is frozen).
 
-**Measure:** per-dimension mean and std of `e_t` and `c_t` across val batch.
+### 9.1 Variance of `c_t`
+
+**Measure:** per-dimension std of `c_t` across the val batch (the same quantity the variance floor
+acts on, §5.3); report mean and the fraction of near-zero dims.
 
 **Failure:** many dimensions → 0 or flatline.
 
@@ -750,14 +801,28 @@ Run every **500–1,000** steps on a **fixed validation batch** (cache at init).
 | Warning | > 15% of dims with std < 0.1× median std |
 | Hard stop | > 30% of dims |
 
-### 9.2 Effective rank
+### 9.1b Cross-video cosine similarity of `c_t`
 
-**Measure:** covariance effective rank of flattened `e_t` and `c_t`.
+**Measure:** flatten `c_t` per video; compute mean pairwise cosine similarity across **different**
+videos in the val batch.
+
+**Failure:** value approaches 1.0 — all videos map to nearly the same direction (collapse that
+variance alone misses).
+
+| Level | Condition |
+|---|---|
+| Healthy | mean pairwise cosine well below ~0.5 |
+| Concerning | drifting toward 1.0 |
+
+### 9.2 Effective rank of `c_t`
+
+**Measure:** covariance effective rank of flattened `c_t`.
 
 | Latent | Healthy | Concerning | Hard stop |
 |---|---|---|---|
 | `c_t` (D=256) | > 60 | < 20 | < 5 |
-| `e_t` (D=384) | > 90 | < 30 | < 8 |
+
+(`e_t` is from a frozen encoder and cannot collapse; its rank is a reference quantity only.)
 
 ### 9.3 Coarse baseline (F_c vs trivial predictors)
 
@@ -805,12 +870,13 @@ From brief §11, expanded with **consequences of violation** and **code invarian
 
 | Constraint | Consequence if violated | Code invariant |
 |---|---|---|
-| Target branch always stop-grad + EMA | Target chases predictor; collapse or trivial solutions | `as_target()` on all `E_bar`/`B_bar` outputs; no optimizer group for EMA params |
-| `c_t` bandwidth << `e_t` | Abstract state copies detailed latent; hierarchy fake | `N_c=32, D_c=256` vs `N_ctx=256, D_e=384`; monitor effective rank |
+| Encoder pretrained + frozen | System becomes from-scratch trainer; encoder collapse confound | `requires_grad=False` on `E`; no optimizer group; forward under `no_grad` |
+| Target branch always stop-grad + EMA (**bottleneck EMA**) | Target chases predictor; collapse or trivial solutions | `as_target()` on `B_EMA`/`E` target outputs; no optimizer group for `B_EMA` |
+| `c_t` bandwidth << `e_t` | Abstract state copies detailed latent; hierarchy fake | `N_c=32, D_c=256` vs `N_ctx=1024, D_e=1024`; monitor effective rank + cross-video cosine |
 | `F_e` tested with shuffled/zero `c` | Decorative hierarchy passes undetected | `shuffled_c_test` in diagnostics; hard gate §9.4 |
 | `L_e` must not backprop through `c_hat` into `F_c` | Fine loss turns `c` into texture carrier | `c_cond = as_target(c_hat)`; autograd test in Phase 2 |
 | Frame decoder after latent learning; no encoder updates from frame loss | System becomes normal video generator | `requires_grad=False` on latent stack in Stage 4; `as_target(e_hat)` into D |
-| SIGReg + tubelet dropout together | Collapse or shortcut learning | Both active Stage 1+; 40% context dropout only |
+| Variance floor on `c_t` (no SIGReg/VICReg/covariance) | Constant/collapsed `c_t` passes undetected | `L_var` active Stage 1+; `λ_var=0.10`; **do not** add SIGReg/covariance |
 | No horizontal/temporal flip on SSv2 | Label leakage / wrong semantics | Assert augmentations in `data.py` |
 | Independent τ_c, τ_e | (Weaker training signal if tied) | Sample separately per example |
 
@@ -826,13 +892,20 @@ A single latent either carries everything (no compression — bypassable) or col
 
 Flow matching provides a **continuous generative path** from noise to target, conditioned on context. It matches the SIGReg Gaussian prior (noise is N(0,I)). Direct MSE on endpoints is harder to optimize and less compatible with the later frame generator also trained via flow matching.
 
-### Why context/target asymmetry?
+### Why context/target symmetry (v0.2)?
 
-Context: 4 frames, 256 tokens, tubelet dropout — forces inference from partial views. Target: 1 full frame, 64 tokens, no dropout — rich EMA targets following **I-JEPA** (target encoder sees full input).
+Both branches use the **same frozen encoder** on length-`T` clips, so context and target share
+geometry (`1024` tokens, dim `1024`). The target is the future clip `x_{≤t+k}`. The only difference is
+the bottleneck (`B` online vs `B_EMA` target). Stability comes from the EMA bottleneck + stop-grad,
+following **I-JEPA / V-JEPA** practice — not from a context/target masking asymmetry.
 
-### Why SIGReg, not VICReg?
+### Why a variance floor, not SIGReg/VICReg (v0.2)?
 
-Flow predictors start from Gaussian noise; isotropic Gaussian regularization aligns latent statistics with the generative source. VICReg adds variance/covariance tuning burden without matching the flow prior as directly (LeJEPA line).
+With a **frozen** encoder, only `c_t` (the bottleneck output) can collapse, and the EMA target +
+flow objective already do most of the anti-collapse work. So the supervisor specified the **simplest
+possible** guardrail — a per-dimension variance floor on `c_t` — and explicitly **no SIGReg, no full
+VICReg, no covariance loss.** The variance floor only prevents constant `c_t`; the flow objective
+learns the semantics. (SIGReg was the v0.1 choice; superseded — see §14 #30.)
 
 ### Why frame generator last?
 
@@ -853,7 +926,8 @@ Stable prediction targets across steps. Without EMA, the target moves every grad
 | Flow matching / rectified flow | Flow Matching for Generative Modeling (arXiv:2210.02747); Liu et al. rectified flow |
 | Latent-space generation, cross-attention conditioning | Latent Diffusion Models (arXiv:2112.10752) |
 | adaLN-Zero time conditioning | DiT (Peebles & Xie, 2022) |
-| SIGReg / LeJEPA Gaussian regularization | LeJEPA (arXiv:2511.08544); ref impl `lucas-maes/le-wm` |
+| Variance-floor collapse prevention (v0.2) | VICReg variance term only (Bardes et al.) — not full VICReg/SIGReg |
+| Frozen pretrained video encoder (v0.2) | V-JEPA 2 (arXiv:2506.09985); V-JEPA (ICLR 2024) |
 | ConvNeXt-style mixing | ConvNeXt V2 |
 | Perceiver-style learned queries | Perceiver IO (bottleneck 32 queries) |
 | Dataset | Something-Something V2 (~220k videos, interaction-heavy) |
@@ -874,15 +948,18 @@ Action and object-interaction heavy; **temporal order matters** (left/right, mov
 - Videos: `.webm`, ~12 fps, variable length.
 - Labels: `{video_id: template_string}` — 174 classes.
 - Loader: **decord**, CPU decode per worker (not main process).
-- Clip: 5 frames sampled with **stride 2** → ~0.83 s span; frames 0–3 context, frame 4 target.
+- Clip (v0.2): an **8-frame context** window ending at `t` and an **8-frame target** window ending at
+  `t+k`, both at stride 2. For Phases 1–3, `k` is a single fixed horizon; Phase 4 samples
+  `k∈{4,8,16,32}`. The video must be long enough to supply both windows; skip/clip-pad short videos
+  deterministically and log counts.
 
 ### Preprocessing
 
 | Setting | Value |
 |---|---|
-| Pixel normalization | **[-1, 1]** (`x = x/255 * 2 - 1` or equivalent) |
-| Train resize/crop | shorter side → 128, random crop 128×128 |
-| Eval resize/crop | shorter side → 128, center crop 128×128 |
+| Pixel normalization | **Encoder's processor normalization** (V-JEPA); VAE [-1,1] only in Stage 4 |
+| Train resize/crop | shorter side → 256, random crop 256×256 |
+| Eval resize/crop | shorter side → 256, center crop 256×256 |
 | Color jitter | brightness/contrast/saturation = 0.4, hue = 0 |
 | Horizontal flip | **OFF** (labels direction-sensitive) |
 | Temporal flip | **OFF** |
@@ -938,5 +1015,19 @@ Every choice below was **locked** after brief review + external research + imple
 | 24 | Implementation phases | **3 phases** = Stages 0+1 / 2+3 / 4 | Vertical slices; no scaffolding-only phases |
 | 25 | RunPod layout | Code in repo; data/checkpoints siblings under `/workspace/` | Clone-and-run without nested data in repo |
 | 26 | Default dataset CLI | **`ssv2_tiny`** | Safe smoke default; opt into full `ssv2` |
+
+### v0.2 decisions (supervisor update — supersede conflicting earlier rows)
+
+| # | Topic | Decision | Reasoning |
+|---|---|---|---|
+| 27 | Encoder | **Frozen pretrained V-JEPA 2 ViT-L/16** (dim 1024), shared both branches | Supervisor: frozen world-model ViT; SSv2 SOTA family; isolates the hierarchy. Supersedes #(encoder-from-scratch) |
+| 28 | EMA scope | **Bottleneck only** (`B_EMA`); no `E_bar`; no encoder LR | Encoder frozen → nothing to EMA on the encoder. Supersedes §7 (both-branch EMA) |
+| 29 | Tubelet dropout | **Removed** from encoder input; optional masking inside bottleneck later | Frozen encoder never saw dropped tokens. Supersedes #15 / Brief §7 (40%) |
+| 30 | Collapse prevention | **Variance floor on `c_t` only**, `λ_var=0.10`, std target 1.0; **no SIGReg/VICReg/covariance** | Supervisor directive; minimal machinery. Supersedes #17, #22, §5.3 (SIGReg) |
+| 31 | Prediction target | **Clip-level `c⁺_{t+k}=B_EMA(E(x_{≤t+k}))`** (length-`T` window ending at `t+k`) | Supervisor formula; matches encoder's clip pretraining; enables multi-horizon |
+| 32 | Resolution / frames | **256×256, 8 context frames** (tubelet-2 → `N_ctx=1024`) | Balance feature richness vs cost; 4 frames gave too few temporal tokens (decided with human) |
+| 33 | Input normalization | **Encoder's processor normalization** (not [-1,1]); VAE [-1,1] separate in Stage 4 | Must match the pretrained encoder. Supersedes #11 for the encoder path |
+| 34 | Multi-horizon | **Phase 4 (deferred)**: `k∈{4,8,16,32}`, probs `{.30,.30,.25,.15}`, learned `h_k` | Land one change at a time; see `../PHASES/PHASE_4.md` |
+| 35 | Phase 2/3 detailed target geometry | **OPEN** — recommended default: future-clip `e_{t+k}`; generator renders frame `t+k` | Supervisor specified coarse path only; confirm before Phase 2 code |
 
 ---

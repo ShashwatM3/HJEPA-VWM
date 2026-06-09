@@ -1,4 +1,10 @@
-"""Pure tensor losses for HJEPA-VWM."""
+"""Pure tensor losses for HJEPA-VWM (v0.2).
+
+Flow-matching primitives (rectified flow) plus the variance floor on c_t. SIGReg /
+VICReg / covariance losses are intentionally absent (v0.2 supervisor directive —
+collapse prevention is a per-dimension variance floor on c_t only). No nn.Parameter
+lives here; these are pure functions reused across coarse/fine/frame stages.
+"""
 
 from __future__ import annotations
 
@@ -26,8 +32,9 @@ def _broadcast_tau(tau: Tensor, target: Tensor) -> Tensor:
 def as_target(x: Tensor) -> Tensor:
     """Mark a tensor as a stop-gradient target.
 
-    Used for EMA branch outputs and detached conditioning so every gradient
-    boundary is visible through one named helper instead of scattered `.detach()` calls.
+    Used for the EMA bottleneck (`B_EMA`) output, the frozen-encoder target latent,
+    and detached conditioning, so every gradient boundary is visible through one
+    named helper instead of scattered `.detach()` calls.
 
     Args:
         x: Any tensor that should be predicted but never optimized.
@@ -58,7 +65,7 @@ def velocity_target(z_target: Tensor, eps: Tensor) -> Tensor:
         z_target: (B, N, D) future latent target.
         eps: (B, N, D) Gaussian noise source.
     Returns:
-        u: (B, N, D) velocity target `z_target - eps`.
+        u: (B, N, D) velocity target `z_target - eps` (constant along the trajectory).
     """
     return z_target - eps
 
@@ -75,61 +82,26 @@ def flow_matching_loss(u_hat: Tensor, u_target: Tensor) -> Tensor:
     return (u_hat - u_target).pow(2).mean()
 
 
-def sigreg(latents: Tensor, m: int = 1024, knots: int = 17) -> Tensor:
-    """Sketched Isotropic Gaussian Regularization for online latents.
+def variance_floor(abstract: Tensor, std_target: float = 1.0) -> Tensor:
+    """Per-dimension variance floor on the abstract latent `c_t` (replaces SIGReg).
 
-    This implementation follows the Epps-Pulley / characteristic-function spirit
-    used by SIGReg: random 1D projections of flattened tokens are compared to a
-    standard normal characteristic function across integration knots.
+    The supervisor's collapse guardrail: flatten `c_t` across slots/features per
+    batch element, compute the per-dimension std across the batch, and hinge each
+    dimension at `std_target`. This only prevents a *constant* `c_t`; the
+    flow-matching objective is what makes `c_t` carry real semantics, so the weight
+    `λ_var` is kept small (0.10) and no covariance/SIGReg term is added.
+
+    `L_var = (1/d) Σ_j max(0, std_target - Std(c_j))`,  d = N_c * D_c.
 
     Args:
-        latents: (B, N, D) online detailed or abstract latent tokens.
-        m: Number of random projection directions.
-        knots: Number of integration knots.
+        abstract: (B, N_c, D_c) online abstract latent `c_t`.
+        std_target: Target per-dimension std (1.0).
     Returns:
-        Scalar regularizer encouraging isotropic Gaussian latent statistics.
+        Scalar variance-floor loss.
     """
     _require_torch()
-    x = latents.float().reshape(-1, latents.shape[-1])
-    if x.shape[0] < 2:
-        return x.new_tensor(0.0)
-    x = x - x.mean(dim=0, keepdim=True)
-    directions = torch.randn(x.shape[-1], m, device=x.device, dtype=x.dtype)
-    directions = directions / directions.norm(dim=0, keepdim=True).clamp_min(1e-6)
-    proj = x @ directions
-    proj = proj / proj.std(dim=0, keepdim=True).clamp_min(1e-6)
-    t = torch.linspace(-3.0, 3.0, knots, device=x.device, dtype=x.dtype)
-    empirical_real = torch.cos(proj[:, :, None] * t).mean(dim=0)
-    empirical_imag = torch.sin(proj[:, :, None] * t).mean(dim=0)
-    normal_real = torch.exp(-0.5 * t.pow(2))[None, :]
-    stat = (empirical_real - normal_real).pow(2) + empirical_imag.pow(2)
-    return stat.mean()
-
-
-def phase1_total_loss(
-    coarse_loss: Tensor,
-    detailed: Tensor,
-    abstract: Tensor,
-    lambda_e_reg: float,
-    lambda_c_reg: float,
-    sigreg_m: int,
-    sigreg_knots: int,
-) -> tuple[Tensor, dict[str, Tensor]]:
-    """Combine Stage 1 coarse flow loss with SIGReg on online latents.
-
-    Args:
-        coarse_loss: Scalar L_c from F_c velocity matching.
-        detailed: (B, N_ctx_post, D_e) online detailed latent e_t.
-        abstract: (B, N_c, D_c) online abstract latent c_t.
-        lambda_e_reg: Weight for SIGReg(e_t).
-        lambda_c_reg: Weight for SIGReg(c_t).
-        sigreg_m: Random projection count.
-        sigreg_knots: Integration knot count.
-    Returns:
-        total: Scalar Phase 1 objective.
-        parts: Dict of scalar component tensors for logging.
-    """
-    reg_e = sigreg(detailed, sigreg_m, sigreg_knots)
-    reg_c = sigreg(abstract, sigreg_m, sigreg_knots)
-    total = coarse_loss + lambda_e_reg * reg_e + lambda_c_reg * reg_c
-    return total, {"L_c": coarse_loss, "SIGReg_e": reg_e, "SIGReg_c": reg_c}
+    flat = abstract.reshape(abstract.shape[0], -1).float()
+    if flat.shape[0] < 2:
+        return flat.new_tensor(0.0)
+    std = flat.std(dim=0, unbiased=False)
+    return torch.clamp(std_target - std, min=0.0).mean()

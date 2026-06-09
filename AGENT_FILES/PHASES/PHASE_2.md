@@ -1,8 +1,20 @@
-# PHASE_2.md — Detailed Hierarchy (Stages 2 + 3)
+# PHASE_2.md — Detailed Hierarchy (Stages 2 + 3) — v0.2 (frozen encoder)
 
+> **⚠️ v0.2 update.** Inherits Phase 1's **frozen V-JEPA 2 ViT-L/16 encoder** (`D_e=1024`), trainable
+> bottleneck, **EMA bottleneck** (`B_EMA`), and **variance floor** (no SIGReg). All `e_t`-dependent
+> dims below change from `384` to **`1024`**, and the context token count is **`N_ctx=1024`**.
+>
+> **⚠️ OPEN DESIGN DECISION (confirm before coding Phase 2):** the supervisor's update specified the
+> **coarse** path only. With a frozen *video* encoder, the recommended default for the fine flow is a
+> **clip-level detailed target** `e_plus = E(x_{≤t+k})` of shape `(1024, 1024)` (same geometry as
+> `e_t`), with the frame generator (Phase 3) rendering the **last** future frame `t+k`. The
+> alternative is a frame-level detailed target. **Exact `F_e` token counts lock once the human
+> confirms** (see [`UNDERSTANDING.md`](../KNOWLEDGE/UNDERSTANDING.md) §14 #35). Until then, treat the
+> `64`-token target shapes below as placeholders for the chosen geometry.
+>
 > **Agent instruction:** Execute this document top-to-bottom. Extends the Phase 1 codebase. When finished, the full **latent world model** trains through Stages 2 and 3: fine flow `F_e` with teacher-forced then predicted-coarse conditioning, shuffled-c bypass test passes, hierarchy verified.
 >
-> **Prerequisites:** Phase 1 acceptance gates passed. Checkpoint at step 30k loadable. Read [`AGENT_FILES/PHASES/PHASE_1.md`](PHASE_1.md) for existing modules — **do not rewrite** `OnlineEncoder`, `Bottleneck`, `CoarseFlow`, or data pipeline except where this doc explicitly says extend.
+> **Prerequisites:** Phase 1 acceptance gates passed. Checkpoint at step 30k loadable. Read [`AGENT_FILES/PHASES/PHASE_1.md`](PHASE_1.md) for existing modules — **do not rewrite** `FrozenEncoder`, `Bottleneck`, `B_EMA`, `CoarseFlow`, or data pipeline except where this doc explicitly says extend.
 
 ---
 
@@ -51,9 +63,9 @@ shuffled_c_ratio_stage3_min: float = 2.0
 
 | Stage | Step range | Active modules in loss |
 |---|---|---|
-| 1 | `[0, 30_000)` | E, B, F_c + SIGReg (unchanged from Phase 1) |
-| 2 | `[30_000, 55_000)` | E, B, F_c, F_e — teacher-forced `c_cond = c_plus` |
-| 3 | `[55_000, 105_000)` | E, B, F_c, F_e — ramp then `c_cond = stopgrad(c_hat)` |
+| 1 | `[0, 30_000)` | B, F_c + variance floor (encoder frozen; unchanged from Phase 1) |
+| 2 | `[30_000, 55_000)` | B, F_c, F_e (E frozen) — teacher-forced `c_cond = c_plus` |
+| 3 | `[55_000, 105_000)` | B, F_c, F_e (E frozen) — ramp then `c_cond = stopgrad(c_hat)` |
 
 Optimizer param group: add `F_e` at lr `4e-4` from step 30k. Optionally reset LR warmup is **not** applied — continue cosine from Phase 1 schedule (warmup already completed during Stage 1).
 
@@ -65,14 +77,18 @@ Per `AGENT_FILES/KNOWLEDGE/UNDERSTANDING.md` §3.7.
 
 ### Structure
 
-- 8 transformer blocks, dim 384, 8 heads, MLP ratio 4 (~14M params).
-- Per block: **self-attention** on `z_e` (64 tokens) → **cross-attention** to memory → **MLP**, all adaLN-Zero modulated by `τ_e`.
+- 8 transformer blocks, dim 384, 8 heads, MLP ratio 4 (~14M params). `F_e`'s working dim stays 384;
+  the **memory** width follows the encoder (`D_e=1024`).
+- Per block: **self-attention** on `z_e` (target tokens) → **cross-attention** to memory → **MLP**,
+  all adaLN-Zero modulated by `τ_e`. (Target token count = `1024` for the clip-level default, or `64`
+  for a frame-level target — pending the §14 #35 decision.)
 
-### Cross-attention memory (locked design)
+### Cross-attention memory (v0.2 dims)
 
-1. `proj_c_cond = Linear(256 → 384)(c_cond)` — shape `(B, 32, 384)`.
-2. `memory = concat([e_t, proj_c_cond], dim=1)` — shape `(B, N_ctx_post + 32, 384)`.
-3. Cross-attention: queries from `z_e`, keys/values from `memory`.
+1. `proj_e = Linear(1024 → 384)(e_t)` — project frozen-encoder memory to `F_e`'s width `(B, 1024, 384)`.
+2. `proj_c_cond = Linear(256 → 384)(c_cond)` — shape `(B, 32, 384)`.
+3. `memory = concat([proj_e, proj_c_cond], dim=1)` — shape `(B, 1024 + 32, 384)`.
+4. Cross-attention: queries from `z_e`, keys/values from `memory`.
 
 ### Condition dropout (10%)
 
@@ -119,7 +135,7 @@ L_e = flow_matching_loss(u_e_hat, u_e)
 ### 4.2 Stage 2 total loss
 
 ```python
-L = L_c + lambda_fine * L_e + lambda_c_reg * SIGReg(c_t) + lambda_e_reg * SIGReg(e_t)
+L = L_c + lambda_fine * L_e + lambda_var * variance_floor(c_t)   # no SIGReg (v0.2)
 ```
 
 `lambda_fine = 1.0`. `c_cond = target_abstract` (already detached from EMA branch).
@@ -200,12 +216,12 @@ Load model, optimizer, EMA, **global step**. Continue LR cosine and EMA m schedu
 
 ```
 # Steps 30k ≤ step < 55k
-c_cond = target_abstract   # from TargetBranch, already detached
+c_cond = c_plus   # = as_target(B_EMA(E(target_clip))), already detached
 
-# Same coarse path as Phase 1 for L_c
-# Fine path:
+# Same coarse path as Phase 1 for L_c (L_flow)
+# Fine path (e_plus = frozen E on target clip):
 z_e, u_e, u_e_hat from eps_e, tau_e, e_plus, F_e(..., c_cond)
-L = L_c + L_e + SIGReg terms
+L = L_flow + L_e + lambda_var * variance_floor(c_t)   # no SIGReg
 ```
 
 ### 7.3 Stage 3 step (predicted-coarse with ramp)
@@ -218,19 +234,20 @@ c_hat = predict_abstract_one_step(z_c, tau_c, u_c_hat)
 
 # Ramp:
 alpha = min(1.0, (step - stage3_start) / c_cond_ramp_steps)
-c_teacher = target_abstract
+c_teacher = c_plus
 c_pred = as_target(c_hat)
 c_cond = (1 - alpha) * c_teacher + alpha * c_pred   # broadcast over tokens
 
 # Fine loss uses c_cond
-L = L_c + L_e + SIGReg terms
+L = L_flow + L_e + lambda_var * variance_floor(c_t)   # no SIGReg
 ```
 
 After ramp (alpha = 1): `c_cond = as_target(c_hat)` only.
 
 ### 7.4 EMA
 
-Continue through Stages 2–3 (encoder still training). Same schedule: m ramps 0.996 → 0.9999 over 105k steps.
+Continue through Stages 2–3 on the **bottleneck only** (`B → B_EMA`). The encoder is frozen. Same
+schedule: m ramps 0.996 → 0.9999 over 105k steps.
 
 ### 7.5 Checkpointing
 

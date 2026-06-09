@@ -4,8 +4,9 @@ decord
 numpy
 wandb
 diffusers
-transformers
+transformers>=4.49
 accelerate
+einops
 pytest
 black
 ruff

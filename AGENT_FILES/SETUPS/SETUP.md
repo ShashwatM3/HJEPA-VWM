@@ -456,7 +456,7 @@ You now have **two places** to watch training:
 
 1. Open [wandb.ai](https://wandb.ai) in your browser on laptop.
 2. Open your project (name set in `train.py` / config).
-3. Watch live charts: `L_c`, `SIGReg_e`, `SIGReg_c`, learning rate, grad norm, diagnostics.
+3. Watch live charts (v0.2): `L_flow`, `L_var`, the three `c_t` monitors (variance, cross-video cosine, effective rank), learning rate, grad norm, diagnostics.
 
 The terminal prints a W&B run URL when training starts — click it.
 

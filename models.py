@@ -1,7 +1,15 @@
-"""Phase 1 model modules for HJEPA-VWM.
+"""Phase 1 model modules for HJEPA-VWM (v0.2 — frozen encoder).
 
-Implements the online encoder, bottleneck, EMA target branch, and coarse flow.
-Fine flow, VAE, and frame generator are intentionally out of scope for Phase 1.
+Implements the frozen pretrained encoder `E` (V-JEPA 2 ViT-L/16), the trainable
+bottleneck `B`, the EMA bottleneck `B_EMA`, and the coarse flow `F_c`. Fine flow,
+VAE, and frame generator are out of scope for Phase 1.
+
+v0.2 changes from v0.1:
+- `E` is a frozen pretrained ViT (no from-scratch encoder, no PatchEmbed) — the
+  encoder owns tokenization, position encoding, and tubelet projection internally.
+- EMA is on the bottleneck only (`B_EMA`); there is no target encoder.
+- No tubelet dropout: all `N_ctx=1024` tokens are real, so the bottleneck no longer
+  scatters a kept-mask back to a full grid.
 """
 
 from __future__ import annotations
@@ -27,148 +35,65 @@ def _require_torch() -> None:
         raise RuntimeError("PyTorch is required for models.py. Install requirements.txt on RunPod.")
 
 
-def _sincos_1d(length: int, dim: int, device: torch.device | None = None) -> Tensor:
-    """Create one axis of fixed sinusoidal position embeddings."""
-    half = dim // 2
-    omega = torch.arange(half, dtype=torch.float32, device=device) / max(1, half)
-    omega = 1.0 / (10000**omega)
-    pos = torch.arange(length, dtype=torch.float32, device=device)[:, None]
-    table = pos * omega[None]
-    emb = torch.cat([table.sin(), table.cos()], dim=1)
-    if emb.shape[1] < dim:
-        emb = torch.nn.functional.pad(emb, (0, dim - emb.shape[1]))
-    return emb[:, :dim]
+class FrozenEncoder(nn.Module):
+    """Frozen pretrained V-JEPA 2 ViT-L/16 encoder, shared by both branches.
 
-
-def _factorized_3d_sincos(t: int, h: int, w: int, dim: int, device: torch.device) -> Tensor:
-    """Build factorized T+H+W sinusoidal position embeddings.
+    A thin wrapper around the HF `transformers` V-JEPA 2 model. We do NOT implement
+    a patchifier or position embeddings — tokenization, 3D-RoPE, and the tubelet
+    projection are internal to the encoder. The same frozen instance encodes the
+    context clip (`e_t`) and the future clip (`e_plus`).
 
     Args:
-        t: Number of temporal positions to materialize.
-        h: Grid height in patch tokens.
-        w: Grid width in patch tokens.
-        dim: Embedding dimension D_e.
-        device: Device for returned tensor.
+        clip: (B, T=8, C=3, H=256, W=256) pixel clip, encoder-normalized.
     Returns:
-        pos: (t, h, w, dim) summed factorized 3D sin-cos embedding.
-    """
-    pe_t = _sincos_1d(t, dim, device)[:, None, None, :]
-    pe_h = _sincos_1d(h, dim, device)[None, :, None, :]
-    pe_w = _sincos_1d(w, dim, device)[None, None, :, :]
-    return pe_t + pe_h + pe_w
-
-
-class PatchEmbed(nn.Module):
-    """Patchify context clips or target frames into detailed tokens.
-
-    Adds fixed 3D sin-cos position embeddings before context-side tubelet
-    dropout, which preserves positional identity for surviving tokens.
+        detailed: (B, N_ctx=1024, D_e=1024) per-tubelet features (last_hidden_state).
     """
 
     def __init__(self, cfg: ModelConfig):
-        """Initialize the shared 3D convolutional patch projector."""
+        """Load the pretrained encoder and freeze every parameter."""
         _require_torch()
         super().__init__()
+        try:
+            from transformers import AutoModel
+        except ModuleNotFoundError as exc:  # pragma: no cover - RunPod dependency.
+            raise RuntimeError(
+                "transformers>=4.49 (with vjepa2 support) is required for FrozenEncoder."
+            ) from exc
         self.cfg = cfg
-        self.proj = nn.Conv3d(
-            3,
-            cfg.d_e,
-            kernel_size=(cfg.patch_t, cfg.patch_h, cfg.patch_w),
-            stride=(cfg.patch_t, cfg.patch_h, cfg.patch_w),
-        )
+        self.model = AutoModel.from_pretrained(cfg.encoder_repo, attn_implementation="sdpa")
+        self.model.eval()
+        for param in self.model.parameters():
+            param.requires_grad = False
+        trainable = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
+        if trainable != 0:
+            raise RuntimeError(f"Frozen encoder has {trainable} trainable params; expected 0.")
 
-    def forward_context(self, context_clip: Tensor) -> tuple[Tensor, Tensor]:
-        """Patchify a 4-frame context clip and apply tubelet dropout in training.
+    def train(self, mode: bool = True) -> FrozenEncoder:
+        """Keep the encoder in eval mode regardless of the parent's train() call."""
+        super().train(mode)
+        self.model.eval()
+        return self
 
-        Args:
-            context_clip: (B, T=4, C=3, H=128, W=128) context frames in [-1, 1].
-        Returns:
-            tokens: (B, N_ctx_post, D_e) detailed input tokens.
-            kept_mask: (B, N_ctx=256) boolean mask identifying kept tubelets.
-        """
-        b, t, c, h, w = context_clip.shape
-        if c != 3:
-            raise ValueError(f"Expected RGB context, got {context_clip.shape}")
-        x = context_clip.permute(0, 2, 1, 3, 4)
-        tokens = self.proj(x).permute(0, 2, 3, 4, 1)
-        grid_t, grid_h, grid_w = tokens.shape[1:4]
-        pos = _factorized_3d_sincos(grid_t, grid_h, grid_w, self.cfg.d_e, tokens.device)
-        tokens = (tokens + pos[None]).reshape(b, grid_t * grid_h * grid_w, self.cfg.d_e)
-        if not self.training or self.cfg.tubelet_dropout <= 0:
-            kept_mask = torch.ones(b, self.cfg.n_ctx, dtype=torch.bool, device=tokens.device)
-            return tokens, kept_mask
-        keep = int(round(self.cfg.n_ctx * (1.0 - self.cfg.tubelet_dropout)))
-        scores = torch.rand(b, self.cfg.n_ctx, device=tokens.device)
-        idx = scores.topk(keep, dim=1).indices.sort(dim=1).values
-        kept_mask = torch.zeros(b, self.cfg.n_ctx, dtype=torch.bool, device=tokens.device)
-        kept_mask.scatter_(1, idx, True)
-        gather_idx = idx[:, :, None].expand(-1, -1, self.cfg.d_e)
-        return tokens.gather(1, gather_idx), kept_mask
-
-    def forward_target(self, future_frame: Tensor) -> tuple[Tensor, None]:
-        """Patchify a single future frame without tubelet dropout.
+    @torch.no_grad()
+    def forward(self, clip: Tensor) -> Tensor:
+        """Encode a pixel clip into detailed tokens (no grad).
 
         Args:
-            future_frame: (B, C=3, H=128, W=128) future frame in [-1, 1].
+            clip: (B, T, C, H, W) encoder-normalized pixel clip.
         Returns:
-            tokens: (B, N_tgt=64, D_e) target tokens at temporal index 4.
-            mask: Always None for the target path.
+            detailed: (B, N_ctx, D_e) per-tubelet features.
         """
-        x = future_frame[:, :, None, :, :]
-        tokens = self.proj(x).permute(0, 2, 3, 4, 1)
-        b, _, grid_h, grid_w, _ = tokens.shape
-        pos = _factorized_3d_sincos(self.cfg.t_ctx + 1, grid_h, grid_w, self.cfg.d_e, tokens.device)
-        target_pos = pos[self.cfg.t_ctx : self.cfg.t_ctx + 1]
-        tokens = (tokens + target_pos[None]).reshape(b, grid_h * grid_w, self.cfg.d_e)
-        return tokens, None
-
-
-class OnlineEncoder(nn.Module):
-    """VideoViT-Small encoder over detailed tokens.
-
-    Args:
-        tokens: (B, N_ctx_post, D_e) or (B, N_tgt, D_e) detailed tokens.
-    Returns:
-        detailed: Same shape as `tokens`; one encoded detailed token per input token.
-    """
-
-    def __init__(self, cfg: ModelConfig):
-        """Initialize a ViT-Small transformer encoder with locked Phase 1 dimensions."""
-        _require_torch()
-        super().__init__()
-        layer = nn.TransformerEncoderLayer(
-            d_model=cfg.d_e,
-            nhead=cfg.encoder_heads,
-            dim_feedforward=cfg.d_e * cfg.encoder_mlp_ratio,
-            dropout=0.0,
-            activation="gelu",
-            batch_first=True,
-            norm_first=True,
-        )
-        self.blocks = nn.TransformerEncoder(layer, num_layers=cfg.encoder_depth)
-        self.norm = nn.LayerNorm(cfg.d_e)
-
-    def forward(self, tokens: Tensor) -> Tensor:
-        """Encode detailed tokens without changing token count.
-
-        The encoder must preserve one output token per surviving input token so
-        the bottleneck can reconstruct the spatial grid and keep shape contracts auditable.
-
-        Args:
-            tokens: (B, N_ctx_post, D_e) context tokens or (B, N_tgt, D_e) target tokens.
-        Returns:
-            detailed: Same shape as `tokens`, encoded detailed latent tokens.
-        """
-        return self.norm(self.blocks(tokens))
+        features = self.model.get_vision_features(clip)
+        return features
 
 
 class ConvNeXtBlock(nn.Module):
-    """Small ConvNeXt-style 2D mixer for bottleneck pre-attention tokens.
+    """ConvNeXt-style 2D mixer for one temporal-slot token grid.
 
     Args:
-        grid: (B, C=D_e, H=8, W=8) per-frame spatial token grid.
+        grid: (B*, C, H_grid, W_grid) per-temporal-slot spatial token grid.
     Returns:
-        mixed: (B, C=D_e, H=8, W=8) grid after depthwise + pointwise mixing.
+        mixed: (B*, C, H_grid, W_grid) grid after depthwise + pointwise mixing.
     """
 
     def __init__(self, dim: int, mlp_ratio: int = 4):
@@ -182,15 +107,15 @@ class ConvNeXtBlock(nn.Module):
         self.pw2 = nn.Linear(dim * mlp_ratio, dim)
 
     def forward(self, grid: Tensor) -> Tensor:
-        """Mix local spatial detail on a per-frame 8×8 token grid.
+        """Mix local spatial detail on a per-temporal-slot token grid.
 
-        This gives the bottleneck local spatial context before query compression,
-        helping `c_t` retain future-relevant structure instead of raw token noise.
+        Local spatial context before query compression helps `c_t` retain
+        future-relevant structure rather than raw per-token noise.
 
         Args:
-            grid: (B, D_e, H_grid, W_grid) per-frame detailed-token grid.
+            grid: (B*, dim, H_grid, W_grid) per-temporal-slot grid.
         Returns:
-            mixed: (B, D_e, H_grid, W_grid) grid after ConvNeXt-style mixing.
+            mixed: (B*, dim, H_grid, W_grid) grid after ConvNeXt-style mixing.
         """
         residual = grid
         x = self.dwconv(grid).permute(0, 2, 3, 1)
@@ -199,21 +124,27 @@ class ConvNeXtBlock(nn.Module):
 
 
 class Bottleneck(nn.Module):
-    """Compress detailed tokens into the low-bandwidth abstract latent.
+    """Compress detailed tokens into the low-bandwidth abstract latent `c_t`.
 
-    Reconstructs spatial grids for ConvNeXt mixing, then cross-attends from 32
-    learned query slots into projected detailed tokens.
+    Projects the frozen `e_t` from `D_e` to the mixer width, mixes each of the 4
+    temporal-slot 16x16 grids with shared ConvNeXt blocks, then cross-attends from
+    32 learned query slots into the mixed tokens. The same module (and its EMA copy)
+    is applied identically to `e_t` (-> `c_t`) and `e_plus` (-> `c_plus`); both
+    clips share the encoder's `N_ctx=1024` temporal-major geometry, so there is no
+    separate target path and no kept-mask in v0.2.
     """
 
     def __init__(self, cfg: ModelConfig):
-        """Initialize ConvNeXt mixing, learned query slots, and cross-attention."""
+        """Initialize input projection, ConvNeXt mixing, queries, and cross-attention."""
         _require_torch()
         super().__init__()
         self.cfg = cfg
+        mix = cfg.bottleneck_mixer_dim
+        self.in_proj = nn.Linear(cfg.d_e, mix)
         self.mixers = nn.Sequential(
-            *[ConvNeXtBlock(cfg.d_e) for _ in range(cfg.bottleneck_convnext_blocks)]
+            *[ConvNeXtBlock(mix) for _ in range(cfg.bottleneck_convnext_blocks)]
         )
-        self.to_kv = nn.Linear(cfg.d_e, cfg.d_c)
+        self.to_kv = nn.Linear(mix, cfg.d_c)
         self.queries = nn.Parameter(torch.randn(cfg.n_c, cfg.d_c) * 0.02)
         self.cross_attn = nn.MultiheadAttention(
             cfg.d_c, cfg.bottleneck_cross_attn_heads, batch_first=True
@@ -226,43 +157,25 @@ class Bottleneck(nn.Module):
         )
         self.norm = nn.LayerNorm(cfg.d_c)
 
-    def _scatter_context(self, detailed: Tensor, kept_mask: Tensor) -> Tensor:
-        """Scatter post-dropout context tokens back to the full 4×8×8 grid."""
-        b, _, d = detailed.shape
-        full = detailed.new_zeros(b, self.cfg.n_ctx, d)
-        for i in range(b):
-            full[i, kept_mask[i]] = detailed[i, : kept_mask[i].sum()]
-        return full.reshape(b, self.cfg.t_ctx, self.cfg.grid_h, self.cfg.grid_w, d)
-
-    def forward(self, detailed: Tensor, kept_mask: Tensor | None = None) -> Tensor:
+    def forward(self, detailed: Tensor) -> Tensor:
         """Compress detailed tokens to abstract tokens.
 
         Args:
-            detailed: Context `(B, N_ctx_post, D_e)` or target `(B, N_tgt=64, D_e)` tokens.
-            kept_mask: Context `(B, N_ctx=256)` tubelet mask, or None for target tokens.
+            detailed: (B, N_ctx=1024, D_e=1024) frozen-encoder tokens (context or
+                future clip — identical geometry).
         Returns:
             abstract: (B, N_c=32, D_c=256) abstract latent.
         """
-        b, n, d = detailed.shape
-        if kept_mask is None:
-            frames = 1
-            grid = detailed.reshape(b, 1, self.cfg.grid_h, self.cfg.grid_w, d)
-            real_tokens = None
-        else:
-            frames = self.cfg.t_ctx
-            grid = self._scatter_context(detailed, kept_mask)
-            real_tokens = kept_mask
-        grid2d = grid.reshape(b * frames, self.cfg.grid_h, self.cfg.grid_w, d).permute(0, 3, 1, 2)
-        mixed = (
-            self.mixers(grid2d)
-            .permute(0, 2, 3, 1)
-            .reshape(b, frames * self.cfg.tokens_per_frame, d)
-        )
-        if real_tokens is not None:
-            kept = []
-            for i in range(b):
-                kept.append(mixed[i, real_tokens[i]])
-            mixed = torch.stack(kept, dim=0)
+        b, n, _ = detailed.shape
+        cfg = self.cfg
+        if n != cfg.n_ctx:
+            raise ValueError(f"Expected {cfg.n_ctx} tokens, got {n}")
+        mix = cfg.bottleneck_mixer_dim
+        tokens = self.in_proj(detailed)
+        t, g = cfg.n_temporal_tokens, cfg.grid_spatial
+        # Temporal-major token order from the encoder: index = t*(g*g) + h*g + w.
+        grid = tokens.reshape(b * t, g, g, mix).permute(0, 3, 1, 2)
+        mixed = self.mixers(grid).permute(0, 2, 3, 1).reshape(b, t * g * g, mix)
         memory = self.to_kv(mixed)
         queries = self.queries[None].expand(b, -1, -1)
         attended, _ = self.cross_attn(queries, memory, memory, need_weights=False)
@@ -270,14 +183,66 @@ class Bottleneck(nn.Module):
         return self.norm(abstract)
 
 
+class TargetBottleneck(nn.Module):
+    """EMA copy of the bottleneck producing the detached target abstract latent.
+
+    The encoder is frozen and shared, so v0.2 has NO target encoder — only the
+    bottleneck has an EMA copy. This module never receives gradients; it is kept
+    aligned with `B` by the EMA rule in `train.py` and produces `c_plus` from the
+    frozen `e_plus`.
+
+    Args:
+        target_detailed: (B, N_tgt=1024, D_e=1024) frozen encoder output on the
+            future clip.
+    Returns:
+        target_abstract: (B, N_c=32, D_c=256), detached.
+    """
+
+    def __init__(self, bottleneck: Bottleneck):
+        """Clone the online bottleneck into a frozen EMA module."""
+        _require_torch()
+        super().__init__()
+        self.bottleneck = deepcopy(bottleneck)
+        self.freeze()
+
+    def freeze(self) -> None:
+        """Disable backprop through the EMA bottleneck and pin it to eval mode."""
+        for param in self.parameters():
+            param.requires_grad = False
+        self.bottleneck.eval()
+
+    def train(self, mode: bool = True) -> TargetBottleneck:
+        """Keep the EMA bottleneck in eval mode regardless of parent train()."""
+        super().train(mode)
+        self.bottleneck.eval()
+        return self
+
+    def copy_weights_from(self, bottleneck: Bottleneck) -> None:
+        """Initialize the EMA bottleneck from the online bottleneck at Stage 0."""
+        self.bottleneck.load_state_dict(bottleneck.state_dict())
+        self.freeze()
+
+    def forward(self, target_detailed: Tensor) -> Tensor:
+        """Produce the detached target abstract latent `c_plus`.
+
+        Args:
+            target_detailed: (B, N_tgt, D_e) frozen encoder output on the future clip.
+        Returns:
+            target_abstract: (B, N_c, D_c) abstract latent, stop-gradient.
+        """
+        with torch.no_grad():
+            abstract = self.bottleneck(target_detailed)
+        return as_target(abstract)
+
+
 class AdaLNBlock(nn.Module):
     """DiT-style adaLN-Zero transformer block for the coarse flow.
 
     Args:
-        x: (B, 64, D_c) concatenated noised and conditioning abstract tokens.
+        x: (B, 2*N_c, D_c) concatenated noised and conditioning abstract tokens.
         time_emb: (B, D_c) flow-time embedding.
     Returns:
-        hidden: (B, 64, D_c) updated sequence.
+        hidden: (B, 2*N_c, D_c) updated sequence.
     """
 
     def __init__(self, dim: int, heads: int, mlp_ratio: int = 4):
@@ -343,7 +308,7 @@ class CoarseFlow(nn.Module):
     Args:
         z_c: (B, N_c=32, D_c=256) noised future abstract latent.
         tau_c: (B,) flow time.
-        abstract: (B, N_c=32, D_c=256) current abstract conditioning latent.
+        abstract: (B, N_c=32, D_c=256) current abstract conditioning latent c_t.
     Returns:
         u_c_hat: (B, N_c=32, D_c=256) predicted coarse velocity.
     """
@@ -365,10 +330,10 @@ class CoarseFlow(nn.Module):
     def forward(
         self, z_c: Tensor, tau_c: Tensor, abstract: Tensor, *, condition_drop: Tensor | None = None
     ) -> Tensor:
-        """Predict the coarse flow velocity conditioned on current abstract state.
+        """Predict the coarse flow velocity conditioned on the current abstract state.
 
         Condition dropout replaces `abstract` with a learned null token set so the
-        coarse flow remains robust without changing the gradient path through `c_t`.
+        coarse flow stays robust without changing the gradient path through `c_t`.
 
         Args:
             z_c: (B, N_c, D_c) noised future abstract latent.
@@ -378,7 +343,7 @@ class CoarseFlow(nn.Module):
         Returns:
             u_c_hat: (B, N_c, D_c) predicted rectified-flow velocity.
         """
-        if self.training:
+        if self.training or condition_drop is not None:
             if condition_drop is None:
                 condition_drop = (
                     torch.rand(abstract.shape[0], device=abstract.device)
@@ -393,113 +358,73 @@ class CoarseFlow(nn.Module):
         return self.norm(x[:, : self.cfg.n_c])
 
 
-class TargetBranch(nn.Module):
-    """EMA target branch producing detached future detailed and abstract latents.
-
-    Args:
-        future_frame: (B, C=3, H=128, W=128) future frame in [-1, 1].
-    Returns:
-        target_detailed: (B, N_tgt=64, D_e=384), detached.
-        target_abstract: (B, N_c=32, D_c=256), detached.
-    """
-
-    def __init__(
-        self, patch_embed: PatchEmbed, online_encoder: OnlineEncoder, bottleneck: Bottleneck
-    ):
-        """Clone online modules into the frozen EMA target branch."""
-        _require_torch()
-        super().__init__()
-        self.patch_embed = patch_embed
-        self.target_encoder = deepcopy(online_encoder)
-        self.target_bottleneck = deepcopy(bottleneck)
-        self.freeze()
-
-    def freeze(self) -> None:
-        """Disable backprop through the EMA target branch.
-
-        The target branch exists only to produce stable stop-gradient future
-        latents; optimizer updates would collapse the JEPA target contract.
-        """
-        for param in self.parameters():
-            param.requires_grad = False
-        self.eval()
-
-    def copy_weights_from_online(
-        self, online_encoder: OnlineEncoder, bottleneck: Bottleneck
-    ) -> None:
-        """Initialize EMA branch from online modules at Stage 0."""
-        self.target_encoder.load_state_dict(online_encoder.state_dict())
-        self.target_bottleneck.load_state_dict(bottleneck.state_dict())
-        self.freeze()
-
-    def forward(self, future_frame: Tensor) -> tuple[Tensor, Tensor]:
-        """Encode the future frame into detached target latents.
-
-        The target outputs are always wrapped with `as_target()` so Stage 1 predicts
-        them without sending gradients into `E_bar` or `B_bar`.
-
-        Args:
-            future_frame: (B, C=3, H=128, W=128) target frame in [-1, 1].
-        Returns:
-            target_detailed: (B, N_tgt, D_e) detached detailed target latent.
-            target_abstract: (B, N_c, D_c) detached abstract target latent.
-        """
-        with torch.no_grad():
-            tokens, _ = self.patch_embed.forward_target(future_frame)
-            target_detailed = self.target_encoder(tokens)
-            target_abstract = self.target_bottleneck(target_detailed, None)
-        return as_target(target_detailed), as_target(target_abstract)
-
-
-def _build_phase1_modules(
-    cfg: Config,
-) -> tuple[PatchEmbed, OnlineEncoder, Bottleneck, TargetBranch, CoarseFlow]:
+def build_phase1_modules(
+    cfg: Config, *, load_encoder: bool = True
+) -> tuple[nn.Module | None, Bottleneck, TargetBottleneck, CoarseFlow]:
     """Construct all Phase 1 modules in data-path order.
 
-    Keeping construction in one place prevents mismatched online/target module
-    instances and gives Stage 0 a single canonical module bundle.
+    Keeping construction in one place gives Stage 0 a single canonical module
+    bundle and a consistent online/EMA bottleneck pairing.
 
     Args:
         cfg: Global config containing Phase 1 architecture constants.
+        load_encoder: When False, skip loading the (large) frozen encoder — used by
+            shape/gradient smoke tests that synthesize `e_t` directly.
     Returns:
-        Modules `(patch_embed, online_encoder, bottleneck, target_branch, coarse_flow)`.
+        Modules `(encoder, bottleneck, target_bottleneck, coarse_flow)`; `encoder`
+        is None when `load_encoder=False`.
     """
-    patch_embed = PatchEmbed(cfg.model)
-    online_encoder = OnlineEncoder(cfg.model)
+    encoder = FrozenEncoder(cfg.model) if load_encoder else None
     bottleneck = Bottleneck(cfg.model)
-    target_branch = TargetBranch(patch_embed, online_encoder, bottleneck)
+    target_bottleneck = TargetBottleneck(bottleneck)
     coarse_flow = CoarseFlow(cfg.model)
-    return patch_embed, online_encoder, bottleneck, target_branch, coarse_flow
+    return encoder, bottleneck, target_bottleneck, coarse_flow
 
 
 def smoke_test_models() -> None:
-    """Run synthetic Phase 1 model shape and gradient checks.
+    """Run synthetic Phase 1 shape and gradient checks (no encoder download).
 
-    This is the Phase 1 verification hook requested by PHASE_1.md. It confirms
-    shapes and the critical gradient boundary before real SSv2 data is available.
+    Verifies the bottleneck / EMA bottleneck / coarse flow shapes and the critical
+    gradient boundary using a synthetic `e_t`. The real frozen encoder is exercised
+    separately by `smoke_test_encoder()` and by Stage 0 in `train.py`.
     """
-    from losses import flow_matching_loss, interpolate, velocity_target
+    from losses import flow_matching_loss, interpolate, variance_floor, velocity_target
 
     cfg = Config()
-    modules = _build_phase1_modules(cfg)
-    patch_embed, online_encoder, bottleneck, target_branch, coarse_flow = modules
-    context_clip = torch.randn(2, 4, 3, 128, 128)
-    future_frame = torch.randn(2, 3, 128, 128)
-    tokens, kept_mask = patch_embed.forward_context(context_clip)
-    detailed = online_encoder(tokens)
-    abstract = bottleneck(detailed, kept_mask)
-    target_detailed, target_abstract = target_branch(future_frame)
-    assert target_detailed.requires_grad is False
+    _, bottleneck, target_bottleneck, coarse_flow = build_phase1_modules(cfg, load_encoder=False)
+    target_bottleneck.copy_weights_from(bottleneck)
+    detailed = torch.randn(2, cfg.model.n_ctx, cfg.model.d_e)
+    target_detailed = torch.randn(2, cfg.model.n_tgt, cfg.model.d_e)
+    abstract = bottleneck(detailed)
+    assert abstract.shape == (2, cfg.model.n_c, cfg.model.d_c), abstract.shape
+    target_abstract = target_bottleneck(target_detailed)
     assert target_abstract.requires_grad is False
     eps = torch.randn_like(target_abstract)
     tau = torch.rand(2)
     z_c = interpolate(target_abstract, eps, tau)
     u_c = velocity_target(target_abstract, eps)
     u_c_hat = coarse_flow(z_c, tau, abstract)
-    loss = flow_matching_loss(u_c_hat, u_c)
+    assert u_c_hat.shape == (2, cfg.model.n_c, cfg.model.d_c), u_c_hat.shape
+    loss = flow_matching_loss(u_c_hat, u_c) + cfg.train.lambda_var * variance_floor(abstract)
     loss.backward()
-    assert any(p.grad is not None for p in online_encoder.parameters())
     assert any(p.grad is not None for p in bottleneck.parameters())
     assert any(p.grad is not None for p in coarse_flow.parameters())
-    assert all(p.grad is None for p in target_branch.target_encoder.parameters())
-    print("Phase 1 model smoke test passed")
+    assert all(p.grad is None for p in target_bottleneck.parameters())
+    print("Phase 1 model smoke test passed (synthetic e_t)")
+
+
+def smoke_test_encoder() -> None:
+    """Load the real frozen encoder and verify it is frozen and shaped correctly.
+
+    Downloads the V-JEPA 2 ViT-L checkpoint on first run; intended for RunPod or a
+    machine willing to fetch the weights. Confirms 0 trainable params and the
+    `(B, N_ctx, D_e)` output contract.
+    """
+    cfg = Config()
+    encoder = FrozenEncoder(cfg.model)
+    trainable = sum(p.numel() for p in encoder.parameters() if p.requires_grad)
+    assert trainable == 0, trainable
+    clip = torch.randn(1, cfg.model.t_ctx, 3, cfg.model.h, cfg.model.w)
+    out = encoder(clip)
+    assert out.shape == (1, cfg.model.n_ctx, cfg.model.d_e), out.shape
+    print(f"Frozen encoder smoke test passed: output {tuple(out.shape)}")

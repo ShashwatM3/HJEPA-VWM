@@ -19,11 +19,17 @@ AGENT_FILES/
 │   └── CODE_DESIGN.md
 ├── KNOWLEDGE/
 │   ├── UNDERSTANDING.md
+│   ├── SUPERVISOR_FEEDBACK_EXPLAINED.md
+│   ├── BRIEF_V0_1.md            ← exact PDF replica (baseline)
+│   ├── BRIEF_V0_2.md            ← working brief (v0.2)
+│   ├── FROZEN_ENCODER_RESEARCH.md
+│   ├── ARCHITECTURE_CHANGES_AND_PHASE_PLAN.md
 │   └── hierarchical_jepa_flow_architecture_brief.pdf
 ├── PHASES/
 │   ├── PHASE_1.md
 │   ├── PHASE_2.md
-│   └── PHASE_3.md
+│   ├── PHASE_3.md
+│   └── PHASE_4.md               ← multi-horizon (deferred)
 └── SETUPS/
     ├── SETUP.md
     └── SETUP_POD.md
@@ -38,7 +44,9 @@ When any doc names another file, use the **full path from repo root** (e.g. `AGE
 | Path | Role | When to read |
 |---|---|---|
 | `AGENT_FILES/AGENTS.md` | **Entry compass** — project summary, filesystem map, mandatory read order. | First clone / first session; when unsure where anything lives. |
-| `AGENT_FILES/KNOWLEDGE/hierarchical_jepa_flow_architecture_brief.pdf` | **Authoritative spec** — what we are building. Locked design from the tech lead. | When a phase doc or UNDERSTANDING.md references a brief section; when verifying a design constraint. |
+| `AGENT_FILES/KNOWLEDGE/SUPERVISOR_FEEDBACK_EXPLAINED.md` | **The v0.2 update** — frozen encoder, flow target, variance floor, multi-horizon — taught from first principles. **Top authority on intent.** | First, when orienting to the current (v0.2) architecture. |
+| `AGENT_FILES/KNOWLEDGE/BRIEF_V0_2.md` | **Authoritative working spec** (PDF + v0.2 edits). Original PDF preserved as `BRIEF_V0_1.md`. | When a phase doc or UNDERSTANDING.md references a brief section; when verifying a design constraint. |
+| `AGENT_FILES/KNOWLEDGE/FROZEN_ENCODER_RESEARCH.md` | Encoder choice (V-JEPA 2 ViT-L, `D_e=1024`), specs, and the architectural cascade. | Before touching the encoder, `D_e`, token counts, or normalization. |
 | `AGENT_FILES/KNOWLEDGE/UNDERSTANDING.md` | **Expanded comprehension reference** — shape contracts (§2), locked constants (§2.6), modules (§3), forward pass (§4), losses (§5), stop-gradient (§6), EMA (§7), training schedule (§8), diagnostics (§9). | Before writing any function that touches latents, losses, gradients, or training stages. Re-read §2, §2.6, and §6 on every session. |
 | `AGENT_FILES/AGENT-BEHAVIOUR/CODE_DESIGN.md` | **Code style and layout** — flat 5–6 file repo, naming map, docstring template, stop-gradient helper pattern, tooling (black, ruff). | Before creating or renaming any file; before writing docstrings. |
 | `AGENT_FILES/PHASES/PHASE_1.md` | **Implementation spec for Phase 1** — Coarse Hierarchy (Stages 0 + 1). Complete build instructions from empty repo to a training run that passes Stage 1 gates. | When the human says "execute Phase 1." |
@@ -50,7 +58,7 @@ When any doc names another file, use the **full path from repo root** (e.g. `AGE
 | `AGENT_FILES/SETUPS/SETUP_POD.md` | **RunPod reference** — SSH, troubleshooting. | When debugging pod/volume/SSH issues. |
 
 **Precedence when documents conflict:**
-1. `AGENT_FILES/KNOWLEDGE/hierarchical_jepa_flow_architecture_brief.pdf` wins on architecture intent.
+1. `AGENT_FILES/KNOWLEDGE/SUPERVISOR_FEEDBACK_EXPLAINED.md` + `BRIEF_V0_2.md` win on architecture intent (v0.2). `BRIEF_V0_1.md` / the PDF is the superseded baseline.
 2. `AGENT_FILES/KNOWLEDGE/UNDERSTANDING.md` §2.6 wins on numerical constants.
 3. The active `AGENT_FILES/PHASES/PHASE_<N>.md` wins on implementation sequencing and deliverables for that phase.
 4. `AGENT_FILES/AGENT-BEHAVIOUR/CODE_DESIGN.md` wins on code style and file layout.
@@ -81,7 +89,7 @@ All code is written for the **target** layout: repo at `/workspace/hierarchal-je
 
 You **may** search papers, official docs, and reference implementations when:
 
-- A phase doc says "refer to external source" (e.g., SIGReg implementation, adaLN-Zero, diffusers VAE API).
+- A phase doc says "refer to external source" (e.g., V-JEPA 2 `from_pretrained` usage, adaLN-Zero, diffusers VAE API).
 - An API signature or library behavior is ambiguous (e.g., `diffusers.AutoencoderKL` encode/decode contract).
 - You need to verify a formula (flow matching interpolation, EMA update rule).
 
@@ -137,7 +145,8 @@ Centralize detaches in one helper (`as_target()` per `AGENT_FILES/AGENT-BEHAVIOU
 | `e_plus`, `c_plus` | Always | EMA target branch outputs |
 | `c_hat` fed into `F_e` | Always in Stage 3+ | Prevents L_e from corrupting F_c |
 | `e_hat` fed into `D` | Always in Stage 4 | Frame gen must not rewrite world model |
-| `E_bar`, `B_bar` | Never receive backprop | EMA update only |
+| `E` (frozen encoder) | Never receives backprop | Pretrained, frozen; `requires_grad=False` both branches |
+| `B_EMA` | Never receives backprop | EMA update only (bottleneck) |
 | `e_t`, `c_t` on conditioning path | No stop-grad during latent training | Encoder must learn |
 
 Comment each `as_target()` call with the failure mode it prevents.
@@ -163,7 +172,7 @@ Thresholds are locked in `AGENT_FILES/KNOWLEDGE/UNDERSTANDING.md` §2.6 (Diagnos
 [ ] 1. Read AGENT_FILES/AGENTS.md (if first session).
 [ ] 2. Read AGENT_FILES/AGENT-BEHAVIOUR/PROTOCOL.md (this file).
 [ ] 3. Read AGENT_FILES/AGENT-BEHAVIOUR/CODE_DESIGN.md.
-[ ] 4. Skim AGENT_FILES/KNOWLEDGE/hierarchical_jepa_flow_architecture_brief.pdf sections cited by the phase doc.
+[ ] 4. Read AGENT_FILES/KNOWLEDGE/SUPERVISOR_FEEDBACK_EXPLAINED.md; skim BRIEF_V0_2.md sections cited by the phase doc.
 [ ] 5. Read AGENT_FILES/KNOWLEDGE/UNDERSTANDING.md §0–§3 and §2.6 in full.
 [ ] 6. Open AGENT_FILES/PHASES/PHASE_<N>.md; read the Workflow section; execute steps in order.
 [ ] 7. After each major deliverable (file or milestone), run the phase doc's verification command.

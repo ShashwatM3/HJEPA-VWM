@@ -1,4 +1,10 @@
-"""Phase 1 diagnostics for collapse, baselines, and gradient health."""
+"""Phase 1 diagnostics for collapse, baselines, and gradient health (v0.2).
+
+The three required minimum monitors (supervisor) are on `c_t`: per-dimension
+variance, cross-video cosine similarity, and effective rank. The encoder is frozen,
+so `e_t` cannot collapse and is not monitored. All probes are pure and return
+`dict[str, float]`.
+"""
 
 from __future__ import annotations
 
@@ -21,48 +27,69 @@ def _require_torch() -> None:
         )
 
 
-def latent_std_stats(detailed: Tensor, abstract: Tensor) -> dict[str, float]:
-    """Measure per-dimension latent standard deviation health.
+def variance_stats(abstract: Tensor) -> dict[str, float]:
+    """Per-dimension variance health of `c_t` (§9.1 collapse flags).
+
+    Flattens `c_t` across slots/features per batch element (the same quantity the
+    variance floor acts on), computes per-dimension std across the batch, and
+    reports the mean/median std and the fraction of near-dead dimensions.
 
     Args:
-        detailed: (B, N_ctx_post, D_e) online detailed latent e_t.
-        abstract: (B, N_c, D_c) online abstract latent c_t.
+        abstract: (B, N_c, D_c) online abstract latent `c_t`.
     Returns:
-        Metrics dict with median std and dead-dimension fractions for e_t/c_t.
+        Metrics dict: mean/median per-dim std and dead-dimension fraction.
     """
     _require_torch()
-
-    def stats(x: Tensor, prefix: str) -> dict[str, float]:
-        """Compute median std and dead-dimension fraction for one latent."""
-        flat = x.float().reshape(-1, x.shape[-1])
-        std = flat.std(dim=0, unbiased=False)
-        median = std.median().clamp_min(1e-12)
-        dead = (std < 0.1 * median).float().mean()
-        return {
-            f"{prefix}_std_median": float(median.item()),
-            f"{prefix}_dead_dim_frac": float(dead.item()),
-        }
-
-    return {**stats(detailed, "e"), **stats(abstract, "c")}
+    flat = abstract.float().reshape(abstract.shape[0], -1)
+    std = flat.std(dim=0, unbiased=False)
+    median = std.median().clamp_min(1e-12)
+    dead = (std < 0.1 * median).float().mean()
+    return {
+        "c_std_mean": float(std.mean().item()),
+        "c_std_median": float(median.item()),
+        "c_dead_dim_frac": float(dead.item()),
+    }
 
 
-def effective_rank(x: Tensor, eps: float = 1e-8) -> float:
-    """Compute covariance effective rank for a latent tensor.
+def cross_video_cosine(abstract: Tensor) -> dict[str, float]:
+    """Mean pairwise cosine similarity of `c_t` across different videos (§9.1b).
+
+    Healthy is well below ~0.5 (distinct videos -> distinct `c_t`). Drift toward 1.0
+    signals directional collapse that per-dimension variance alone can miss.
 
     Args:
-        x: (B, N, D) latent tensor to flatten over batch/tokens.
+        abstract: (B, N_c, D_c) online abstract latent `c_t`, B > 1.
+    Returns:
+        Metrics dict with the mean off-diagonal pairwise cosine.
+    """
+    _require_torch()
+    flat = abstract.float().reshape(abstract.shape[0], -1)
+    if flat.shape[0] < 2:
+        return {"c_cross_video_cosine": 0.0}
+    normed = flat / flat.norm(dim=1, keepdim=True).clamp_min(1e-8)
+    sim = normed @ normed.t()
+    b = sim.shape[0]
+    off_diagonal = sim[~torch.eye(b, dtype=torch.bool, device=sim.device)]
+    return {"c_cross_video_cosine": float(off_diagonal.mean().item())}
+
+
+def effective_rank(abstract: Tensor, eps: float = 1e-8) -> dict[str, float]:
+    """Covariance effective rank of `c_t` (§9.2 rank floors; healthy > 60).
+
+    Args:
+        abstract: (B, N_c, D_c) abstract latent flattened over batch/slots.
         eps: Numerical floor for eigenvalue normalization.
     Returns:
-        Effective rank `exp(entropy(eigenvalue_distribution))`.
+        Metrics dict with the effective rank `exp(entropy(eigenvalue_distribution))`.
     """
     _require_torch()
-    flat = x.float().reshape(-1, x.shape[-1])
+    flat = abstract.float().reshape(-1, abstract.shape[-1])
     flat = flat - flat.mean(dim=0, keepdim=True)
-    cov = flat.T @ flat / max(1, flat.shape[0] - 1)
+    cov = flat.t() @ flat / max(1, flat.shape[0] - 1)
     eig = torch.linalg.eigvalsh(cov).clamp_min(0)
     probs = eig / eig.sum().clamp_min(eps)
     entropy = -(probs * (probs + eps).log()).sum()
-    return float(torch.exp(entropy).item())
+    return {"c_effective_rank": float(torch.exp(entropy).item())}
 
 
 def gradient_health(model: nn.Module) -> dict[str, float]:
@@ -71,7 +98,7 @@ def gradient_health(model: nn.Module) -> dict[str, float]:
     Args:
         model: Module or container with trainable parameters.
     Returns:
-        Metrics dict containing global grad norm and NaN flags.
+        Metrics dict with global grad norm, NaN flag, and grad'd param count.
     """
     _require_torch()
     total_sq = 0.0
@@ -99,7 +126,7 @@ def coarse_baselines(
     target_abstract: Tensor,
     eps_c: Tensor,
 ) -> dict[str, float]:
-    """Compare F_c velocity loss against copy and batch-mean baselines.
+    """Compare F_c velocity loss against copy and batch-mean baselines (§9.3).
 
     Args:
         coarse_flow: F_c module producing (B, 32, 256) velocity predictions.
@@ -109,12 +136,12 @@ def coarse_baselines(
         target_abstract: (B, 32, 256) target c_plus, detached.
         eps_c: (B, 32, 256) Gaussian noise used to build z_c.
     Returns:
-        Metrics dict containing model, copy, batch-mean losses and ratios.
+        Metrics dict with model/copy/batch-mean losses and ratios.
     """
     _require_torch()
     with torch.no_grad():
         u_target = velocity_target(target_abstract, eps_c)
-        u_hat = coarse_flow(z_c, tau_c, current_abstract)
+        u_hat = coarse_flow(z_c, tau_c, current_abstract, condition_drop=_no_drop(current_abstract))
         model_loss = flow_matching_loss(u_hat, u_target)
         copy_velocity = current_abstract - eps_c
         copy_loss = flow_matching_loss(copy_velocity, u_target)
@@ -130,13 +157,18 @@ def coarse_baselines(
     }
 
 
+def _no_drop(abstract: Tensor) -> Tensor:
+    """Return an all-False condition-drop mask so diagnostics use the real `c_t`."""
+    return torch.zeros(abstract.shape[0], dtype=torch.bool, device=abstract.device)
+
+
 def smoke_test_diagnostics() -> None:
     """Run diagnostics on synthetic Phase 1 tensors."""
     _require_torch()
-    e = torch.randn(4, 154, 384)
-    c = torch.randn(4, 32, 256)
-    metrics = latent_std_stats(e, c)
-    metrics["rank_e"] = effective_rank(e)
-    metrics["rank_c"] = effective_rank(c)
+    c = torch.randn(8, 32, 256)
+    metrics = {}
+    metrics.update(variance_stats(c))
+    metrics.update(cross_video_cosine(c))
+    metrics.update(effective_rank(c))
     assert all(isinstance(v, float) for v in metrics.values())
     print(metrics)
