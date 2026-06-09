@@ -400,6 +400,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--resume", default=None)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--stage0-only", action="store_true")
+    parser.add_argument(
+        "--log-every",
+        type=int,
+        default=None,
+        help="Print + W&B-log frequency (overrides cfg.train.log_every).",
+    )
+    parser.add_argument(
+        "--diag-every",
+        type=int,
+        default=None,
+        help="Diagnostic-batch frequency (overrides cfg.train.diag_every).",
+    )
     return parser.parse_args()
 
 
@@ -410,6 +422,10 @@ def main() -> None:
     cfg.data.dataset = args.data
     cfg.seed = args.seed
     cfg.train.max_steps = args.steps
+    if args.log_every is not None:
+        cfg.train.log_every = args.log_every
+    if args.diag_every is not None:
+        cfg.train.diag_every = args.diag_every
     if args.stage0_only:
         run_stage0(cfg)
     else:
