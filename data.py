@@ -39,20 +39,45 @@ def _require_torch() -> None:
         )
 
 
-def _read_video_decord(path: Path) -> np.ndarray:
-    """Decode all frames from one SSv2 .webm using decord on CPU.
+def _open_video_reader(path: Path):
+    """Open an SSv2 .webm with decord at num_threads=1 (no decoding yet).
+
+    Returning the open reader (rather than decoded frames) lets the caller
+    read `len(reader)` cheaply and then decode only the indices it needs,
+    instead of paying to decode every frame in the clip.
 
     `num_threads=1` is required: SSv2 ships as VP9-encoded .webm and decord's
-    threaded FFmpeg decoder fails with EAGAIN (-11, "Error sending packet") on
-    some VP9 packets when threads > 1. See dmlc/decord#83, #145, #246. Each
-    DataLoader worker still parallelises across videos.
+    threaded FFmpeg decoder fails with EAGAIN (-11, "Error sending packet")
+    on some VP9 packets when threads > 1. See dmlc/decord#83, #145, #246.
+    Each DataLoader worker still parallelises across videos.
+
+    Args:
+        path: Filesystem path to a single SSv2 .webm clip.
+    Returns:
+        reader: an open decord `VideoReader` whose `len` is the clip's frame
+            count and whose `get_batch(indices)` decodes only those indices.
     """
     try:
         from decord import VideoReader, cpu
     except ModuleNotFoundError as exc:  # pragma: no cover - RunPod dependency.
         raise RuntimeError("decord is required to read SSv2 videos") from exc
-    reader = VideoReader(str(path), ctx=cpu(0), num_threads=1)
-    return reader.get_batch(list(range(len(reader)))).asnumpy()
+    return VideoReader(str(path), ctx=cpu(0), num_threads=1)
+
+
+def _decode_frames(reader, indices: list[int]) -> np.ndarray:
+    """Decode the requested frame indices from an open decord VideoReader.
+
+    Random-access via decord `get_batch` so a 16-frame consumer does not pay
+    for decoding the ~30-90 unused frames in each SSv2 clip.
+
+    Args:
+        reader: an open decord VideoReader (see `_open_video_reader`).
+        indices: 1-D list of frame indices to decode, in the order returned.
+    Returns:
+        frames: (len(indices), H, W, 3) uint8 numpy array in the same order
+            as `indices`.
+    """
+    return reader.get_batch(indices).asnumpy()
 
 
 def _resize_shorter_side(frames: Tensor, size: int) -> Tensor:
@@ -184,11 +209,17 @@ class SSV2Dataset(Dataset):
         return context, target
 
     def __getitem__(self, index: int) -> tuple[Tensor, Tensor]:
-        """Return one encoder-normalized (context_clip, target_clip) pair."""
-        frames_np = _read_video_decord(self.paths[index])
-        context_idx, target_idx = self._window_indices(len(frames_np))
+        """Return one encoder-normalized (context_clip, target_clip) pair.
+
+        Opens the video, reads frame count cheaply, computes the 16
+        context+target indices, then decodes only those indices (not every
+        frame in the clip).
+        """
+        reader = _open_video_reader(self.paths[index])
+        context_idx, target_idx = self._window_indices(len(reader))
         t_ctx = self.cfg.model.t_ctx
-        stacked = torch.from_numpy(frames_np[context_idx + target_idx])
+        frames_np = _decode_frames(reader, context_idx + target_idx)
+        stacked = torch.from_numpy(frames_np)
         stacked = stacked.float().permute(0, 3, 1, 2) / 255.0
         stacked = _resize_shorter_side(stacked, self.cfg.model.h)
         stacked = _crop(stacked, self.cfg.model.h, self.split)
