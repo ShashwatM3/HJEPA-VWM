@@ -450,33 +450,15 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Diagnostic-batch frequency (overrides cfg.train.diag_every).",
     )
-    # Plan Phase 04 experiment knobs. All default to None / off so an unflagged
-    # run reproduces the v0.2 baseline exactly (see EXECUTION_PHASES.md).
+    # VICReg-C strength is the one empirical knob that stays a switch (Plan
+    # Phase 04): default None -> cfg default 0.0 (Run A baseline). The init fixes
+    # are baked into the model, not flagged. See EXECUTION_PHASES.md.
     parser.add_argument(
         "--lambda-cov",
         type=float,
         default=None,
         help="VICReg-C weight on c_t (Run B). 0 = baseline; ~0.01-0.1 once "
         "calibrated against Run A's logged L_cov.",
-    )
-    parser.add_argument(
-        "--query-init",
-        choices=["small_gaussian", "scaled_gaussian", "orthogonal"],
-        default=None,
-        help="Fix 1: bottleneck query init scheme (overrides cfg.model).",
-    )
-    parser.add_argument(
-        "--query-init-scale",
-        type=float,
-        default=None,
-        help="Fix 1: std for --query-init scaled_gaussian (overrides cfg.model).",
-    )
-    parser.add_argument(
-        "--zero-init-out-mlp",
-        dest="zero_init_out_mlp",
-        action="store_true",
-        default=None,
-        help="Fix 2: zero-init the bottleneck out_mlp so it starts as identity.",
     )
     return parser.parse_args()
 
@@ -494,12 +476,6 @@ def main() -> None:
         cfg.train.diag_every = args.diag_every
     if args.lambda_cov is not None:
         cfg.train.lambda_cov = args.lambda_cov
-    if args.query_init is not None:
-        cfg.model.bottleneck_query_init = args.query_init
-    if args.query_init_scale is not None:
-        cfg.model.bottleneck_query_init_scale = args.query_init_scale
-    if args.zero_init_out_mlp:
-        cfg.model.bottleneck_zero_init_out_mlp = True
     if args.stage0_only:
         run_stage0(cfg)
     else:

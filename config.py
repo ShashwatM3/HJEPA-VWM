@@ -59,13 +59,10 @@ class ModelConfig:
     bottleneck_mixer_dim: int = 256  # input projection D_e -> mixer width (= d_c)
     bottleneck_convnext_blocks: int = 2
     bottleneck_cross_attn_heads: int = 8
-    # Fix-1 init knobs (Plan Phase 04 — KANBAN/04-FIX-DIMENSIONAL-COLLAPSE).
-    # Defaults reproduce the v0.2 baseline EXACTLY; experiments flip these.
-    # query init: "small_gaussian" (current randn*0.02) | "scaled_gaussian"
-    # (randn*bottleneck_query_init_scale) | "orthogonal" (unit-norm rows).
-    bottleneck_query_init: str = "small_gaussian"
-    bottleneck_query_init_scale: float = 0.1  # used only by "scaled_gaussian"
-    bottleneck_zero_init_out_mlp: bool = False  # start out_mlp as identity residual
+    # Query/out_mlp init is baked in below (Plan Phase 04, KANBAN/04): orthogonal
+    # queries (Fix 1, fixes the ~0.02-scale near-uniform-attention pathology) and
+    # zero-init out_mlp (Fix 2, identity-residual start). These are fixes, not
+    # switches — the pre-fix v0.2 init lives in git history if ever needed.
 
     # Coarse flow F_c
     f_c_blocks: int = 6

@@ -145,21 +145,13 @@ class Bottleneck(nn.Module):
             *[ConvNeXtBlock(mix) for _ in range(cfg.bottleneck_convnext_blocks)]
         )
         self.to_kv = nn.Linear(mix, cfg.d_c)
-        # Query init is flag-gated (Plan Phase 04). "small_gaussian" keeps the
-        # exact baseline expression (and RNG draw position) so the default
-        # build is byte-identical to v0.2.
-        if cfg.bottleneck_query_init == "small_gaussian":
-            self.queries = nn.Parameter(torch.randn(cfg.n_c, cfg.d_c) * 0.02)
-        elif cfg.bottleneck_query_init == "scaled_gaussian":
-            self.queries = nn.Parameter(
-                torch.randn(cfg.n_c, cfg.d_c) * cfg.bottleneck_query_init_scale
-            )
-        elif cfg.bottleneck_query_init == "orthogonal":
-            q = torch.empty(cfg.n_c, cfg.d_c)
-            nn.init.orthogonal_(q)
-            self.queries = nn.Parameter(q)
-        else:
-            raise ValueError(f"Unknown bottleneck_query_init: {cfg.bottleneck_query_init}")
+        # Fix 1 (Plan Phase 04): orthogonal queries (unit-norm rows). The old
+        # v0.2 `randn * 0.02` made the q.k logits tiny, so softmax was near-
+        # uniform for every slot and all 32 slots read out ~the mean token.
+        # Unit-norm rows fix the scale and start the slots decorrelated.
+        q = torch.empty(cfg.n_c, cfg.d_c)
+        nn.init.orthogonal_(q)
+        self.queries = nn.Parameter(q)
         self.cross_attn = nn.MultiheadAttention(
             cfg.d_c, cfg.bottleneck_cross_attn_heads, batch_first=True
         )
@@ -169,10 +161,11 @@ class Bottleneck(nn.Module):
             nn.GELU(),
             nn.Linear(cfg.d_c * 4, cfg.d_c),
         )
-        # adaLN-Zero-style identity start for the residual MLP (flag-gated).
-        if cfg.bottleneck_zero_init_out_mlp:
-            nn.init.zeros_(self.out_mlp[-1].weight)
-            nn.init.zeros_(self.out_mlp[-1].bias)
+        # Fix 2 (Plan Phase 04): adaLN-Zero-style identity start for the residual
+        # MLP — the block begins as a pass-through so early training isn't
+        # destabilized by random residual contributions.
+        nn.init.zeros_(self.out_mlp[-1].weight)
+        nn.init.zeros_(self.out_mlp[-1].bias)
         self.norm = nn.LayerNorm(cfg.d_c)
 
     def forward(self, detailed: Tensor, *, return_attn: bool = False):
@@ -461,9 +454,7 @@ def smoke_test_models() -> None:
     slot = slot_diversity_rank(abstract)
     print(
         f"Phase 1 model smoke test passed (synthetic e_t) | "
-        f"query_init={cfg.model.bottleneck_query_init} "
-        f"zero_init_out_mlp={cfg.model.bottleneck_zero_init_out_mlp} | "
-        f"{attn} {slot}"
+        f"queries=orthogonal out_mlp=zero-init | {attn} {slot}"
     )
 
 

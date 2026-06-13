@@ -8,8 +8,17 @@
 >
 > **Principle.** Change as little as possible per run so each result is
 > attributable. Cheap runs (short, `ssv2_tiny`) come before expensive ones
-> (full SSv2, hours). Every code change is flag-gated (default off) so the
-> v0.2 baseline is always reproducible.
+> (full SSv2, hours).
+>
+> **On flag-gating (revised).** Do **not** flag-gate *fixes*. A fix — a change
+> we believe is simply more correct (e.g. the orthogonal query init, the
+> zero-init `out_mlp`) — goes straight into the code as the new default. Git
+> history already preserves the prior baseline, so a dead `if flag:` branch
+> kept "to reproduce v0.2" is redundant scaffolding. **Only flag-gate what is
+> genuinely empirical** — a pipeline change whose value or magnitude we don't
+> yet know and must decide by sweep or A/B. In this plan that is exactly one
+> thing: **`λ_cov` (VICReg-C)** — its strength needs calibration and its
+> keep/drop is an A/B verdict, so it stays a switch (`--lambda-cov`, default 0).
 
 ---
 
@@ -32,26 +41,28 @@ spending money.
 **Code (agent, local — no GPU):**
 - A4.0 — add `attention_entropy` and `slot_diversity_rank` (split slot
   redundancy from feature correlation).
-- A4.1 — init flags (`zero_init_out_mlp`, `query_init`), default off.
+- A4.1 — init fixes (orthogonal queries + zero-init `out_mlp`), baked into the
+  model as the new default (not flagged — git holds the old init).
 - *Concurrently begin A4.2 (VICReg-C) — it doesn't need to be done to launch
   Run #1.*
 
 **Local gate (before any run):** `smoke_test_models`, `smoke_test_diagnostics`,
-and `python train.py --stage0-only` all pass; with all flags **off** the loss
-and grads are byte-identical to today's baseline.
+and `python train.py --stage0-only` all pass; with `--lambda-cov` unset (0) the
+loss/grads are byte-identical to v0.2-plus-init (the init fixes are now part of
+the baseline — the pre-fix numbers live in git).
 
-**Run #1 (human, H4.2):** ~300–500 steps on `ssv2_tiny`, **init flags ON,
-reg OFF**, `--log-every 50 --diag-every 100`.
+**Run #1 (human, H4.2):** ~300–500 steps on `ssv2_tiny`, reg OFF
+(`--lambda-cov` unset), `--log-every 50 --diag-every 100`. Init fixes are on by
+default.
 
 **Decision gate:**
 - Instrumentation prints sane numbers → continue.
-- Read `attention_entropy` at step 0 (did init sharpen it vs baseline?),
-  `slot_diversity_rank` vs cross-video `c_effective_rank` (which collapse
-  dominates?), and the early rank trend.
+- Read `attention_entropy` at step 0 (did the orthogonal init sharpen it vs the
+  git-history baseline?), `slot_diversity_rank` vs cross-video
+  `c_effective_rank` (which collapse dominates?), and the early rank trend.
 - **Expectation:** init is hygiene — it may sharpen attention and nudge the
   *starting* rank, but it is unlikely to fix a training-dynamics collapse.
-  This run is **diagnostic, not a verdict.** Proceed to P2 regardless; carry
-  the init flags forward as "on" (they're harmless and verified).
+  This run is **diagnostic, not a verdict.** Proceed to P2 regardless.
 - *Note:* 300–500 steps won't show the full rank trajectory (Run 1's plateau
   took thousands of steps). Don't over-read a short run; its job is to
   de-risk the instrumentation and reveal *which* collapse, not to conclude.
@@ -74,9 +85,9 @@ see its raw magnitude, then set λ_cov so that `λ_cov · L_cov` is ~1–10% of
   full data. Separates the data effect from the regularizer effect.
 - **1-run** (cheaper): Run B only; ship if rank **and** copy-ratio both improve.
 
-**Run #2 (human, H4.3):** larger/full SSv2, init flags ON, λ_cov set as above.
-Report `c_effective_rank` **and** `coarse_vs_copy_ratio` *together* at
-milestones, plus the standard guards.
+**Run #2 (human, H4.3):** larger/full SSv2, λ_cov set as above (init fixes are
+on by default). Report `c_effective_rank` **and** `coarse_vs_copy_ratio`
+*together* at milestones, plus the standard guards.
 
 **Decision gate (success criteria, `DETAILED_UNDERSTAND.md` §7):**
 - **Success** = rank > 30 (toward 60) **AND** copy-ratio improves/holds →
@@ -128,12 +139,16 @@ closes Plan Phase 04 (A4.5) and hands back to the `02` flow.
 
 ---
 
-## Quick reference: which flags are on in which run
+## Quick reference: which knobs in which run
 
-| | init flags | λ_cov | SIGReg | dataset |
-|---|---|---|---|---|
-| Baseline (Run 1, have it) | off | 0 | off | tiny |
-| Run #1 (P1) | **on** | 0 | off | tiny (short) |
-| Run #2 (P2) | on | **set** | off | full (A/B) |
-| Run #3 (P3) | on | set *or* 0 | **on** *(if escalating)* | full (A/B) |
-| Run #4 (P4) | locked | locked | locked | full (acceptance) |
+Init fixes (orthogonal queries + zero-init `out_mlp`) are baked in from Run #1
+onward — not a per-run switch. The only switch is `λ_cov`.
+
+| | λ_cov (`--lambda-cov`) | SIGReg | dataset |
+|---|---|---|---|
+| Pre-fix baseline (Run 1, git history) | n/a (old init) | off | tiny |
+| Run #1 (P1) | unset → 0 | off | tiny (short) |
+| Run A (P2) | unset → 0 | off | full |
+| Run B (P2) | **set** (calibrated) | off | full |
+| Run #3 (P3) | set *or* 0 | **on** *(if escalating)* | full (A/B) |
+| Run #4 (P4) | locked | locked | full (acceptance) |
