@@ -5,8 +5,10 @@
 > 2. [`ANALYSIS_AND_DECISIONS.md`](ANALYSIS_AND_DECISIONS.md) — the graded
 >    review of the external opinions and the locked design decision
 >    (VICReg-C first, SIGReg as escalation) with full reasoning.
-> 3. [`TASKS.md`](TASKS.md) — the agent's sequenced, falsifiable plan.
-> 4. [`HUMAN_TASKS.md`](HUMAN_TASKS.md) — the pod/W&B work only the human can do.
+> 3. [`EXECUTION_PHASES.md`](EXECUTION_PHASES.md) — the run-gated roadmap
+>    (P1→P4, with a pipeline run between phases). **The map.**
+> 4. [`TASKS.md`](TASKS.md) — the agent's sequenced, falsifiable `A4.x` plan.
+> 5. [`HUMAN_TASKS.md`](HUMAN_TASKS.md) — the pod/W&B work only the human can do.
 >
 > **Background (read if you lack context):**
 > [`../../../YOUR_FILES/LEARN/06-COLLAPSE-AND-METRICS.md`](../../../YOUR_FILES/LEARN/06-COLLAPSE-AND-METRICS.md)

@@ -39,9 +39,16 @@ KANBAN/
 ├── 02-LAUNCH-FULL-PHASE-1-RUN/            ← the real Phase 1 training run
 │   ├── DETAILED_UNDERSTAND.md
 │   ├── TASKS.md
+│   ├── HUMAN_TASKS.md
+│   └── POSTMORTEM_RUN1.md                 ← Run 1 crash autopsy (gradient explosion)
+├── 03-CPU-TO-GPU-OFFLOAD/                 ← contingency; only if 01 isn't enough
+│   ├── DETAILED_UNDERSTAND.md
+│   ├── TASKS.md
 │   └── HUMAN_TASKS.md
-└── 03-CPU-TO-GPU-OFFLOAD/                 ← contingency; only if 01 isn't enough
+└── 04-FIX-DIMENSIONAL-COLLAPSE/           ← fix c_t rank-~5 collapse found in Run 1
     ├── DETAILED_UNDERSTAND.md
+    ├── ANALYSIS_AND_DECISIONS.md          ← graded review + VICReg-vs-SIGReg decision
+    ├── EXECUTION_PHASES.md                ← run-gated roadmap P1→P4 (the map)
     ├── TASKS.md
     └── HUMAN_TASKS.md
 ```
@@ -53,6 +60,7 @@ KANBAN/
 | `01-OPTIMIZE-DATALOADER/` | Now — before any long training run. |
 | `02-LAUNCH-FULL-PHASE-1-RUN/` | After 01 is verified (s/step measurably lower). |
 | `03-CPU-TO-GPU-OFFLOAD/` | **Only if** 01 leaves s/step > ~0.7. Otherwise skip. |
+| `04-FIX-DIMENSIONAL-COLLAPSE/` | After Run 1 exposed `c_effective_rank` ~5. Modifies the model (decorrelation regularizer + init), then feeds back into a fresh `02`-style launch. Active task. |
 
 ## Files in each folder
 
