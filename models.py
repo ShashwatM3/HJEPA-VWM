@@ -181,12 +181,15 @@ class Bottleneck(nn.Module):
         Args:
             detailed: (B, N_ctx=1024, D_e=1024) frozen-encoder tokens (context or
                 future clip — identical geometry).
-            return_attn: When True, also return the cross-attention weights
-                (B, N_c, N_ctx) for diagnostics. The training path leaves this
-                False so the fast (no-weights) attention kernel is used.
+            return_attn: When True, also return the PER-HEAD cross-attention
+                weights (B, num_heads, N_c, N_ctx) for diagnostics. Per-head
+                (not head-averaged) matters: 8 sharp-but-different heads average
+                out to look uniform, so head-averaged entropy masks real
+                selectivity. The training path leaves this False so the fast
+                (no-weights) attention kernel is used.
         Returns:
             abstract: (B, N_c=32, D_c=256) abstract latent. When `return_attn`,
-            a tuple `(abstract, attn_weights)`.
+            a tuple `(abstract, attn_weights)` with attn (B, num_heads, N_c, N_ctx).
         """
         b, n, _ = detailed.shape
         cfg = self.cfg
@@ -201,7 +204,11 @@ class Bottleneck(nn.Module):
         memory = self.to_kv(mixed)
         queries = self.queries[None].expand(b, -1, -1)
         attended, attn = self.cross_attn(
-            queries, memory, memory, need_weights=return_attn
+            queries,
+            memory,
+            memory,
+            need_weights=return_attn,
+            average_attn_weights=False,
         )
         abstract = self.norm(attended + self.out_mlp(attended))
         if return_attn:

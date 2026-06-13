@@ -137,30 +137,38 @@ def slot_diversity_rank(abstract: Tensor) -> dict[str, float]:
 
 
 def attention_entropy(bottleneck: nn.Module, detailed: Tensor) -> dict[str, float]:
-    """Normalized entropy of the bottleneck cross-attention (Fix-1 check).
+    """Normalized PER-HEAD entropy of the bottleneck cross-attention.
 
-    Runs the bottleneck with attention weights exposed and measures, per query
-    slot, the Shannon entropy of its attention distribution over the `N_ctx`
-    memory tokens, normalized by `log(N_ctx)` so 1.0 == perfectly uniform
-    attention (the saturation symptom Claude flagged) and lower == sharper /
-    more selective. Averaged over slots and batch. Read it at step 0 to compare
-    init schemes (see KANBAN/04-FIX-DIMENSIONAL-COLLAPSE).
+    For each (batch, head, query-slot), computes the Shannon entropy of the
+    attention distribution over the `N_ctx` memory tokens, normalized by
+    `log(N_ctx)` so 1.0 == perfectly uniform (the saturation symptom) and lower
+    == sharper / more selective.
+
+    Per-head is deliberate: PyTorch's default head-AVERAGED weights make 8
+    sharp-but-different heads look uniform, which masks real selectivity (an
+    early version read ~1.0 while `slot_diversity_rank` showed the slots were
+    clearly differentiated — see KANBAN/04-FIX-DIMENSIONAL-COLLAPSE). We report
+    the mean (overall selectivity) and the min over (head, slot) (does *any*
+    head specialize at all).
 
     Args:
         bottleneck: the online Bottleneck `B`.
         detailed: (B, N_ctx, D_e) frozen-encoder tokens to attend over.
     Returns:
-        Metrics dict with the mean normalized attention entropy in [0, 1].
+        Metrics dict with mean and min normalized per-head attention entropy.
     """
     _require_torch()
     import math
 
     with torch.no_grad():
-        _, attn = bottleneck(detailed, return_attn=True)  # (B, N_c, N_ctx)
+        _, attn = bottleneck(detailed, return_attn=True)  # (B, num_heads, N_c, N_ctx)
     attn = attn.float().clamp_min(1e-12)
-    entropy = -(attn * attn.log()).sum(dim=-1)  # (B, N_c)
-    norm = math.log(attn.shape[-1])
-    return {"c_attn_entropy": float((entropy / norm).mean().item())}
+    entropy = -(attn * attn.log()).sum(dim=-1)  # (B, num_heads, N_c)
+    entropy = entropy / math.log(attn.shape[-1])
+    return {
+        "c_attn_entropy": float(entropy.mean().item()),
+        "c_attn_entropy_min": float(entropy.min().item()),
+    }
 
 
 def gradient_health(model: nn.Module) -> dict[str, float]:
