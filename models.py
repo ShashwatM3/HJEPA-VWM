@@ -145,7 +145,21 @@ class Bottleneck(nn.Module):
             *[ConvNeXtBlock(mix) for _ in range(cfg.bottleneck_convnext_blocks)]
         )
         self.to_kv = nn.Linear(mix, cfg.d_c)
-        self.queries = nn.Parameter(torch.randn(cfg.n_c, cfg.d_c) * 0.02)
+        # Query init is flag-gated (Plan Phase 04). "small_gaussian" keeps the
+        # exact baseline expression (and RNG draw position) so the default
+        # build is byte-identical to v0.2.
+        if cfg.bottleneck_query_init == "small_gaussian":
+            self.queries = nn.Parameter(torch.randn(cfg.n_c, cfg.d_c) * 0.02)
+        elif cfg.bottleneck_query_init == "scaled_gaussian":
+            self.queries = nn.Parameter(
+                torch.randn(cfg.n_c, cfg.d_c) * cfg.bottleneck_query_init_scale
+            )
+        elif cfg.bottleneck_query_init == "orthogonal":
+            q = torch.empty(cfg.n_c, cfg.d_c)
+            nn.init.orthogonal_(q)
+            self.queries = nn.Parameter(q)
+        else:
+            raise ValueError(f"Unknown bottleneck_query_init: {cfg.bottleneck_query_init}")
         self.cross_attn = nn.MultiheadAttention(
             cfg.d_c, cfg.bottleneck_cross_attn_heads, batch_first=True
         )
@@ -155,16 +169,24 @@ class Bottleneck(nn.Module):
             nn.GELU(),
             nn.Linear(cfg.d_c * 4, cfg.d_c),
         )
+        # adaLN-Zero-style identity start for the residual MLP (flag-gated).
+        if cfg.bottleneck_zero_init_out_mlp:
+            nn.init.zeros_(self.out_mlp[-1].weight)
+            nn.init.zeros_(self.out_mlp[-1].bias)
         self.norm = nn.LayerNorm(cfg.d_c)
 
-    def forward(self, detailed: Tensor) -> Tensor:
+    def forward(self, detailed: Tensor, *, return_attn: bool = False):
         """Compress detailed tokens to abstract tokens.
 
         Args:
             detailed: (B, N_ctx=1024, D_e=1024) frozen-encoder tokens (context or
                 future clip — identical geometry).
+            return_attn: When True, also return the cross-attention weights
+                (B, N_c, N_ctx) for diagnostics. The training path leaves this
+                False so the fast (no-weights) attention kernel is used.
         Returns:
-            abstract: (B, N_c=32, D_c=256) abstract latent.
+            abstract: (B, N_c=32, D_c=256) abstract latent. When `return_attn`,
+            a tuple `(abstract, attn_weights)`.
         """
         b, n, _ = detailed.shape
         cfg = self.cfg
@@ -178,9 +200,13 @@ class Bottleneck(nn.Module):
         mixed = self.mixers(grid).permute(0, 2, 3, 1).reshape(b, t * g * g, mix)
         memory = self.to_kv(mixed)
         queries = self.queries[None].expand(b, -1, -1)
-        attended, _ = self.cross_attn(queries, memory, memory, need_weights=False)
-        abstract = attended + self.out_mlp(attended)
-        return self.norm(abstract)
+        attended, attn = self.cross_attn(
+            queries, memory, memory, need_weights=return_attn
+        )
+        abstract = self.norm(attended + self.out_mlp(attended))
+        if return_attn:
+            return abstract, attn
+        return abstract
 
 
 class TargetBottleneck(nn.Module):
@@ -410,7 +436,16 @@ def smoke_test_models() -> None:
     assert any(p.grad is not None for p in bottleneck.parameters())
     assert any(p.grad is not None for p in coarse_flow.parameters())
     assert all(p.grad is None for p in target_bottleneck.parameters())
-    print("Phase 1 model smoke test passed (synthetic e_t)")
+    from diagnostics import attention_entropy, slot_diversity_rank
+
+    attn = attention_entropy(bottleneck, detailed)
+    slot = slot_diversity_rank(abstract)
+    print(
+        f"Phase 1 model smoke test passed (synthetic e_t) | "
+        f"query_init={cfg.model.bottleneck_query_init} "
+        f"zero_init_out_mlp={cfg.model.bottleneck_zero_init_out_mlp} | "
+        f"{attn} {slot}"
+    )
 
 
 def smoke_test_encoder() -> None:

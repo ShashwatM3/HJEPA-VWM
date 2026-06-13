@@ -100,6 +100,69 @@ def effective_rank(abstract: Tensor, eps: float = 1e-8) -> dict[str, float]:
     return {"c_effective_rank": float(torch.exp(entropy).item())}
 
 
+def slot_diversity_rank(abstract: Tensor) -> dict[str, float]:
+    """Within-video effective rank of the 32 query-slot vectors.
+
+    `effective_rank` pools all slots and videos together, so a low value
+    conflates two failures: redundant query slots (all reading similar content)
+    vs. correlated feature dimensions. This probe isolates the first: per video,
+    it measures how many independent directions the `N_c` slot outputs span
+    (max `N_c`), then averages over the batch. A low value points at attention
+    saturation (the Fix-1 target); a healthy slot-rank with a low cross-video
+    `effective_rank` instead points at feature correlation (the Fix-2 target).
+    See KANBAN/04-FIX-DIMENSIONAL-COLLAPSE/DETAILED_UNDERSTAND.md §4.3.
+
+    Args:
+        abstract: (B, N_c, D_c) online abstract latent `c_t`.
+    Returns:
+        Metrics dict with the mean within-video slot effective rank, or NaN if
+        a covariance is non-finite.
+    """
+    _require_torch()
+    x = abstract.float()
+    if x.shape[0] < 1 or x.shape[1] < 2:
+        return {"c_slot_diversity_rank": float("nan")}
+    ranks: list[float] = []
+    for b in range(x.shape[0]):
+        slots = x[b]  # (N_c, D_c)
+        slots = slots - slots.mean(dim=0, keepdim=True)
+        gram = slots @ slots.t() / max(1, slots.shape[1])  # (N_c, N_c)
+        if not torch.isfinite(gram).all():
+            return {"c_slot_diversity_rank": float("nan")}
+        eig = torch.linalg.eigvalsh(gram).clamp_min(0)
+        probs = eig / eig.sum().clamp_min(1e-8)
+        entropy = -(probs * (probs + 1e-8).log()).sum()
+        ranks.append(float(torch.exp(entropy).item()))
+    return {"c_slot_diversity_rank": float(sum(ranks) / len(ranks))}
+
+
+def attention_entropy(bottleneck: nn.Module, detailed: Tensor) -> dict[str, float]:
+    """Normalized entropy of the bottleneck cross-attention (Fix-1 check).
+
+    Runs the bottleneck with attention weights exposed and measures, per query
+    slot, the Shannon entropy of its attention distribution over the `N_ctx`
+    memory tokens, normalized by `log(N_ctx)` so 1.0 == perfectly uniform
+    attention (the saturation symptom Claude flagged) and lower == sharper /
+    more selective. Averaged over slots and batch. Read it at step 0 to compare
+    init schemes (see KANBAN/04-FIX-DIMENSIONAL-COLLAPSE).
+
+    Args:
+        bottleneck: the online Bottleneck `B`.
+        detailed: (B, N_ctx, D_e) frozen-encoder tokens to attend over.
+    Returns:
+        Metrics dict with the mean normalized attention entropy in [0, 1].
+    """
+    _require_torch()
+    import math
+
+    with torch.no_grad():
+        _, attn = bottleneck(detailed, return_attn=True)  # (B, N_c, N_ctx)
+    attn = attn.float().clamp_min(1e-12)
+    entropy = -(attn * attn.log()).sum(dim=-1)  # (B, N_c)
+    norm = math.log(attn.shape[-1])
+    return {"c_attn_entropy": float((entropy / norm).mean().item())}
+
+
 def gradient_health(model: nn.Module) -> dict[str, float]:
     """Summarize trainable parameter gradient health.
 
@@ -178,5 +241,6 @@ def smoke_test_diagnostics() -> None:
     metrics.update(variance_stats(c))
     metrics.update(cross_video_cosine(c))
     metrics.update(effective_rank(c))
+    metrics.update(slot_diversity_rank(c))
     assert all(isinstance(v, float) for v in metrics.values())
     print(metrics)

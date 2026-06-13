@@ -27,10 +27,12 @@ except ModuleNotFoundError:  # pragma: no cover
 from config import Config
 from data import build_dataloader
 from diagnostics import (
+    attention_entropy,
     coarse_baselines,
     cross_video_cosine,
     effective_rank,
     gradient_health,
+    slot_diversity_rank,
     variance_stats,
 )
 from losses import flow_matching_loss, interpolate, variance_floor, velocity_target
@@ -357,8 +359,15 @@ def run_diagnostics(
     metrics.update(variance_stats(abstract))
     metrics.update(cross_video_cosine(abstract))
     metrics.update(effective_rank(abstract))
+    metrics.update(slot_diversity_rank(abstract))
     metrics.update(coarse_baselines(coarse_flow, z_c, tau_c, abstract, target_abstract, eps_c))
     metrics.update(gradient_health(nn.ModuleList([bottleneck, coarse_flow])))
+    # Attention entropy needs the bottleneck's pre-attention input (e_t); the
+    # encoder forward is cheap at diag cadence and avoids threading `detailed`
+    # out of `_coarse_forward` (which the training step does not need).
+    with torch.no_grad():
+        detailed = encoder(context_clip)
+    metrics.update(attention_entropy(bottleneck, detailed))
     return metrics
 
 
