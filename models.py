@@ -421,7 +421,13 @@ def smoke_test_models() -> None:
     gradient boundary using a synthetic `e_t`. The real frozen encoder is exercised
     separately by `smoke_test_encoder()` and by Stage 0 in `train.py`.
     """
-    from losses import flow_matching_loss, interpolate, variance_floor, velocity_target
+    from losses import (
+        covariance_floor,
+        flow_matching_loss,
+        interpolate,
+        variance_floor,
+        velocity_target,
+    )
 
     cfg = Config()
     _, bottleneck, target_bottleneck, coarse_flow = build_phase1_modules(cfg, load_encoder=False)
@@ -443,6 +449,12 @@ def smoke_test_models() -> None:
     assert any(p.grad is not None for p in bottleneck.parameters())
     assert any(p.grad is not None for p in coarse_flow.parameters())
     assert all(p.grad is None for p in target_bottleneck.parameters())
+    # VICReg-C (Plan Phase 04): finite scalar and gradients reach the bottleneck.
+    bottleneck.zero_grad(set_to_none=True)
+    cov = covariance_floor(bottleneck(detailed))
+    assert cov.requires_grad and torch.isfinite(cov), cov
+    cov.backward()
+    assert any(p.grad is not None for p in bottleneck.parameters())
     from diagnostics import attention_entropy, slot_diversity_rank
 
     attn = attention_entropy(bottleneck, detailed)

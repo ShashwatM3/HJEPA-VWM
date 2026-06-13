@@ -135,8 +135,13 @@ class TrainConfig:
     ema_m_start: float = 0.996
     ema_m_end: float = 0.9999
     ema_schedule_steps: int = 105_000
-    lambda_var: float = 0.10  # variance-floor weight (replaces SIGReg)
+    lambda_var: float = 0.10  # variance-floor weight (VICReg V)
     var_floor_std_target: float = 1.0  # hinge target in L_var
+    # VICReg-C off-diagonal covariance penalty on c_t (Plan Phase 04, anti-collapse).
+    # Default 0.0 -> term computed for logging (L_cov) but NOT added to loss, so the
+    # v0.2 baseline is reproduced exactly. Nonzero = sweep knob: start small
+    # (~0.01-0.1), calibrate against L_cov's baseline magnitude, watch copy-ratio.
+    lambda_cov: float = 0.0
     horizon_k: int = 4  # single fixed horizon for Phases 1-3 (Phase 4: multi-horizon)
     frame_stride: int = 2
     precision: str = "bf16"

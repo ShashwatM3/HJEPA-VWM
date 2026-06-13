@@ -35,7 +35,13 @@ from diagnostics import (
     slot_diversity_rank,
     variance_stats,
 )
-from losses import flow_matching_loss, interpolate, variance_floor, velocity_target
+from losses import (
+    covariance_floor,
+    flow_matching_loss,
+    interpolate,
+    variance_floor,
+    velocity_target,
+)
 from models import build_phase1_modules
 
 # Module bundle order throughout: (encoder E, bottleneck B, target_bottleneck B_EMA,
@@ -211,7 +217,13 @@ def train_step(
         u_c_hat = coarse_flow(z_c, tau_c, abstract)
         flow_loss = flow_matching_loss(u_c_hat, u_c)
         var_loss = variance_floor(abstract, cfg.train.var_floor_std_target)
+        # VICReg-C (Plan Phase 04): always computed so L_cov is logged even on the
+        # baseline (Run A) to calibrate lambda_cov; only added to the loss — and
+        # thus the gradient — when active. lambda_cov=0.0 => byte-identical baseline.
+        cov_loss = covariance_floor(abstract)
         loss = flow_loss + cfg.train.lambda_var * var_loss
+        if cfg.train.lambda_cov > 0.0:
+            loss = loss + cfg.train.lambda_cov * cov_loss
     loss.backward()
     grad_norm = torch.nn.utils.clip_grad_norm_(
         list(bottleneck.parameters()) + list(coarse_flow.parameters()), cfg.train.grad_clip
@@ -240,6 +252,7 @@ def train_step(
         "loss": float(loss.detach().float().item()),
         "L_flow": float(flow_loss.detach().float().item()),
         "L_var": float(var_loss.detach().float().item()),
+        "L_cov": float(cov_loss.detach().float().item()),
         "grad_norm": grad_norm_f,
         "grad_skipped": float(grad_skipped),
         "ema_m": momentum,

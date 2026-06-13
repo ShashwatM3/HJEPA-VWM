@@ -1,8 +1,11 @@
 """Pure tensor losses for HJEPA-VWM (v0.2).
 
-Flow-matching primitives (rectified flow) plus the variance floor on c_t. SIGReg /
-VICReg / covariance losses are intentionally absent (v0.2 supervisor directive —
-collapse prevention is a per-dimension variance floor on c_t only). No nn.Parameter
+Flow-matching primitives (rectified flow) plus the anti-collapse regularizers on
+c_t: the per-dimension variance floor (VICReg V, always on, λ=0.10) and the
+off-diagonal covariance penalty (VICReg C, flag-gated via `lambda_cov`, default
+0.0 → exact v0.2 baseline). The covariance term was added under Plan Phase 04 to
+attack feature-dim correlation (`c_effective_rank ≈ 5`); SIGReg remains an
+escalation option (recoverable from git, not implemented here). No nn.Parameter
 lives here; these are pure functions reused across coarse/fine/frame stages.
 """
 
@@ -105,3 +108,35 @@ def variance_floor(abstract: Tensor, std_target: float = 1.0) -> Tensor:
         return flat.new_tensor(0.0)
     std = flat.std(dim=0, unbiased=False)
     return torch.clamp(std_target - std, min=0.0).mean()
+
+
+def covariance_floor(abstract: Tensor) -> Tensor:
+    """VICReg covariance term on `c_t` — the off-diagonal decorrelation penalty.
+
+    `variance_floor` is VICReg's V (each feature dim must carry spread); this is
+    VICReg's C: it pushes the off-diagonal covariances of `c_t`'s feature
+    dimensions toward zero so the 256 dims encode *distinct* factors instead of
+    collapsing onto a correlated low-rank subspace (the `c_effective_rank ≈ 5`
+    symptom — see KANBAN/04-FIX-DIMENSIONAL-COLLAPSE). The variance floor alone
+    can't do this: it only forbids constant dims, never correlated ones.
+
+    Pools batch × slots into `N = B·N_c` samples over `D = D_c` feature dims,
+    centers per dim, forms the `D×D` covariance `(zᵀz)/(N-1)`, and returns the
+    sum of squared OFF-diagonal entries divided by `D` (the standard VICReg
+    convention: `Σ_{i≠j} cov_ij² / D`). The diagonal (variance) is left to
+    `variance_floor`, so the two terms don't fight over scale.
+
+    Args:
+        abstract: (B, N_c, D_c) online abstract latent `c_t`.
+    Returns:
+        Scalar covariance penalty (>= 0; 0 == perfectly decorrelated dims).
+    """
+    _require_torch()
+    z = abstract.reshape(-1, abstract.shape[-1]).float()  # (N = B·N_c, D_c)
+    n, d = z.shape
+    if n < 2:
+        return z.new_tensor(0.0)
+    z = z - z.mean(dim=0, keepdim=True)
+    cov = (z.T @ z) / (n - 1)  # (D, D)
+    off_diag_sq = cov.pow(2).sum() - cov.diagonal().pow(2).sum()
+    return off_diag_sq / d
