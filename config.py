@@ -100,16 +100,31 @@ class TrainConfig:
     """Phase 1 training and diagnostic constants from UNDERSTANDING.md §2.6."""
 
     global_batch: int = 64
-    stage1_steps: int = 30_000
-    max_steps: int = 30_000  # Phase 1 trains ONLY Stage 1
+    # Step counts retuned 2026-06-10 after `peachy-terrain-5` crashed at step
+    # 10750 (see AGENT_FILES/KANBAN/02-LAUNCH-FULL-PHASE-1-RUN/POSTMORTEM_RUN1.md).
+    # The original 30k+10k-warmup spec was calibrated for the full SSv2 corpus
+    # (~170k clips => ~11 epochs); on ssv2_tiny (~4k clips) 30k = ~480 epochs,
+    # extreme overtraining. Sized down to a 15k+1.5k run that takes ~5 h on
+    # ssv2_tiny and is still ~240 epochs of the subset.
+    stage1_steps: int = 15_000
+    max_steps: int = 15_000  # Phase 1 trains ONLY Stage 1
     # NOTE: no lr_encoder — encoder is frozen.
-    lr_bottleneck: float = 2e-4
-    lr_coarse_flow: float = 4e-4
-    warmup_steps: int = 10_000
+    # Peak LRs halved after the run-1 explosion at step ~10550 (peak lr_mult).
+    # With bf16 + AdamW(beta2=0.95) + var-floor reg, the old 4e-4 peak was on
+    # the edge of stable; one large-grad batch at peak destroyed precision.
+    lr_bottleneck: float = 1e-4
+    lr_coarse_flow: float = 2e-4
+    warmup_steps: int = 1_500
     total_latent_steps: int = 105_000  # cosine LR / EMA denominator (Phase 2+)
     adam_betas: tuple[float, float] = (0.9, 0.95)
     weight_decay: float = 0.05
-    grad_clip: float = 1.0
+    # Tighter clip + skip-step guard added 2026-06-10. The clip-by-norm at 1.0
+    # divides the gradient by `grad_norm / 1.0` to clip; in bf16 that division
+    # destroys direction precision once the divisor is more than a few hundred.
+    # Pair with `grad_skip_threshold` so any pre-clip norm above the threshold
+    # skips the optimizer step entirely (see train.train_step).
+    grad_clip: float = 0.5
+    grad_skip_threshold: float = 50.0
     ema_m_start: float = 0.996
     ema_m_end: float = 0.9999
     ema_schedule_steps: int = 105_000
@@ -120,7 +135,7 @@ class TrainConfig:
     precision: str = "bf16"
     log_every: int = 50
     diag_every: int = 500
-    checkpoint_every: int = 5000
+    checkpoint_every: int = 2_500  # finer checkpoints on the shorter 15k run
 
 
 @dataclass

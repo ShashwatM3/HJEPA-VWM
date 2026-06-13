@@ -214,16 +214,32 @@ def train_step(
     grad_norm = torch.nn.utils.clip_grad_norm_(
         list(bottleneck.parameters()) + list(coarse_flow.parameters()), cfg.train.grad_clip
     )
-    optimizer.step()
+    # Survivability guard added 2026-06-10 after the run-1 explosion (POSTMORTEM_RUN1.md).
+    # If the pre-clip gradient is non-finite or larger than `grad_skip_threshold`,
+    # skip the optimizer step entirely: zero the gradient, do not update parameters,
+    # do not update EMA. One bad batch loses one update, not the whole run. At the
+    # current (lr=1e-4 / 2e-4, clip=0.5) settings this should fire ~never; any
+    # nonzero `grad_skipped` rate in a healthy run is a stop-and-investigate signal.
+    grad_norm_f = float(grad_norm)
+    grad_skipped = (
+        not math.isfinite(grad_norm_f)
+        or grad_norm_f > cfg.train.grad_skip_threshold
+    )
+    if grad_skipped:
+        optimizer.zero_grad(set_to_none=True)
+    else:
+        optimizer.step()
     momentum = ema_cosine(
         step, cfg.train.ema_m_start, cfg.train.ema_m_end, cfg.train.ema_schedule_steps
     )
-    _update_ema(bottleneck, target_bottleneck, momentum)
+    if not grad_skipped:
+        _update_ema(bottleneck, target_bottleneck, momentum)
     return {
         "loss": float(loss.detach().float().item()),
         "L_flow": float(flow_loss.detach().float().item()),
         "L_var": float(var_loss.detach().float().item()),
-        "grad_norm": float(grad_norm),
+        "grad_norm": grad_norm_f,
+        "grad_skipped": float(grad_skipped),
         "ema_m": momentum,
     }
 
@@ -396,7 +412,7 @@ def parse_args() -> argparse.Namespace:
     """Parse the Phase 1 training CLI."""
     parser = argparse.ArgumentParser(description="Train HJEPA-VWM Phase 1 (v0.2).")
     parser.add_argument("--data", choices=["ssv2", "ssv2_tiny"], default="ssv2_tiny")
-    parser.add_argument("--steps", type=int, default=30_000)
+    parser.add_argument("--steps", type=int, default=15_000)
     parser.add_argument("--resume", default=None)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--stage0-only", action="store_true")

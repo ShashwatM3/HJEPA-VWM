@@ -76,16 +76,24 @@ def cross_video_cosine(abstract: Tensor) -> dict[str, float]:
 def effective_rank(abstract: Tensor, eps: float = 1e-8) -> dict[str, float]:
     """Covariance effective rank of `c_t` (§9.2 rank floors; healthy > 60).
 
+    Returns `NaN` instead of raising if the covariance has any non-finite
+    entries: a model that has gone NaN is a real failure mode, but it should
+    surface as a logged NaN value, not a `torch.linalg.eigvalsh` crash that
+    takes down the training loop mid-run (see POSTMORTEM_RUN1.md).
+
     Args:
         abstract: (B, N_c, D_c) abstract latent flattened over batch/slots.
         eps: Numerical floor for eigenvalue normalization.
     Returns:
-        Metrics dict with the effective rank `exp(entropy(eigenvalue_distribution))`.
+        Metrics dict with the effective rank `exp(entropy(eigenvalue_distribution))`,
+        or `{"c_effective_rank": NaN}` if the covariance is non-finite.
     """
     _require_torch()
     flat = abstract.float().reshape(-1, abstract.shape[-1])
     flat = flat - flat.mean(dim=0, keepdim=True)
     cov = flat.t() @ flat / max(1, flat.shape[0] - 1)
+    if not torch.isfinite(cov).all():
+        return {"c_effective_rank": float("nan")}
     eig = torch.linalg.eigvalsh(cov).clamp_min(0)
     probs = eig / eig.sum().clamp_min(eps)
     entropy = -(probs * (probs + eps).log()).sum()
