@@ -24,17 +24,19 @@ told what to keep — it is trained only through two pressures:
 Everything inside the module is engineering to give those pressures a
 flexible, well-conditioned function to shape.
 
+> Two *optional* regularizers also exist now (Phase 04): `covariance_floor`
+> (VICReg-C, decorrelate feature dims) and `slot_diversity_loss` (push the 32
+> slots apart). Both default **off** (`lambda_cov = lambda_slot = 0.0`) and
+> are being trialed empirically against the dimensional-collapse problem —
+> see §7. When off, the two pressures above are the only ones.
+
 ## 2. The dataflow, line by line
 
-```160:183:models.py
-    def forward(self, detailed: Tensor) -> Tensor:
+```171:209:models.py
+    def forward(self, detailed: Tensor, *, return_attn: bool = False):
         """Compress detailed tokens to abstract tokens.
-
-        Args:
-            detailed: (B, N_ctx=1024, D_e=1024) frozen-encoder tokens (context or
-                future clip — identical geometry).
-        Returns:
-            abstract: (B, N_c=32, D_c=256) abstract latent.
+        # ... docstring: return_attn=True also returns per-head attn weights
+        #     (B, num_heads, N_c, N_ctx) for diagnostics; training leaves it False ...
         """
         b, n, _ = detailed.shape
         cfg = self.cfg
@@ -48,9 +50,14 @@ flexible, well-conditioned function to shape.
         mixed = self.mixers(grid).permute(0, 2, 3, 1).reshape(b, t * g * g, mix)
         memory = self.to_kv(mixed)
         queries = self.queries[None].expand(b, -1, -1)
-        attended, _ = self.cross_attn(queries, memory, memory, need_weights=False)
-        abstract = attended + self.out_mlp(attended)
-        return self.norm(abstract)
+        attended, attn = self.cross_attn(
+            queries, memory, memory,
+            need_weights=return_attn, average_attn_weights=False,
+        )
+        abstract = self.norm(attended + self.out_mlp(attended))
+        if return_attn:
+            return abstract, attn
+        return abstract
 ```
 
 Five stages. Let's take each one and answer *what / why / what-if-removed*.
@@ -205,26 +212,30 @@ unrecoverable (saturation, collapse, instability). Current policy:
 | Component | Init | Rationale |
 |---|---|---|
 | FrozenEncoder | pretrained weights | the whole point of v0.2 |
-| Bottleneck queries | `randn · 0.02` | small random: queries start near zero but *distinct*, so they break symmetry and can specialize |
-| Bottleneck Linears/convs | PyTorch defaults (Kaiming-uniform) | standard; reasonable variance preservation through GELU nets |
+| Bottleneck queries | **`nn.init.orthogonal_`** (unit-norm rows) | the 32 queries start mutually perpendicular *and* at unit scale, so attention logits are non-trivial and each slot reads a distinct, non-redundant summary from step 0 |
+| Bottleneck `out_mlp` last layer | **zeros** (weight + bias) | adaLN-Zero-style identity start: the residual MLP begins as a pass-through, so early training isn't destabilized by random residual contributions |
+| Bottleneck other Linears/convs | PyTorch defaults (Kaiming-uniform) | standard; reasonable variance preservation through GELU nets |
 | Flow `AdaLNBlock.mod` final layer | **zeros** | adaLN-Zero (see file 04): each flow block starts as exact identity |
 
-The deliberate asymmetry to notice: the *flow predictor* got a careful
-near-identity init (`adaLN-Zero`), while the *bottleneck* uses defaults
-plus one scaled-random parameter. Two known sharpening options if rank
-problems persist (discussed with the tech lead, not yet applied):
-**orthogonal init for the queries** (`nn.init.orthogonal_`) so the 32
-queries start mutually perpendicular — maximally non-redundant probes —
-and **zero-init of the out_mlp's last layer** so the residual MLP starts
-as identity, like the flow blocks. Neither is a magic fix; both reduce
-"early training spends steps undoing a bad random start."
+> **Phase-04 update — these init fixes are now baked in, not optional.**
+> Earlier (v0.2) the queries used `randn · 0.02` and `out_mlp` used PyTorch
+> defaults. Both were replaced as part of the dimensional-collapse work and
+> are now hardcoded defaults in `Bottleneck.__init__` (no config flags — they
+> are *fixes*, not empirical knobs). The code comments tag them "Fix 1" and
+> "Fix 2".
 
-Why init connects to the rank problem specifically: with `randn·0.02`, 32
-random 256-dim vectors are *nearly* orthogonal but not exactly; early
-gradient dynamics can pull correlated queries together (they chase the
-same easy signal), and once two queries match, nothing in the v0.2 loss
-pushes them apart — the variance floor cares about per-dim variance, not
-inter-slot redundancy.
+Why the query init connects to the rank/collapse problem — and the subtle
+correction worth internalizing: the old `randn · 0.02` problem was **not**
+that the queries pointed the same direction (random 256-d vectors are
+already nearly orthogonal). The real problem was **scale**: with norm
+≈ 0.02·√256 ≈ 0.3, the attention logits `q·k` were tiny, so softmax was
+near-uniform for *every* slot, and all 32 slots read out approximately the
+same mean token — identical outputs despite distinct directions. `orthogonal_`
+fixes this mostly because its unit-norm rows are a ~50× scale increase (the
+orthogonality is a bonus, not the main lever). This sharpens the *starting*
+attention, but note: init governs where you start; it does not by itself
+prevent the optimizer from rediscovering a low-rank solution later — that is
+a training-dynamics / objective problem (see §7).
 
 ## 5. The EMA twin
 
@@ -252,23 +263,46 @@ inspection or hope.
 In Run 1, `c_effective_rank` plateaued around ~5 (max possible 256). The
 latent was *not* fully collapsed (variance alive, cross-video cosine OK)
 but used ~2% of its dimensional capacity — like buying a 256-lane highway
-and using 5 lanes. Candidate explanations, each with a different fix:
+and using 5 lanes. Three candidate explanations were on the table, each
+with a different fix:
 
 1. **Dataset too small** (~4k clips in ssv2_tiny; ~240 epochs in a 15k-step
    run): there may genuinely be only ~5 axes of variation the model needs.
    Fix: run on full SSv2. Lowest risk, tests data before architecture.
-2. **Init/optimization artifact**: queries collapsed toward redundancy
-   early. Fix: orthogonal query init, zero-init out_mlp (§4).
+2. **Init/optimization artifact**: queries read out near-identical mean
+   tokens early. Fix: orthogonal query init, zero-init out_mlp (§4).
 3. **Missing regularizer**: the variance floor only prevents *constant*
-   `c_t`; it never asks for *decorrelated* dims. Fix: reintroduce a
-   covariance term (SIGReg/VICReg-style) — but this directly contradicts
-   the v0.2 supervisor directive ("variance floor only, initially"), adds
-   hyperparameters, and risks optimizing the metric instead of the task.
-   It is the documented *escalation path*, not the first move.
+   `c_t`; it never asks for *decorrelated* dims, nor for *distinct slots*.
+   Fix: add a covariance term (VICReg-C) and/or a slot-diversity term.
 
-The v0.2 philosophy bets on (1)+(2) before (3): change data and init
-before adding loss terms. Watch `c_effective_rank` in Run 2 — it's the
-single most informative number for this question.
+**Where this stands now (Phase 04 in progress):**
+
+- Fix (2) is **done** — both init fixes are baked in (§4).
+- Fix (1) is **done** — a baseline was run on full SSv2. Rank rose modestly
+  (to ~9 at step ~3.5k) but did not climb to the dimensionality we want, so
+  "data alone" is not the whole story.
+- The diagnostics were sharpened to localize the failure: `c_slot_diversity_rank`
+  (within-video effective rank of the 32 slot outputs) and per-head
+  `c_attn_entropy` were added. The dominant remaining symptom is **slot
+  collapse + near-uniform attention** — slots and heads stay too similar /
+  too diffuse — rather than only feature-dimension correlation.
+- Fix (3) is now being **trialed empirically** (not as a fully-committed
+  default): a *gentle* `covariance_floor` (VICReg-C, `lambda_cov`) and a
+  `slot_diversity_loss` (`lambda_slot`) exist in `losses.py` and are wired
+  into `train_step`; both are always logged but only added to the loss when
+  their `lambda` > 0. An over-aggressive first attempt (`lambda_slot=0.25`)
+  moved the slot metric but hurt prediction and destabilized training
+  (Goodhart behavior), so the current direction is *gentle* weights plus a
+  **harder task** — increasing the prediction horizon (`horizon_k`) so the
+  task can no longer be solved by a low-information latent.
+
+The lesson so far: init governs the *start*; the variance floor prevents
+*constant* output; but neither forces the latent to *use* its capacity. A
+weak (too-easy / too-overlapping) prediction task is what lets a low-rank
+latent survive — which is why the horizon change matters as much as the
+regularizers. Watch `c_effective_rank`, `c_slot_diversity_rank`,
+`c_attn_entropy`, and the `coarse_vs_copy_ratio` *together* — the
+regularizers can satisfy a single metric without improving the actual task.
 
 ## 8. Questions to test yourself
 

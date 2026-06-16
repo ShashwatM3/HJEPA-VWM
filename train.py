@@ -475,6 +475,14 @@ def parse_args() -> argparse.Namespace:
         help="Within-video slot-diversity weight on c_t. 0 = off; use after "
         "Run A showed slot collapse / near-uniform bottleneck attention.",
     )
+    parser.add_argument(
+        "--horizon-k",
+        type=int,
+        default=None,
+        help="Prediction horizon in ORIGINAL frames (cfg.train.horizon_k). "
+        "Default 4 (target overlaps context heavily); 12 = harder task with "
+        "slight overlap, 16+ = non-overlapping. Single fixed horizon (Phases 1-3).",
+    )
     return parser.parse_args()
 
 
@@ -493,6 +501,8 @@ def main() -> None:
         cfg.train.lambda_cov = args.lambda_cov
     if args.lambda_slot is not None:
         cfg.train.lambda_slot = args.lambda_slot
+    if args.horizon_k is not None:
+        cfg.train.horizon_k = args.horizon_k
     if args.stage0_only:
         run_stage0(cfg)
     else:

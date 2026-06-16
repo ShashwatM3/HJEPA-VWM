@@ -55,6 +55,7 @@ afterwards.
 | [`10-FAILURE-MODES.md`](10-FAILURE-MODES.md) | Gradient explosions, NaN, precision, overtraining — Run 1 as a case study | What killed Run 1, mechanically, and what are the general lessons? |
 | [`11-PHASES-AND-MULTI-HORIZON.md`](11-PHASES-AND-MULTI-HORIZON.md) | Phases 1–4, acceptance gates, h_k | What's the roadmap? How does multi-horizon actually work? |
 | [`12-GLOSSARY.md`](12-GLOSSARY.md) | Every term in one place | Quick lookup when you forget what something means. |
+| [`13-FRAMES-TUBELETS-AND-HORIZON.md`](13-FRAMES-TUBELETS-AND-HORIZON.md) | Frames, tubelets, and horizon offsets | What exactly is the context clip, target clip, and `horizon_k` in frame/tubelet terms? |
 
 ---
 
