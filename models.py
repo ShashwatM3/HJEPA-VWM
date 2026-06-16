@@ -418,6 +418,7 @@ def smoke_test_models() -> None:
         covariance_floor,
         flow_matching_loss,
         interpolate,
+        slot_diversity_loss,
         variance_floor,
         velocity_target,
     )
@@ -447,6 +448,12 @@ def smoke_test_models() -> None:
     cov = covariance_floor(bottleneck(detailed))
     assert cov.requires_grad and torch.isfinite(cov), cov
     cov.backward()
+    assert any(p.grad is not None for p in bottleneck.parameters())
+    # Slot-diversity loss: finite scalar and gradients reach the bottleneck.
+    bottleneck.zero_grad(set_to_none=True)
+    slot_loss = slot_diversity_loss(bottleneck(detailed))
+    assert slot_loss.requires_grad and torch.isfinite(slot_loss), slot_loss
+    slot_loss.backward()
     assert any(p.grad is not None for p in bottleneck.parameters())
     from diagnostics import attention_entropy, slot_diversity_rank
 

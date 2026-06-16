@@ -139,6 +139,10 @@ class TrainConfig:
     # v0.2 baseline is reproduced exactly. Nonzero = sweep knob: start small
     # (~0.01-0.1), calibrate against L_cov's baseline magnitude, watch copy-ratio.
     lambda_cov: float = 0.0
+    # Within-video slot-diversity penalty on c_t (Plan Phase 04, anti slot-collapse).
+    # Default 0.0 -> term computed for logging (L_slot) but NOT added to loss.
+    # Nonzero is the primary knob after Run A showed c_slot_diversity_rank≈1.6/32.
+    lambda_slot: float = 0.0
     horizon_k: int = 4  # single fixed horizon for Phases 1-3 (Phase 4: multi-horizon)
     frame_stride: int = 2
     precision: str = "bf16"

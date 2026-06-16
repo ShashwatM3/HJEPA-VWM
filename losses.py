@@ -1,12 +1,13 @@
 """Pure tensor losses for HJEPA-VWM (v0.2).
 
 Flow-matching primitives (rectified flow) plus the anti-collapse regularizers on
-c_t: the per-dimension variance floor (VICReg V, always on, λ=0.10) and the
-off-diagonal covariance penalty (VICReg C, flag-gated via `lambda_cov`, default
-0.0 → exact v0.2 baseline). The covariance term was added under Plan Phase 04 to
-attack feature-dim correlation (`c_effective_rank ≈ 5`); SIGReg remains an
-escalation option (recoverable from git, not implemented here). No nn.Parameter
-lives here; these are pure functions reused across coarse/fine/frame stages.
+c_t: the per-dimension variance floor (VICReg V, always on, λ=0.10), the
+off-diagonal feature covariance penalty (VICReg C, flag-gated via `lambda_cov`),
+and the within-video slot-diversity penalty (flag-gated via `lambda_slot`).
+The covariance term attacks feature-dim correlation; the slot term attacks the
+measured Plan Phase 04 failure where all 32 bottleneck slots read out the same
+near-uniform attention average. No nn.Parameter lives here; these are pure
+functions reused across coarse/fine/frame stages.
 """
 
 from __future__ import annotations
@@ -90,9 +91,9 @@ def variance_floor(abstract: Tensor, std_target: float = 1.0) -> Tensor:
 
     The supervisor's collapse guardrail: flatten `c_t` across slots/features per
     batch element, compute the per-dimension std across the batch, and hinge each
-    dimension at `std_target`. This only prevents a *constant* `c_t`; the
-    flow-matching objective is what makes `c_t` carry real semantics, so the weight
-    `λ_var` is kept small (0.10) and no covariance/SIGReg term is added.
+    dimension at `std_target`. This only prevents a *constant* `c_t`; it does
+    not prevent feature-dim correlation or redundant slots. Plan Phase 04 adds
+    separate, flag-gated covariance and slot-diversity terms for those axes.
 
     `L_var = (1/d) Σ_j max(0, std_target - Std(c_j))`,  d = N_c * D_c.
 
@@ -140,3 +141,31 @@ def covariance_floor(abstract: Tensor) -> Tensor:
     cov = (z.T @ z) / (n - 1)  # (D, D)
     off_diag_sq = cov.pow(2).sum() - cov.diagonal().pow(2).sum()
     return off_diag_sq / d
+
+
+def slot_diversity_loss(abstract: Tensor, eps: float = 1e-8) -> Tensor:
+    """Within-video slot-collapse penalty on the abstract latent `c_t`.
+
+    The Run-A diagnosis showed `c_slot_diversity_rank ≈ 1.6/32` and nearly
+    uniform cross-attention: all bottleneck query slots were reading the same
+    average token. This loss directly penalizes that failure. For each video,
+    L2-normalize the `N_c` slot vectors, form the `N_c×N_c` cosine-similarity
+    matrix, and average the squared OFF-diagonal entries. Identical slots give
+    ~1.0; mutually orthogonal slots give 0.0.
+
+    Args:
+        abstract: (B, N_c, D_c) online abstract latent `c_t`.
+        eps: Numerical floor for slot-vector normalization.
+    Returns:
+        Scalar slot-diversity loss (>= 0; 0 == decorrelated slots).
+    """
+    _require_torch()
+    x = abstract.float()
+    b, n_c, _ = x.shape
+    if n_c < 2:
+        return x.new_tensor(0.0)
+    x = x / x.norm(dim=-1, keepdim=True).clamp_min(eps)
+    sim = x @ x.transpose(1, 2)  # (B, N_c, N_c)
+    diag_sq = sim.diagonal(dim1=1, dim2=2).pow(2).sum(dim=1)
+    off_diag_sq = sim.pow(2).sum(dim=(1, 2)) - diag_sq
+    return off_diag_sq.sum() / (b * n_c * (n_c - 1))

@@ -39,6 +39,7 @@ from losses import (
     covariance_floor,
     flow_matching_loss,
     interpolate,
+    slot_diversity_loss,
     variance_floor,
     velocity_target,
 )
@@ -221,9 +222,15 @@ def train_step(
         # baseline (Run A) to calibrate lambda_cov; only added to the loss — and
         # thus the gradient — when active. lambda_cov=0.0 => byte-identical baseline.
         cov_loss = covariance_floor(abstract)
+        # Slot-diversity (Plan Phase 04): Run A showed the dominant failure is
+        # slot collapse (32 slots reading the same near-uniform attention average).
+        # Compute for logging/calibration; only add when lambda_slot is active.
+        slot_loss = slot_diversity_loss(abstract)
         loss = flow_loss + cfg.train.lambda_var * var_loss
         if cfg.train.lambda_cov > 0.0:
             loss = loss + cfg.train.lambda_cov * cov_loss
+        if cfg.train.lambda_slot > 0.0:
+            loss = loss + cfg.train.lambda_slot * slot_loss
     loss.backward()
     grad_norm = torch.nn.utils.clip_grad_norm_(
         list(bottleneck.parameters()) + list(coarse_flow.parameters()), cfg.train.grad_clip
@@ -253,6 +260,7 @@ def train_step(
         "L_flow": float(flow_loss.detach().float().item()),
         "L_var": float(var_loss.detach().float().item()),
         "L_cov": float(cov_loss.detach().float().item()),
+        "L_slot": float(slot_loss.detach().float().item()),
         "grad_norm": grad_norm_f,
         "grad_skipped": float(grad_skipped),
         "ema_m": momentum,
@@ -450,15 +458,22 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Diagnostic-batch frequency (overrides cfg.train.diag_every).",
     )
-    # VICReg-C strength is the one empirical knob that stays a switch (Plan
-    # Phase 04): default None -> cfg default 0.0 (Run A baseline). The init fixes
-    # are baked into the model, not flagged. See EXECUTION_PHASES.md.
+    # Plan Phase 04 empirical knobs: defaults leave both penalties off; Run A
+    # logs L_cov/L_slot to calibrate them. Init fixes are baked into the model,
+    # not flagged. See EXECUTION_PHASES.md.
     parser.add_argument(
         "--lambda-cov",
         type=float,
         default=None,
         help="VICReg-C weight on c_t (Run B). 0 = baseline; ~0.01-0.1 once "
         "calibrated against Run A's logged L_cov.",
+    )
+    parser.add_argument(
+        "--lambda-slot",
+        type=float,
+        default=None,
+        help="Within-video slot-diversity weight on c_t. 0 = off; use after "
+        "Run A showed slot collapse / near-uniform bottleneck attention.",
     )
     return parser.parse_args()
 
@@ -476,6 +491,8 @@ def main() -> None:
         cfg.train.diag_every = args.diag_every
     if args.lambda_cov is not None:
         cfg.train.lambda_cov = args.lambda_cov
+    if args.lambda_slot is not None:
+        cfg.train.lambda_slot = args.lambda_slot
     if args.stage0_only:
         run_stage0(cfg)
     else:
