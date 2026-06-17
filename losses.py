@@ -148,22 +148,35 @@ def slot_diversity_loss(abstract: Tensor, eps: float = 1e-8) -> Tensor:
 
     The Run-A diagnosis showed `c_slot_diversity_rank ≈ 1.6/32` and nearly
     uniform cross-attention: all bottleneck query slots were reading the same
-    average token. This loss directly penalizes that failure. For each video,
-    L2-normalize the `N_c` slot vectors, form the `N_c×N_c` cosine-similarity
-    matrix, and average the squared OFF-diagonal entries. Identical slots give
-    ~1.0; mutually orthogonal slots give 0.0.
+    average token. This loss directly penalizes that failure.
+
+    IMPORTANT — the slots are CENTERED across the slot dimension before the
+    cosine matrix is formed, so the loss attacks the exact quantity the
+    `diagnostics.slot_diversity_rank` probe measures (it also centers per video).
+    Without centering, the 32 slots share a large common-mean component (they
+    all ≈ the same near-uniform-attention average token), the raw cosines pin at
+    ~1.0, and the gradient mostly fights that shared mean — which the final
+    LayerNorm / variance floor immediately restores. Centering removes the shared
+    mean so the penalty operates on the RESIDUAL slot directions, i.e. the
+    redundancy we actually want to break.
+
+    Per video: subtract the across-slot mean, L2-normalize the `N_c` residual
+    vectors, form the `N_c×N_c` cosine-similarity matrix, and average the squared
+    OFF-diagonal entries. Identical residual directions give ~1.0; mutually
+    orthogonal residuals give 0.0.
 
     Args:
         abstract: (B, N_c, D_c) online abstract latent `c_t`.
         eps: Numerical floor for slot-vector normalization.
     Returns:
-        Scalar slot-diversity loss (>= 0; 0 == decorrelated slots).
+        Scalar slot-diversity loss (>= 0; 0 == decorrelated slot residuals).
     """
     _require_torch()
     x = abstract.float()
     b, n_c, _ = x.shape
     if n_c < 2:
         return x.new_tensor(0.0)
+    x = x - x.mean(dim=1, keepdim=True)  # center across slots (match slot_diversity_rank)
     x = x / x.norm(dim=-1, keepdim=True).clamp_min(eps)
     sim = x @ x.transpose(1, 2)  # (B, N_c, N_c)
     diag_sq = sim.diagonal(dim1=1, dim2=2).pow(2).sum(dim=1)
