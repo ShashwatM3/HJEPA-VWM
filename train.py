@@ -483,6 +483,14 @@ def parse_args() -> argparse.Namespace:
         "Default 4 (target overlaps context heavily); 12 = harder task with "
         "slight overlap, 16+ = non-overlapping. Single fixed horizon (Phases 1-3).",
     )
+    parser.add_argument(
+        "--lambda-var",
+        type=float,
+        default=None,
+        help="Variance-floor (VICReg V) weight on c_t (cfg.train.lambda_var, "
+        "default 0.10). The primary anti-collapse lever: raise it when c_std_mean "
+        "sits well below var_floor_std_target (1.0) and cross_video_cosine climbs.",
+    )
     return parser.parse_args()
 
 
@@ -503,6 +511,8 @@ def main() -> None:
         cfg.train.lambda_slot = args.lambda_slot
     if args.horizon_k is not None:
         cfg.train.horizon_k = args.horizon_k
+    if args.lambda_var is not None:
+        cfg.train.lambda_var = args.lambda_var
     if args.stage0_only:
         run_stage0(cfg)
     else:
