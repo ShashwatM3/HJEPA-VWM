@@ -17,7 +17,7 @@ The model predicts **future latents**, not pixels directly. Two **flow-matching*
 > **v0.2 update:** the encoder is now **pretrained + frozen** (was trained from scratch), collapse
 > prevention is the **variance floor** (was SIGReg), and **multi-horizon prediction** is a new
 > **Phase 4** (deferred). Read [`KNOWLEDGE/SUPERVISOR_FEEDBACK_EXPLAINED.md`](KNOWLEDGE/SUPERVISOR_FEEDBACK_EXPLAINED.md)
-> and [`KNOWLEDGE/BRIEF_V0_2.md`](KNOWLEDGE/BRIEF_V0_2.md) first.
+> and [`KNOWLEDGE/BRIEF_V0_3.md`](KNOWLEDGE/BRIEF_V0_3.md) first.
 
 This is **not** a video diffusion model. The compressed predictive state is the point; bypass tests prove the hierarchy is real.
 
@@ -36,7 +36,7 @@ This is **not** a video diffusion model. The compressed predictive state is the 
 | **2** | [`AGENT-BEHAVIOUR/CODE_DESIGN.md`](AGENT-BEHAVIOUR/CODE_DESIGN.md) | **How you must write code** — flat 5–6 file layout, naming map, docstrings, `as_target()` pattern, black/ruff. Read before creating or renaming any file. |
 | **2b** | [`KNOWLEDGE/SUPERVISOR_FEEDBACK_EXPLAINED.md`](KNOWLEDGE/SUPERVISOR_FEEDBACK_EXPLAINED.md) | **The v0.2 update explained** — frozen encoder, flow target, variance floor, multi-horizon. Read before the brief. |
 | **3** | [`KNOWLEDGE/UNDERSTANDING.md`](KNOWLEDGE/UNDERSTANDING.md) §0–§3, §2.6, §6 | **What you are building** — shapes, locked constants, modules, stop-gradient table. Re-read §2, §2.6, §6 whenever touching latents or losses. |
-| **4** | [`KNOWLEDGE/BRIEF_V0_2.md`](KNOWLEDGE/BRIEF_V0_2.md) | **Authoritative working spec** (v0.2). The original PDF is preserved verbatim as [`BRIEF_V0_1.md`](KNOWLEDGE/BRIEF_V0_1.md). For the encoder choice see [`FROZEN_ENCODER_RESEARCH.md`](KNOWLEDGE/FROZEN_ENCODER_RESEARCH.md). |
+| **4** | [`KNOWLEDGE/BRIEF_V0_3.md`](KNOWLEDGE/BRIEF_V0_3.md) | **Authoritative architecture brief** (v0.3 — PDF + v0.2 + Phase 1 empirical updates). Prior versions: [`BRIEF_V0_1.md`](KNOWLEDGE/BRIEF_V0_1.md), [`BRIEF_V0_2.md`](KNOWLEDGE/BRIEF_V0_2.md). Encoder choice: [`FROZEN_ENCODER_RESEARCH.md`](KNOWLEDGE/FROZEN_ENCODER_RESEARCH.md). |
 | **5** | [`PHASES/PHASE_<N>.md`](PHASES/PHASE_1.md) | **What to build this session** — only after the human says "execute Phase N." Follow the workflow table top-to-bottom. |
 
 **Do not read** generic tutorials or substitute a different architecture. **Do not start coding** until steps 1–2 are done and step 5 is opened.
@@ -48,7 +48,7 @@ Human operators (not agents) use [`SETUPS/SETUP.md`](SETUPS/SETUP.md) and [`SETU
 ## 3. Document precedence (when sources conflict)
 
 1. `KNOWLEDGE/SUPERVISOR_FEEDBACK_EXPLAINED.md` — the v0.2 update; **top authority** on architecture intent.
-2. `KNOWLEDGE/BRIEF_V0_2.md` — the edited working brief.
+2. `KNOWLEDGE/BRIEF_V0_3.md` — the current architecture brief.
 3. `KNOWLEDGE/UNDERSTANDING.md` §2.6 — numerical constants.
 4. Active `PHASES/PHASE_<N>.md` — implementation sequencing and deliverables for that phase.
 5. `KNOWLEDGE/BRIEF_V0_1.md` / the original PDF — historical baseline; superseded where it conflicts.
@@ -81,7 +81,8 @@ AGENT_FILES/
 │   ├── UNDERSTANDING.md         ← full architecture comprehension (§0–§14), v0.2
 │   ├── SUPERVISOR_FEEDBACK_EXPLAINED.md  ← v0.2 update, taught from first principles
 │   ├── BRIEF_V0_1.md            ← exact replica of the original PDF (frozen baseline)
-│   ├── BRIEF_V0_2.md            ← working brief (PDF + v0.2 edits)
+│   ├── BRIEF_V0_3.md            ← current architecture brief (v0.3)
+│   ├── BRIEF_V0_2.md            ← frozen-encoder update (superseded by v0.3)
 │   ├── FROZEN_ENCODER_RESEARCH.md        ← encoder survey + recommendation + cascade
 │   ├── ARCHITECTURE_CHANGES_AND_PHASE_PLAN.md  ← roadmap + per-file change index
 │   └── hierarchical_jepa_flow_architecture_brief.pdf  ← original (see BRIEF_V0_1.md)
@@ -103,7 +104,7 @@ AGENT_FILES/
 | `AGENT-BEHAVIOUR/CODE_DESIGN.md` | Code conventions; target layout for implementation. |
 | `KNOWLEDGE/UNDERSTANDING.md` | Expanded brief: shapes, losses, EMA, stages, diagnostics, §14 decisions (v0.2). |
 | `KNOWLEDGE/SUPERVISOR_FEEDBACK_EXPLAINED.md` | The v0.2 update taught from first principles. |
-| `KNOWLEDGE/BRIEF_V0_1.md` / `BRIEF_V0_2.md` | Exact PDF replica (baseline) / edited working brief. |
+| `KNOWLEDGE/BRIEF_V0_1.md` / `BRIEF_V0_2.md` / **`BRIEF_V0_3.md`** | PDF replica (v0.1) / frozen-encoder brief (v0.2) / **current brief (v0.3)**. |
 | `KNOWLEDGE/FROZEN_ENCODER_RESEARCH.md` | Encoder survey, recommendation, architectural cascade. |
 | `KNOWLEDGE/ARCHITECTURE_CHANGES_AND_PHASE_PLAN.md` | Roadmap + per-file change index. |
 | `KNOWLEDGE/*.pdf` | Original locked design brief (transcribed in `BRIEF_V0_1.md`). |

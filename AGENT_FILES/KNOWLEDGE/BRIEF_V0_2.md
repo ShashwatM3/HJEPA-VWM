@@ -1,16 +1,11 @@
 # BRIEF_V0_2.md — Hierarchical JEPA-Flow Video World Model (frozen-encoder update)
 
-> **What this file is.** The **working** architecture brief. It is a duplicate of
-> [`BRIEF_V0_1.md`](BRIEF_V0_1.md) (the faithful transcription of the original PDF) **edited in
-> place** to fold in the supervisor's update: a frozen pretrained ViT encoder, an EMA on the
-> bottleneck only, a clip-level flow-matching target, a variance-floor collapse term replacing
-> SIGReg, and multi-horizon prediction (deferred to Phase 4).
+> **What this file is.** The **v0.2** architecture brief — frozen-encoder supervisor update on top of
+> the original PDF. It is a duplicate of [`BRIEF_V0_1.md`](BRIEF_V0_1.md) edited in place.
 >
-> **Precedence.** This file (with [`SUPERVISOR_FEEDBACK_EXPLAINED.md`](SUPERVISOR_FEEDBACK_EXPLAINED.md))
-> supersedes `BRIEF_V0_1.md` wherever they differ. Numerical constants are mirrored in
-> [`UNDERSTANDING.md`](UNDERSTANDING.md) §2.6 (single source of truth). For the conceptual
-> walkthrough read the feedback explainer; for the encoder choice see
-> [`FROZEN_ENCODER_RESEARCH.md`](FROZEN_ENCODER_RESEARCH.md).
+> **Superseded by [`BRIEF_V0_3.md`](BRIEF_V0_3.md)** for current architecture intent, Phase 1
+> operating defaults, init fixes, horizon, loss weights, diagnostics, and empirical run history.
+> Keep this file for diffs against v0.1/v0.2 only.
 
 ---
 
