@@ -4,7 +4,7 @@
 
 Decorrelation penalty directly targets low effective rank (correlated feature dims).
 
-## Run A executed (via init-fixes-full-ssv2-run-2)
+## Run A executed (via sleek-leaf-7)
 
 Step-3500 verdict on full SSv2, `lambda_cov=0`:
 

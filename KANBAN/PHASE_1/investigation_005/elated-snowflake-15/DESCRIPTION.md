@@ -20,7 +20,8 @@ validated config to completion.
 
 - Run name: `elated-snowflake-15`
 - Run id: `jhodg49x` (from chat / report tooling)
-- https://wandb.ai/smahalanobis-uc-davis/hjepa-vwm/runs/jhodg49x (if id matches entity project)
+- Runtime: ~5h 25m
+- https://wandb.ai/smahalanobis-uc-davis/hjepa-vwm/runs/jhodg49x
 
 ## Parent
 

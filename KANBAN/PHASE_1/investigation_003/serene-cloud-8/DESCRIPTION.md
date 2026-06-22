@@ -1,6 +1,6 @@
-# Run — slot-loss-k4-run-3
+# Run — serene-cloud-8
 
-**Slug:** BRIEF_V0_3 "Run 3" — no W&B name in repo.
+**BRIEF Run 3.** Aggressive slot-diversity loss at easy horizon.
 
 ## What this run tested
 
@@ -15,14 +15,18 @@ python train.py --data ssv2 --steps 5000 --log-every 50 --diag-every 250 \
 
 (`horizon_k=4` default at launch.)
 
-## Config delta vs run-2
+## Config delta vs sleek-leaf-7
 
 - `lambda_slot=0.25`
+- `lambda_cov=0.0027`
 - `horizon_k=4` (easy horizon)
 
 ## W&B
 
-Name not recorded.
+- Run name: `serene-cloud-8`
+- Run id: `dhp1i3fk`
+- Runtime: ~1h 32m
+- https://wandb.ai/smahalanobis-uc-davis/hjepa-vwm/runs/dhp1i3fk
 
 ## Parent
 

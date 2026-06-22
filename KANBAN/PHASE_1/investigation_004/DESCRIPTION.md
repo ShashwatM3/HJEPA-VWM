@@ -26,7 +26,7 @@ sign-off (reverses v0.2 "no covariance initially").
 | Run | Role |
 |---|---|
 | [`exalted-lion-6`](../investigation_003/exalted-lion-6/) | Tiny diagnostic baseline (cross-link) |
-| **Run A** = [`init-fixes-full-ssv2-run-2`](../investigation_003/init-fixes-full-ssv2-run-2/) | Full SSv2, `lambda_cov=0`, stopped @3500 — **executed** |
+| **Run A** = [`sleek-leaf-7`](../investigation_003/sleek-leaf-7/) | Full SSv2, `lambda_cov=0`, stopped @3500 — **executed** |
 | Run B (calibrated `lambda_cov`) | **Not executed** — slot-loss path superseded |
 
 `L_cov` logged on all runs at `lambda_cov=0` for calibration. Dedicated VICReg-C A/B

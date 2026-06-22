@@ -26,7 +26,4 @@ Partial wins on shorter runs do not unlock the hierarchy work.
 | Run | Role |
 |---|---|
 | [`elated-snowflake-15`](elated-snowflake-15/) | Full 15k attempt — grad-skip death spiral at 8500 |
-
-## Planned (not yet run)
-
-Resume from `phase1_step7500.pt` with `--lr-coarse-flow 1e-4` (CLI added commit `af3f87f`).
+| [`drawn-elevator-16`](drawn-elevator-16/) | Resume from ~7500 (verify outcome on W&B) |

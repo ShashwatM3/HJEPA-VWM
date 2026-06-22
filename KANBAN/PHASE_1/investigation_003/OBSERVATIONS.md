@@ -21,7 +21,7 @@ with healthy dead-dim fraction.
 
 **Evidence:** `c_slot_diversity_rank` low in early runs; uniform attention.
 
-**Result:** **Rejected as training objective.** `slot-loss-k4-run-3` and `centered-slot-k12-run-5`:
+**Result:** **Rejected as training objective.** `serene-cloud-8` and `copper-sky-12`:
 slot metric improved while `c_cross_video_cosine` worsened (~0.84) and rank fell — classic
 Goodhart. Centering fix (`ffc33ed`) aligned loss with metric but did not fix the objective.
 
@@ -46,10 +46,10 @@ prediction reduces trivial copy solutions.
 |---|---|---|---|---|
 | peachy-terrain-5 (ref) | ~5 | healthy | improved then regressed | collapse + crash |
 | exalted-lion-6 | ~8–10 | 0.25 | falling | tiny-scale collapse confirmed |
-| init-fixes-full-ssv2-run-2 (Run A @3500) | **8.7** | 0.25 | **7.42** | architectural, not data-limited |
-| slot-loss-k4-run-3 | worse | ~0.84 | unstable | reject slot loss |
-| slot-loss-k12-low-run-4 | — | — | slot inert | fix loss centering |
-| centered-slot-k12-run-5 | ~4.8 | ~0.84 | grad 10⁵ | reject slot loss |
+| sleek-leaf-7 (Run 2 / Run A @3500) | **8.7** | 0.25 | **7.42** | architectural, not data-limited |
+| serene-cloud-8 (Run 3) | worse | ~0.84 | unstable | reject slot loss |
+| skilled-waterfall-10 (Run 4) | — | — | slot inert | fix loss centering |
+| copper-sky-12 (Run 5) | ~4.8–15* | ~0.84 | grad 10⁵ | reject slot loss |
 | **cerulean-snow-13** | **~13.7** | **~0.22** | **< 1** | **winning config** |
 
 ## Conclusion

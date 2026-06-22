@@ -8,16 +8,7 @@ horizon.
 
 **Authoritative spec:** [`AGENT_FILES/PHASES/PHASE_1.md`](../AGENT_FILES/PHASES/PHASE_1.md)
 
-**History source:** [`AGENT_FILES/COMPLETE_FULL_CHAT`](../AGENT_FILES/COMPLETE_FULL_CHAT) (full user–agent transcript, ~11k lines).
-
-**Project context (later phases):**
-
-| Phase | Adds | Spec |
-|---|---|---|
-| 1 | Coarse flow `F_c` | `AGENT_FILES/PHASES/PHASE_1.md` |
-| 2 | Fine flow `F_e` + hierarchy tests | `AGENT_FILES/PHASES/PHASE_2.md` |
-| 3 | VAE + frame generator `D` | `AGENT_FILES/PHASES/PHASE_3.md` |
-| 4 | Multi-horizon coarse (`h_k`) | `AGENT_FILES/PHASES/PHASE_4.md` |
+**History source:** [`AGENT_FILES/COMPLETE_FULL_CHAT`](../AGENT_FILES/COMPLETE_FULL_CHAT) + W&B run list (June 2026).
 
 ---
 
@@ -26,30 +17,45 @@ horizon.
 | Investigation | Question | Status | Runs |
 |---|---|---|---|
 | [001](investigation_001/) | Can Phase 1 train without numerical blow-up? | **CLOSED** | 1 |
-| [002](investigation_002/) | Is dataloader throughput sufficient for full SSv2? | **CLOSED** | 3 |
-| [003](investigation_003/) | Why does `c_t` collapse (low rank / high cross-video cosine)? | **CLOSED** | 6 |
-| [004](investigation_004/) | Is VICReg-C needed on top of a strong variance floor? | **PAUSED** | 1 (Run A only) |
-| [005](investigation_005/) | Can we finish the 15k acceptance run with the winning config? | **ACTIVE** | 1 |
+| [002](investigation_002/) | Is dataloader throughput sufficient for full SSv2? | **CLOSED** | 4 |
+| [003](investigation_003/) | Why does `c_t` collapse? | **CLOSED** | 9 |
+| [004](investigation_004/) | Is VICReg-C needed beyond `lambda_var=0.5`? | **PAUSED** | 1 (Run A) |
+| [005](investigation_005/) | Can we finish the 15k acceptance run? | **ACTIVE** | 2 |
 
-**Winning config (from investigation 003):** full SSv2, `horizon_k=12`, `lambda_var=0.5`, no slot loss, init fixes baked in.
+**Winning config:** full SSv2, `horizon_k=12`, `lambda_var=0.5`, no slot loss.
 
-**Active work:** Resume from pre-spike checkpoint (~7500) after `elated-snowflake-15` grad-skip death spiral at step 8500. See [investigation_005](investigation_005/).
+**Active work:** Verify [`drawn-elevator-16`](investigation_005/drawn-elevator-16/) resume outcome on W&B.
 
 ---
 
-## W&B run index (named in chat)
+## Complete W&B run index (hjepa-vwm)
 
-| Run name | W&B id | Investigation |
-|---|---|---|
-| `youthful-pond-1` | x4pwz33d | 002 |
-| `efficient-aardvark-2` | fz7ztfc8 | 002 |
-| `charmed-haze-4` | gj8ypv0d | 002 |
-| `peachy-terrain-5` | 1chv2608 | 001 |
-| `exalted-lion-6` | wv69n7n5 | 003 |
-| `cerulean-snow-13` | (name only) | 003 |
-| `elated-snowflake-15` | jhodg49x | 005 |
+All 16 runs from project dashboard, in W&B creation order:
 
-Runs 2–5 (collapse sequence) have **no W&B names in chat** — slug folders under investigation_003.
+| # | Run name | ID | Runtime | Investigation | BRIEF |
+|---|---|---|---|---|---|
+| 1 | `youthful-pond-1` | x4pwz33d | 2m25s | 002 | smoke |
+| 2 | `efficient-aardvark-2` | fz7ztfc8 | 5m16s | 002 | smoke |
+| 3 | `comfy-glade-3` | 0mgmqxxi | 5m29s | 002 | smoke |
+| 4 | `charmed-haze-4` | gj8ypv0d | 4m27s | 002 | smoke |
+| 5 | `peachy-terrain-5` | 1chv2608 | 3h53m | 001 | **Run 1** |
+| 6 | `exalted-lion-6` | wv69n7n5 | 14m18s | 003 | P1 diag |
+| 7 | `sleek-leaf-7` | rpxyg9qt | 1h39m | 003 | **Run 2** |
+| 8 | `serene-cloud-8` | dhp1i3fk | 1h32m | 003 | **Run 3** |
+| 9 | `confused-butterfly-9` | m30jxiye | 1s | 003 | fail |
+| 10 | `skilled-waterfall-10` | 27i1r9qi | 1h8m | 003 | **Run 4** |
+| 11 | `olive-terrain-11` | q40nq0l3 | 1h58m | 003 | TBD |
+| 12 | `copper-sky-12` | ejror834 | 2h24m | 003 | **Run 5** |
+| 13 | `cerulean-snow-13` | 4lo4j7qb | 3h7m | 003 | **Run 6** ✓ |
+| 14 | `jolly-forest-14` | 8bkeeuio | 1h32m | 003 | TBD |
+| 15 | `elated-snowflake-15` | jhodg49x | 5h25m | 005 | 15k fail |
+| 16 | `drawn-elevator-16` | 0n5mx3qf | 3h29m | 005 | resume |
+
+Project URL: https://wandb.ai/smahalanobis-uc-davis/hjepa-vwm
+
+**Mapping notes:** Runs 7–12 matched to BRIEF 2–5 by chronology + runtime + chat logs.
+`olive-terrain-11` and `jolly-forest-14` are recorded but config mapping is uncertain —
+verify on W&B config panel.
 
 ---
 

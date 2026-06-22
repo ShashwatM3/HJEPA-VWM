@@ -11,7 +11,7 @@ fixes collapse without Goodhart. BRIEF_V0_3 "Run 6".
 python train.py --data ssv2 --steps 15000 --horizon-k 12 --lambda-var 0.5
 ```
 
-## Config delta vs centered-slot-k12-run-5
+## Config delta vs copper-sky-12
 
 - `lambda_slot`: 0.05 → **0**
 - `lambda_var`: 0.10 → **0.5**
@@ -19,8 +19,9 @@ python train.py --data ssv2 --steps 15000 --horizon-k 12 --lambda-var 0.5
 ## W&B
 
 - Run name: `cerulean-snow-13`
-- Project: `smahalanobis-uc-davis/hjepa-vwm`
-- URL not pinned in repo; search by display name.
+- Run id: `4lo4j7qb`
+- Runtime: ~3h 7m
+- https://wandb.ai/smahalanobis-uc-davis/hjepa-vwm/runs/4lo4j7qb
 
 ## Parent
 

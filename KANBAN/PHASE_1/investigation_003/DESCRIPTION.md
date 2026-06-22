@@ -24,16 +24,19 @@ Low rank means the bottleneck is not carrying future-relevant structure; Phase 2
 
 ## Runs in this investigation
 
-| Run | Role |
-|---|---|
-| [`exalted-lion-6`](exalted-lion-6/) | P1 tiny diagnostic — collapse reproduced cheaply |
-| [`init-fixes-full-ssv2-run-2`](init-fixes-full-ssv2-run-2/) | Full SSv2 baseline (BRIEF Run 2 / VICReg Run A @3500) |
-| [`slot-loss-k4-run-3`](slot-loss-k4-run-3/) | Aggressive slot loss + easy horizon — Goodhart |
-| [`slot-loss-k12-low-run-4`](slot-loss-k12-low-run-4/) | Harder horizon; slot loss inert (loss/metric mismatch) |
-| [`centered-slot-k12-run-5`](centered-slot-k12-run-5/) | Fixed slot loss; still Goodhart + grad explosions |
-| [`cerulean-snow-13`](cerulean-snow-13/) | **Win:** `lambda_var=0.5`, no slot loss |
+| Run | BRIEF | Role |
+|---|---|---|
+| [`exalted-lion-6`](exalted-lion-6/) | P1 | Tiny diagnostic — collapse reproduced cheaply |
+| [`sleek-leaf-7`](sleek-leaf-7/) | **Run 2** | Full SSv2 baseline / VICReg Run A @3500 |
+| [`confused-butterfly-9`](confused-butterfly-9/) | — | Failed launch (1s) |
+| [`serene-cloud-8`](serene-cloud-8/) | **Run 3** | Aggressive slot loss + k=4 — Goodhart |
+| [`skilled-waterfall-10`](skilled-waterfall-10/) | **Run 4** | k=12 slot loss inert (loss/metric mismatch) |
+| [`olive-terrain-11`](olive-terrain-11/) | — | Intermediate k=12 attempt (config TBD on W&B) |
+| [`copper-sky-12`](copper-sky-12/) | **Run 5** | Centered slot loss — Goodhart + grad spikes |
+| [`jolly-forest-14`](jolly-forest-14/) | — | Intermediate pre-elated run (config TBD) |
+| [`cerulean-snow-13`](cerulean-snow-13/) | **Run 6** | **Win:** `lambda_var=0.5`, no slot loss |
 
 ## Spawned
 
-- [investigation_004](investigation_004/) — VICReg-C path (planned, deprioritized)
+- [investigation_004](investigation_004/) — VICReg-C path (Run A executed; Run B not run)
 - [investigation_005](investigation_005/) — complete 15k with winning config
