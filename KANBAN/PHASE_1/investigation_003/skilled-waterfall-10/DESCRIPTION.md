@@ -6,17 +6,20 @@
 
 Harder horizon (k=12) with low slot loss — does a harder task + mild slot penalty help?
 
-## Command (approximate)
+## Command
 
 ```bash
 python train.py --data ssv2 --steps 15000 --horizon-k 12 \
   --lambda-slot 0.05 --lambda-cov 0.0027
 ```
 
+(`lambda_var=0.10` default.)
+
 ## Config delta vs serene-cloud-8
 
 - `horizon_k`: 4 → **12**
 - `lambda_slot`: 0.25 → **0.05**
+- `lambda_cov=0.0027` (active — not logging-only)
 
 ## W&B
 

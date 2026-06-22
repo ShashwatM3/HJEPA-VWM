@@ -22,9 +22,6 @@ Full SSv2 experiments are impractical until throughput improves.
 
 ## Runs in this investigation
 
-| Run | Role |
-|---|---|
-| [`comfy-glade-3`](comfy-glade-3/) | Early smoke between pre/post decode-fix baselines |
-| [`youthful-pond-1`](youthful-pond-1/) | First pod smoke (100 steps) |
-| [`efficient-aardvark-2`](efficient-aardvark-2/) | Pre-fix 200-step throughput baseline |
-| [`charmed-haze-4`](charmed-haze-4/) | Post-fix 200-step validation |
+Smoke runs only — no dedicated training run. W&B smokes:
+`youthful-pond-1`, `efficient-aardvark-2`, `charmed-haze-4` (timed throughput checks,
+not training experiments). See OBSERVATIONS.md.

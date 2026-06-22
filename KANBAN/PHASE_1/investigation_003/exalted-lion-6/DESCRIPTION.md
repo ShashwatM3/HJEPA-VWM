@@ -2,9 +2,10 @@
 
 ## What this run tested
 
-Plan Phase 04 **P1 diagnostic** (~500 steps on `ssv2_tiny`): confirm new collapse
-instrumentation on the real pipeline and reproduce Run 1 rank stagnation at low cost
-before implementing VICReg-C.
+Plan Phase 04 **P1 instrumented diagnostic** (~500 steps on `ssv2_tiny`): confirm
+collapse instrumentation on the real pipeline at low cost before the full-SSv2
+collapse arc. Init fixes (orthogonal queries, zero-init `out_mlp`) were **baked in**.
+No auxiliary regularizers — all at defaults.
 
 ## Command
 
@@ -12,11 +13,14 @@ before implementing VICReg-C.
 python train.py --data ssv2_tiny --steps 500 --log-every 50 --diag-every 100
 ```
 
+(`--lambda-cov`, `--lambda-slot`, and `--lambda-var` all default / off.)
+
 ## Config delta
 
-- Pre–per-head-attention-entropy fix (head-averaged `c_attn_entropy` still ~1.0)
-- `lambda_var=0.10`, `horizon_k=4`, no slot/cov
-- Post–Run-1 stability retune (halved LRs, skip guard)
+- Init fixes baked into `models.py`
+- `lambda_var=0.10` (default), `horizon_k=4`, `lambda_cov=0`, `lambda_slot=0`
+- Post–Run-1 stability retune (halved LRs, grad skip guard)
+- Head-averaged `c_attn_entropy` still active (per-head fix landed in `a96c0d6`, after this run)
 
 ## W&B
 
@@ -26,4 +30,4 @@ python train.py --data ssv2_tiny --steps 500 --log-every 50 --diag-every 100
 
 ## Parent
 
-[investigation_003](../DESCRIPTION.md) — also informs [investigation_004](../investigation_004/)
+[investigation_003](../DESCRIPTION.md) — chronologically first run in this investigation

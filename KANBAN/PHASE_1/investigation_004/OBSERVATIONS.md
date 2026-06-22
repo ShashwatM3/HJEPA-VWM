@@ -16,11 +16,21 @@ Step-3500 verdict on full SSv2, `lambda_cov=0`:
 **Run B never launched** — team pivoted to slot-diversity loss (runs 3–5), then to
 `lambda_var=0.5` after slot path failed.
 
-## Evidence without dedicated VICReg run
+## Evidence without dedicated VICReg A/B
 
-- VICReg-C implemented and logged (`L_cov` ~8–20 at `lambda_cov=0` on later runs)
-- **`cerulean-snow-13`** achieved rank ~13.7 with **`lambda_cov=0`** only
-- Slot-loss path showed **Goodhart risk** for auxiliary metrics
+VICReg-C (`lambda_cov`) was **never tested as the primary isolated lever**. It appeared
+only as a low-weight **adjunct** alongside slot loss on Runs 3–5
+([`serene-cloud-8`](../investigation_003/serene-cloud-8/),
+[`skilled-waterfall-10`](../investigation_003/skilled-waterfall-10/),
+[`copper-sky-12`](../investigation_003/copper-sky-12/)) at **`lambda_cov=0.0027`** —
+not at `lambda_cov=0` for calibration.
+
+- **`sleek-leaf-7`** (Run A): `lambda_cov=0` — logs `L_cov` magnitude only; used to
+  calibrate the 0.0027 weight used later
+- **Runs 3–5**: `lambda_cov=0.0027` active with slot loss — VICReg-C tried as adjunct,
+  not isolated; slot path rejected for Goodhart
+- **`cerulean-snow-13`**: first run with **`lambda_cov=0`** and no slot loss — rank
+  ~13.7 via `lambda_var=0.5` alone
 
 ## Belief (current)
 

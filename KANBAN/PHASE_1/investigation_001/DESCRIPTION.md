@@ -1,8 +1,11 @@
 # Investigation 001 — Can Phase 1 train without numerical blow-up?
 
 **Status:** CLOSED  
-**Opened:** 2026-06-09 (first full Phase 1 launch on RunPod)  
+**Opened:** 2026-06-09 (launch prep on RunPod)  
 **Closed:** 2026-06-10 (postmortem + hyperparameter retune landed in code)
+
+Note: [`peachy-terrain-5`](peachy-terrain-5/) W&B log timestamps show **run start
+2026-06-10**; 06-09 reflects decision and launch prep.
 
 ## Question
 

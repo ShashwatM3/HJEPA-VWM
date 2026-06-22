@@ -26,7 +26,7 @@ Low rank means the bottleneck is not carrying future-relevant structure; Phase 2
 
 | Run | BRIEF | Role |
 |---|---|---|
-| [`exalted-lion-6`](exalted-lion-6/) | P1 | Tiny diagnostic — collapse reproduced cheaply |
+| [`exalted-lion-6`](exalted-lion-6/) | P1 | **First** — tiny diagnostic; slot redundancy + feature correlation dominant |
 | [`sleek-leaf-7`](sleek-leaf-7/) | **Run 2** | Full SSv2 baseline / VICReg Run A @3500 |
 | [`confused-butterfly-9`](confused-butterfly-9/) | — | Failed launch (1s) |
 | [`serene-cloud-8`](serene-cloud-8/) | **Run 3** | Aggressive slot loss + k=4 — Goodhart |
