@@ -126,6 +126,11 @@ def apply_lr_schedule(
     return scale
 
 
+def peak_base_lrs(cfg: Config) -> list[float]:
+    """Peak (pre-schedule) learning rates for bottleneck B and coarse flow F_c."""
+    return [cfg.train.lr_bottleneck, cfg.train.lr_coarse_flow]
+
+
 def device_for_training() -> torch.device:
     """Choose CUDA when available, otherwise CPU for local smoke commands."""
     _require_torch()
@@ -401,7 +406,13 @@ def run_training(cfg: Config, steps: int, resume: str | None = None) -> None:
     _, bottleneck, target_bottleneck, coarse_flow = modules
     optimizer = make_optimizer(bottleneck, coarse_flow, cfg)
     start_step = load_checkpoint(resume, modules, optimizer) if resume else 0
-    base_lrs = [group["lr"] for group in optimizer.param_groups]
+    # Peak LRs always come from config/CLI — not checkpoint param_group["lr"], which
+    # stores the *scheduled* LR at save time and would double-apply cosine decay on resume.
+    base_lrs = peak_base_lrs(cfg)
+    if resume:
+        print(
+            f"Resumed step {start_step}; peak base LRs B={base_lrs[0]:.2e}, F_c={base_lrs[1]:.2e}"
+        )
     train_loader = build_dataloader(cfg, "train")
     val_loader = build_dataloader(cfg, "validation", batch_size=min(16, cfg.train.global_batch))
     val_batch = next(iter(val_loader))
@@ -491,6 +502,20 @@ def parse_args() -> argparse.Namespace:
         "default 0.10). The primary anti-collapse lever: raise it when c_std_mean "
         "sits well below var_floor_std_target (1.0) and cross_video_cosine climbs.",
     )
+    parser.add_argument(
+        "--lr-bottleneck",
+        type=float,
+        default=None,
+        help="Peak LR for bottleneck B (cfg.train.lr_bottleneck, default 1e-4). "
+        "Applied after --resume; overrides checkpoint scheduled LR.",
+    )
+    parser.add_argument(
+        "--lr-coarse-flow",
+        type=float,
+        default=None,
+        help="Peak LR for coarse flow F_c (cfg.train.lr_coarse_flow, default 2e-4). "
+        "Applied after --resume; overrides checkpoint scheduled LR.",
+    )
     return parser.parse_args()
 
 
@@ -513,6 +538,10 @@ def main() -> None:
         cfg.train.horizon_k = args.horizon_k
     if args.lambda_var is not None:
         cfg.train.lambda_var = args.lambda_var
+    if args.lr_bottleneck is not None:
+        cfg.train.lr_bottleneck = args.lr_bottleneck
+    if args.lr_coarse_flow is not None:
+        cfg.train.lr_coarse_flow = args.lr_coarse_flow
     if args.stage0_only:
         run_stage0(cfg)
     else:
