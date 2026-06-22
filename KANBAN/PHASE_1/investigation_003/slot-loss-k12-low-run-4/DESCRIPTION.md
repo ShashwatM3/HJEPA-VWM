@@ -9,7 +9,8 @@ Harder horizon (k=12) with low slot loss — does a harder task + mild slot pena
 ## Command (approximate)
 
 ```bash
-python train.py --data ssv2 --steps 15000 --horizon-k 12 --lambda-slot 0.05
+python train.py --data ssv2 --steps 5000 --log-every 50 --diag-every 250 \
+  --horizon-k 12 --lambda-slot 0.05 --lambda-cov 0.0027
 ```
 
 ## Config delta vs run-3

@@ -23,13 +23,11 @@ sign-off (reverses v0.2 "no covariance initially").
 
 ## Runs
 
-**None executed** as primary A/B. `L_cov` logged on all runs at `lambda_cov=0` for calibration.
+| Run | Role |
+|---|---|
+| [`exalted-lion-6`](../investigation_003/exalted-lion-6/) | Tiny diagnostic baseline (cross-link) |
+| **Run A** = [`init-fixes-full-ssv2-run-2`](../investigation_003/init-fixes-full-ssv2-run-2/) | Full SSv2, `lambda_cov=0`, stopped @3500 — **executed** |
+| Run B (calibrated `lambda_cov`) | **Not executed** — slot-loss path superseded |
 
-## Planned matrix (not run)
-
-| Run | `lambda_cov` | Purpose |
-|---|---|---|
-| A | 0 | baseline on full SSv2 |
-| B | calibrated | VICReg-C A/B |
-
-Superseded in priority by `lambda_var` sweep that produced `cerulean-snow-13`.
+`L_cov` logged on all runs at `lambda_cov=0` for calibration. Dedicated VICReg-C A/B
+was deprioritized after `lambda_var=0.5` win in [investigation_003](../investigation_003/).

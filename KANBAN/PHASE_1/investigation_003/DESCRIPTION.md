@@ -26,7 +26,8 @@ Low rank means the bottleneck is not carrying future-relevant structure; Phase 2
 
 | Run | Role |
 |---|---|
-| [`init-fixes-full-ssv2-run-2`](init-fixes-full-ssv2-run-2/) | Init fixes + full data; rank ~9 then stalls |
+| [`exalted-lion-6`](exalted-lion-6/) | P1 tiny diagnostic — collapse reproduced cheaply |
+| [`init-fixes-full-ssv2-run-2`](init-fixes-full-ssv2-run-2/) | Full SSv2 baseline (BRIEF Run 2 / VICReg Run A @3500) |
 | [`slot-loss-k4-run-3`](slot-loss-k4-run-3/) | Aggressive slot loss + easy horizon — Goodhart |
 | [`slot-loss-k12-low-run-4`](slot-loss-k12-low-run-4/) | Harder horizon; slot loss inert (loss/metric mismatch) |
 | [`centered-slot-k12-run-5`](centered-slot-k12-run-5/) | Fixed slot loss; still Goodhart + grad explosions |

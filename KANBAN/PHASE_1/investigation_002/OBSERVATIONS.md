@@ -18,10 +18,20 @@ frames to the old path. Kept `num_threads=1` for VP9 `.webm` reliability.
 Throughput was a **data-loader issue**, not a model issue. Fix was sufficient to
 proceed with full SSv2 runs; investigation 03 CPU→GPU offload was **not** opened.
 
+## W&B smoke runs
+
+| Run | Steps | Finding |
+|---|---|---|
+| `youthful-pond-1` | 100 | Pod + W&B + training loop OK |
+| `efficient-aardvark-2` | 200 | ~1.66 s/step pre-fix; metrics bit-identical |
+| `charmed-haze-4` | 200 | Post-fix faster; metrics unchanged |
+
+Source: [`AGENT_FILES/COMPLETE_FULL_CHAT`](../../AGENT_FILES/COMPLETE_FULL_CHAT) (lines ~482–2810).
+
 ## Conclusion
 
-**CLOSED — solved by selective decode.** No run-level W&B artifact; pod-side
-timing confirmed improvement (target ≤0.8 s/step per KANBAN 01 goals).
+**CLOSED — solved by selective decode.** Pod-side timing confirmed improvement
+(target ≤0.8 s/step per KANBAN 01 goals not fully hit, but sufficient to proceed).
 
 ## Cross-investigation
 

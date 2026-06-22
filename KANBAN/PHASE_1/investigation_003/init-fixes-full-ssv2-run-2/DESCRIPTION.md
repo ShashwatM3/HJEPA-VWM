@@ -1,6 +1,8 @@
 # Run — init-fixes-full-ssv2-run-2
 
-**Slug:** no W&B display name preserved in repo (BRIEF_V0_3 "Run 2").
+**Slug:** no W&B display name in chat (BRIEF_V0_3 "Run 2" / VICReg **Run A**).
+
+Same run as VICReg Run A stopped ~step 3500 for data-confound verdict.
 
 ## What this run tested
 

@@ -4,12 +4,23 @@
 
 Decorrelation penalty directly targets low effective rank (correlated feature dims).
 
-## Evidence without dedicated run
+## Run A executed (via init-fixes-full-ssv2-run-2)
 
-- VICReg-C implemented and logged (`L_cov` ~8–20 at `lambda_cov=0` on cerulean) for future calibration.
-- **`cerulean-snow-13`** achieved rank ~13.7 with **`lambda_cov=0`** only.
-- Slot-loss path showed **Goodhart risk** for auxiliary metrics — any future VICReg-C trial must
-  watch `coarse_vs_copy_ratio` jointly with rank.
+Step-3500 verdict on full SSv2, `lambda_cov=0`:
+
+- `c_effective_rank` **8.7** — architectural collapse, not data-limited (42× data → +3.7 rank)
+- `c_slot_diversity_rank` **1.62** — dominant axis is slot/attention collapse
+- `L_cov` **20.18** at λ=0 → calibrated start **λ_cov=0.0027**
+- VICReg-C would address rank 8.7 axis; **would not** fix slot redundancy directly
+
+**Run B never launched** — team pivoted to slot-diversity loss (runs 3–5), then to
+`lambda_var=0.5` after slot path failed.
+
+## Evidence without dedicated VICReg run
+
+- VICReg-C implemented and logged (`L_cov` ~8–20 at `lambda_cov=0` on later runs)
+- **`cerulean-snow-13`** achieved rank ~13.7 with **`lambda_cov=0`** only
+- Slot-loss path showed **Goodhart risk** for auxiliary metrics
 
 ## Belief (current)
 
@@ -24,3 +35,5 @@ Held as second escalation per ANALYSIS_AND_DECISIONS — not tried. Deferred.
 ## Conclusion
 
 **Paused, not closed.** Re-open only if investigation 005 shows rank stall with otherwise healthy metrics.
+
+Source: `AGENT_FILES/COMPLETE_FULL_CHAT` lines ~5389–6241, ~9268–9303.

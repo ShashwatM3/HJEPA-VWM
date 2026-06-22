@@ -22,4 +22,8 @@ Full SSv2 experiments are impractical until throughput improves.
 
 ## Runs in this investigation
 
-No W&B runs recorded. Validation was a timed 200-step smoke (`commit 4c1abb3` baseline vs `5e78caa` after fix) documented in KANBAN 01.
+| Run | Role |
+|---|---|
+| [`youthful-pond-1`](youthful-pond-1/) | First pod smoke (100 steps) |
+| [`efficient-aardvark-2`](efficient-aardvark-2/) | Pre-fix 200-step throughput baseline |
+| [`charmed-haze-4`](charmed-haze-4/) | Post-fix 200-step validation |

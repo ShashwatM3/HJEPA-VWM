@@ -9,10 +9,11 @@ Hypothesis: within-video **slot-diversity loss** breaks redundant slots and lift
 ## Command (approximate)
 
 ```bash
-python train.py --data ssv2 --steps 15000 --lambda-slot 0.25 --horizon-k 4
+python train.py --data ssv2 --steps 5000 --log-every 50 --diag-every 250 \
+  --lambda-slot 0.25 --lambda-cov 0.0027
 ```
 
-(`lambda_cov` may have been nonzero in some launch docs — primary delta is slot + k=4.)
+(`horizon_k=4` default at launch.)
 
 ## Config delta vs run-2
 

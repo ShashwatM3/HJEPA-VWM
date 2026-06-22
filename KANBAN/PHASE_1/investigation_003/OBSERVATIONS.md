@@ -45,7 +45,8 @@ prediction reduces trivial copy solutions.
 | Run | Rank | Cross-video cos | Copy ratio | Verdict |
 |---|---|---|---|---|
 | peachy-terrain-5 (ref) | ~5 | healthy | improved then regressed | collapse + crash |
-| init-fixes-full-ssv2-run-2 | ~9 stall | ~0.72 | — | init helps, not enough |
+| exalted-lion-6 | ~8–10 | 0.25 | falling | tiny-scale collapse confirmed |
+| init-fixes-full-ssv2-run-2 (Run A @3500) | **8.7** | 0.25 | **7.42** | architectural, not data-limited |
 | slot-loss-k4-run-3 | worse | ~0.84 | unstable | reject slot loss |
 | slot-loss-k12-low-run-4 | — | — | slot inert | fix loss centering |
 | centered-slot-k12-run-5 | ~4.8 | ~0.84 | grad 10⁵ | reject slot loss |

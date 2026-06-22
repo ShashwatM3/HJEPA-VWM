@@ -2,7 +2,7 @@
 
 ## Finding
 
-**`L_slot` was inert** — gradient did not move the metric meaningfully.
+**`L_slot` glued near ~1.0** — gradient did not move the slot metric meaningfully.
 
 ## Root cause (code)
 
