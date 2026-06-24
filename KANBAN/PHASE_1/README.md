@@ -24,7 +24,7 @@ horizon.
 
 **Winning config:** full SSv2, `horizon_k=12`, `lambda_var=0.5`, no slot loss.
 
-**Active work:** [`royal-cherry-17`](investigation_005/royal-cherry-17/) — resume @7500 with AGC (commit `1ae2e09`).
+**Active work:** Next run after [`royal-cherry-17`](investigation_005/royal-cherry-17/) — AGC + `--lr-coarse-flow 1e-4` from ckpt 7500.
 
 ---
 
@@ -50,7 +50,7 @@ All runs from project dashboard, in W&B creation order:
 | 14 | `jolly-forest-14` | 8bkeeuio | 1h32m | 003 | TBD |
 | 15 | `elated-snowflake-15` | jhodg49x | 5h25m | 005 | 15k fail |
 | 16 | `drawn-elevator-16` | 0n5mx3qf | 3h29m | 005 | resume fail |
-| 17 | `royal-cherry-17` | _TBD_ | — | 005 | AGC resume |
+| 17 | `royal-cherry-17` | 0xv4upvb | 4h52m | 005 | AGC resume — skip-free, rank collapse |
 
 Project URL: https://wandb.ai/smahalanobis-uc-davis/hjepa-vwm
 

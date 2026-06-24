@@ -27,4 +27,4 @@ Partial wins on shorter runs do not unlock the hierarchy work.
 |---|---|
 | [`elated-snowflake-15`](elated-snowflake-15/) | Full 15k attempt — grad-skip death spiral at 8500 |
 | [`drawn-elevator-16`](drawn-elevator-16/) | Resume from ~7500, LR halved — high skip rate (failed) |
-| [`royal-cherry-17`](royal-cherry-17/) | Resume from 7500 + AGC (active) |
+| [`royal-cherry-17`](royal-cherry-17/) | Resume @7500 + AGC — 0% skips, rank collapse after 8600 |

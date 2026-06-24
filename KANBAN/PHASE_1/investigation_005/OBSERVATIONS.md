@@ -39,11 +39,21 @@ Run report created in chat: `elated-snowflake-15 — Run Report` on W&B (entity
 
 ## Current belief
 
-Winning **config** is validated; **full 15k completion** is not. Next attempt is resume, not
-from-scratch.
+Winning **config** is validated for pre-8500 behavior; **full 15k completion** is not.
+
+**Three failure modes on the same resume trajectory (ckpt 7500):**
+
+1. **elated** — skip spiral (threshold 50), frozen weights, illusory latent health.
+2. **drawn** — halved LR delayed skip to 8550, same freeze pattern (85% skips).
+3. **royal** — AGC eliminated skips (0%) but **active collapse** after step ~8600 when
+   `L_flow` spiked (~0.3 → 3.0) under extreme F_c clipping (ratio up to 1284).
+
+AGC fixes optimizer freeze; it does **not** fix the underlying late-resume instability basin.
+Next attempt needs **AGC + halved flow LR** at minimum, plus stronger abort signals on
+`L_flow` / `agc_Fc_max_ratio`.
 
 ## Open
 
-- Where rank plateaus if training completes 15k
-- Whether lower flow LR avoids step-8500 class spikes
-- Auto-abort on sustained `grad_skipped` (manual for now)
+- Whether AGC + 1e-4 LR completes 15k without skip or collapse
+- Whether fresh-from-init 15k with AGC avoids the 8500 basin entirely
+- Code: pre-AGC grad logging, L_flow-based abort, optional LR backoff on AGC spike

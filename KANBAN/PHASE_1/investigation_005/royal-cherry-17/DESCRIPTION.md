@@ -41,8 +41,9 @@ AGC is **on by default** (`cfg.train.agc_enabled=True`). No extra flags unless t
 ## W&B
 
 - Run name: `royal-cherry-17`
-- Run id: _TBD — fill after launch from W&B URL_
-- Project: `hjepa-vwm` (entity `smahalanobis-uc-davis`)
+- Run id: `0xv4upvb`
+- Runtime: ~4h 52m (killed at step 11350)
+- https://wandb.ai/smahalanobis-uc-davis/hjepa-vwm/runs/0xv4upvb
 
 ## Parent
 
