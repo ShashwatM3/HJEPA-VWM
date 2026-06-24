@@ -45,8 +45,8 @@ Winning **config** is validated for pre-8500 behavior; **full 15k completion** i
 
 1. **elated** — skip spiral (threshold 50), frozen weights, illusory latent health.
 2. **drawn** — halved LR delayed skip to 8550, same freeze pattern (85% skips).
-3. **royal** — AGC eliminated skips (0%) but **active collapse** after step ~8600 when
-   `L_flow` spiked (~0.3 → 3.0) under extreme F_c clipping (ratio up to 1284).
+3. **royal** — **fresh** 15k + AGC from step 0 (not resume). 0% skips; dodged elated's
+   8400–8500 spike; **new cliff at 8600** → active rank/slot collapse (13.9→5.8).
 
 AGC fixes optimizer freeze; it does **not** fix the underlying late-resume instability basin.
 Next attempt needs **AGC + halved flow LR** at minimum, plus stronger abort signals on

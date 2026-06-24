@@ -1,108 +1,208 @@
 # Observations — royal-cherry-17
 
-**W&B:** [`0xv4upvb`](https://wandb.ai/smahalanobis-uc-davis/hjepa-vwm/runs/0xv4upvb) · state **killed** · runtime ~4.9h · logged steps **0–11350** (228 rows)
+**W&B:** [`0xv4upvb`](https://wandb.ai/smahalanobis-uc-davis/hjepa-vwm/runs/0xv4upvb)  
+**State:** killed · **Runtime:** 17549s (~4h 52m) · **228 logged rows** · steps **0–11350**
 
-## Outcome
+Data source: full unsampled history via `run_history.py` (`scan_history`).
 
-**Partial success on stability; hard failure on representation quality.**
+---
 
-AGC achieved its narrow goal: **zero `grad_skipped` steps** (0/228) through step 11350,
-including a clean pass through the historical break window (8500). Training never froze.
+## Run identity (corrected)
 
-But the run **actively collapsed** `c_t` after step ~8600 while weights kept updating.
-Investigation 005 acceptance gates are **not** met. Do **not** resume from royal-cherry
-checkpoints.
+| Claim | Actual |
+|---|---|
+| Resume from `phase1_step7500.pt` | **No** — fresh run from step 0 |
+| Evidence | `lr_mult=0.00067` at step 0 (warmup); step-0 `loss`/`L_flow` identical to elated; history starts at step 0, not 7500 |
+| Implication | AGC was active **every step from init**, not only post-resume; weights diverged slightly from elated throughout |
 
-## What we intended (from DESCRIPTION)
+---
 
-Resume `phase1_step7500.pt` with AGC (λ_B=0.20, λ_Fc=0.10, skip threshold 150) and
-**full** coarse-flow LR 2e-4. Hypothesis: clip the 30–100 grad band, skip only tail
-catastrophes, complete 15k with learning intact.
+## Outcome (one sentence)
 
-## Timeline
+**AGC eliminated all grad skips and cleanly passed step 8500, then the run fell off a cliff at step 8600 and actively destroyed `c_t` rank/slot structure over the next ~2500 steps while the optimizer kept updating.**
 
-| Phase | Steps | What happened |
+Investigation 005 gates: **not met**. Do **not** use royal-cherry checkpoints.
+
+---
+
+## Phase timeline
+
+| Phase | Steps | n rows | What happened |
+|---|---|---|---|
+| P0 Warmup | 0–1499 | 30 | `L_flow` 2.9→0.9; copy ratio 62→3.6; rank ~9–10 |
+| P1 Early train | 1500–4499 | 60 | `L_flow` med 0.43; rank climbing 7.9→11.4 |
+| P2 Rank climb | 4500–7499 | 60 | `L_flow` med **0.31**; rank → **13.8**; copy ~0.9–1.4 |
+| P3 Pre-break plateau | 7500–8350 | 18 | Healthy: `L_flow` med 0.28, grad med 2.2, agcFc med 7.3 |
+| P4 Transition | 8400–8550 | 4 | Still healthy: copy **0.85**, rank **13.89** @8500 |
+| **P5 Cliff** | **8600–8950** | 8 | `L_flow` **0.29→3.08** in 350 steps; agcFc max **1284** @8750 |
+| P6 Collapse | 9000–11350 | 48 | Rank **13.9→5.8**; copy **4.3→12.7**; slot rank **19.3→5.7** |
+
+---
+
+## The cliff (steps 8450–9050, every 50 steps)
+
+This is the critical window. One batch era destroys the run.
+
+| Step | L_flow | grad (post-AGC) | agc_Fc ratio | agc_B ratio | copy ratio | rank |
+|---|---|---|---|---|---|---|
+| 8450 | 0.324 | 2.30 | 8 | 7 | — | — |
+| 8500 | **0.262** | 2.05 | 6 | 9 | **0.851** | **13.89** |
+| 8550 | 0.290 | 2.28 | 6 | 10 | — | — |
+| **8600** | **1.111** | 7.67 | 19 | 149 | — | — |
+| 8650 | 1.944 | 7.92 | 120 | 96 | — | — |
+| 8700 | 2.774 | 11.93 | 125 | **2231** | — | — |
+| **8750** | 2.819 | 11.60 | **1284** | 1292 | — | — |
+| 8800 | 3.025 | 9.70 | 208 | 450 | — | — |
+| 9000 | 3.107 | 11.70 | 119 | **3229** | 4.340 | 12.18 |
+| 9050 | 3.019 | 10.56 | 193 | 958 | — | — |
+
+**First L_flow jump >0.5:** step **8600** (+0.82 from 0.290).  
+Not step 8500 — that step was the **best** of the entire run.
+
+---
+
+## Contrast with elated at the same era (no AGC, same seed)
+
+Weights differ (AGC from step 0), so same global step ≠ same forward response:
+
+| Step | royal L_flow | elated L_flow | royal grad | elated grad | elated skip |
+|---|---|---|---|---|---|
+| 8350 | 0.282 | 0.294 | 2.11 | 3.24 | 0 |
+| 8400 | **0.290** | **1.345** | 2.14 | **30.66** | 0 |
+| 8450 | 0.324 | 1.932 | 2.30 | 64.72 | **1** |
+| 8500 | **0.262** | 1.830 | **2.05** | **169.62** | 1 |
+| 8600 | 1.111 | 1.829 | 7.67 | 92.66 | 1 |
+| 8700 | 2.774 | 2.030 | 11.93 | 222.82 | 1 |
+| 8750 | 2.819 | 1.815 | 11.60 | 109.79 | 1 |
+
+**Reading this table:**
+
+1. **8400–8500:** elated hits the famous spike; royal **does not** (AGC-shaped weights still healthy on those batches).
+2. **8600:** royal hits **its own** cliff — elated is already in a skip spiral.
+3. **Post-8600:** royal keeps **learning** (0% skips); elated **freezes** (skip every step).
+
+---
+
+## What AGC actually did
+
+### Grad stability — complete success
+
+| Metric | royal | elated | drawn |
+|---|---|---|---|
+| `grad_skipped` | **0 / 228 (0%)** | 109 / 278 (39%) | 127 / 150 (85%) |
+| grad p95 (all steps) | **10.1** | 214.0 | 221.6 |
+| grad max | **12.35** | 467.15 | 366.53 |
+| post-8500 grad med | **9.76** | 122.26 | 86.77 |
+
+### AGC clipping intensity
+
+| Metric | Pre-8500 (n=170) | Post-8500 (n=58) |
 |---|---|---|
-| Resume healthy | 7500–8500 | `grad_skipped=0`, `grad_norm` ~2.0–2.6, `L_flow` ~0.26–0.37, copy ratio **0.85–1.44**, rank **~13.8**, std ~1.04 |
-| **Pass 8500** | 8500 | `grad_norm=2.05`, `L_flow=0.26`, copy **0.85**, rank **13.89** — **better than elated at same step** |
-| Loss spike | 8550–8700 | `L_flow` **0.29 → 2.77**; `agc_Fc_max_ratio` **6 → 1284**; `grad_norm` post-AGC ~8–12 |
-| Rank collapse | 9000–11000 | rank **12.2 → 5.8**; copy ratio **4.3 → 12.7**; `c_std_mean` **1.04 → 0.94**; cosine **0.26 → 0.35** |
-| Killed | 11350 | Pod stopped run before 15k target |
+| `agc_Fc_max_ratio` med | 7.6 | **111.2** |
+| `agc_Fc_max_ratio` max | 11.4 | **1284.1** |
+| `agc_B_max_ratio` med | 9.5 | **239.3** |
+| `agc_B_max_ratio` max | 34.0 | **3228.9** |
+| Steps with agc_Fc > 100 | 0 | **33** |
+| Steps with agc_B > 500 | 0 | **6** |
 
-## Key numbers vs prior runs
+`agc_Fc_any_clipped=1` on **every** logged step (228/228).  
+Top spike: step **8750**, agc_Fc=**1284**, agc_B=**1292**.
 
-| Metric | royal @8500 | elated @8500 | drawn @8500 |
-|---|---|---|---|
-| `grad_skipped` | 0 | 1 | 0 |
-| `grad_norm` | 2.05 | **169.6** | 42.8 |
-| `L_flow` | 0.26 | 1.83 | — |
-| `coarse_vs_copy_ratio` | **0.85** | 5.72 | 4.35 |
-| `c_effective_rank` | **13.89** | 13.64 | 13.67 |
+### Guards that failed to fire
 
-| Metric | royal final (11k diag) | elated final (13.5k diag) | drawn final (14.5k diag) |
-|---|---|---|---|
-| `grad_skipped` rate | **0%** | 39% (frozen post-8450) | **85%** |
-| `coarse_vs_copy_ratio` | **12.73** | 3.47 | 3.33 |
-| `c_effective_rank` | **5.84** | 13.69 | 13.62 |
-| `c_std_mean` | 0.94 | 1.10 | 1.10 |
-| `c_cross_video_cosine` | 0.35 | 0.17 | 0.17 |
+| Guard | Threshold | Why it never triggered |
+|---|---|---|
+| `grad_skipped` | post-AGC norm > 150 | post-AGC norm capped ~12 |
+| `instability_warn` | grad > 30 **and** L_flow > 1 | post-AGC grad always < 12 |
 
-Post-10k gate aggregates (PHASE_1 §12):
+**L_flow > 1 from step 8600 onward** — but warn requires grad > 30 on the **post-AGC** norm.
 
-| Gate | threshold | royal | elated | drawn |
+---
+
+## Representation collapse (the real failure)
+
+### Coarse flow head — forward blow-up
+
+At step 8500 (healthy): `coarse_model_loss=0.204`, `coarse_copy_loss=0.240`, ratio **0.85**.  
+At step 9000 (diag): `coarse_model_loss=**3.106**`, `coarse_copy_loss=0.716`, ratio **4.34**.  
+At step 11000: `coarse_model_loss=1.822`, `coarse_copy_loss=0.143`, ratio **12.73**.
+
+The copy baseline stayed easy (~0.14–0.24 pre-break); **F_c's prediction** blew up.
+
+### Rank and slot structure
+
+| Step | `c_effective_rank` | `c_slot_diversity_rank` | `c_std_mean` | `c_cross_video_cosine` |
 |---|---|---|---|---|
-| `coarse_vs_copy_ratio` | ≤ 0.70 | med **5.88** | med 4.35 | med 2.94 |
-| `coarse_vs_batch_mean_ratio` | ≤ 0.50 | med **1.85** | med 1.30 | med 1.21 |
-| `c_effective_rank` | > 60 | med **6.85** | med 13.67 | med 13.62 |
+| 8500 | **13.89** | **19.27** | 1.044 | 0.262 |
+| 9000 | 12.18 | 13.49 | 0.925 | 0.412 |
+| 9500 | 8.25 | 9.12 | 0.973 | 0.335 |
+| 10000 | 7.77 | 7.18 | 0.943 | 0.374 |
+| 11000 | **5.84** | **5.73** | 0.945 | 0.352 |
 
-## AGC behavior
+Rank and slot-diversity rank track together — **slot collapse**, not just a scalar std issue.  
+`c_dead_dim_frac=0` throughout (variance floor holding per-dim).  
+Attention entropy stays ~0.92–0.93 (not the near-1.0 uniform-attention failure from inv. 003).
 
-- `agc_active=1` and `agc_Fc_any_clipped=1` on **every** logged step (228/228).
-- Post-8500: `agc_Fc_max_ratio` median **111**, max **1284** (33/58 steps > 100).
-- Post-AGC `grad_norm` capped ~12 (global clip 0.5 on already-clipped tensors).
-- `instability_warn=0` throughout — warn threshold (grad>30 ∧ L_flow>1) never fired because
-  post-AGC grad stayed < 12 even when raw landscape was extreme.
+### L_var spike during cliff
 
-## Belief evolution
+`L_var` jumps at step 9200 (**0.138**) while `c_std_mean` still ~0.94 — variance floor
+engaging on a batch where abstract spread contracted.
 
-### Confirmed
+---
 
-- **AGC prevents the grad-skip death spiral.** The elated/drawn failure mode (sustained
-  `grad_skipped` with frozen weights) did not recur.
-- **The underlying instability is real and step-local.** Something in the 8550–8700 window
-  still blows up `L_flow` (~0.3 → ~3.0) on this resume trajectory — same era as elated's
-  first skip (8450, `L_flow≈1.9`).
+## PHASE_1 §12 gates — never passed post-10k
 
-### New (this run)
+Best copy ratio entire run: **0.851 @ step 8500** (gate ≤ 0.70 — close but not passed).
 
-- **Skip-free ≠ healthy training.** Elated/drawn kept **frozen** weights in a region where
-  forward latents looked fine (rank ~13.6, misleading). Royal **kept updating** through the
-  spike under extreme F_c AGC → **active rank collapse** (13.9 → 5.8) and copy ratio blow-up.
-- **Heavy per-step F_c clipping may be harmful.** λ_Fc=0.10 with ratios up to 1284 means F_c
-  gradients are crushed while B still moves; the stack can diverge in representation space
-  without triggering skip or warn guards.
-- **Warn guard is blind to post-AGC grad.** Need a signal on raw/pre-AGC norm, `L_flow`
-  level, or `agc_Fc_max_ratio` — not post-AGC `grad_norm`.
+| Gate | threshold | @8500 | @11000 | post-10k median |
+|---|---|---|---|---|
+| `coarse_vs_copy_ratio` | ≤ 0.70 | 0.85 | **12.73** | 5.88 |
+| `coarse_vs_batch_mean_ratio` | ≤ 0.50 | 0.18 | 1.81 | 1.85 |
+| `c_effective_rank` | > 60 | 13.9 | **5.8** | 6.85 |
 
-### Wrong hypothesis (for this run)
+---
 
-"AGC alone + full 2e-4 flow LR on resume from 7500 completes 15k acceptably" — **false**.
-Stability guard passed; acceptance gates failed catastrophically after step 8600.
+## Mechanism (best current explanation)
 
-## Comparison to siblings
+1. **AGC from step 0** shapes a slightly different weight trajectory than elated. Royal
+   **dodges** the 8400–8500 spike that triggers elated's skip spiral.
 
-**[`elated-snowflake-15`](../elated-snowflake-15/):** pre-8500 twin; broke on skip at 8450.
-Latents post-break looked healthy but weights never moved — **illusory health**.
+2. **Step 8600:** a hard batch (or batch sequence) hits the AGC-shaped weights. Forward
+   `L_flow` jumps 0.29→1.11. Backward produces extreme raw grads → AGC clips heavily
+   (Fc ratio 19→1284 over 150 steps).
 
-**[`drawn-elevator-16`](../drawn-elevator-16/):** same resume ckpt, halved LR, no AGC;
-85% skips from 8550. Same illusory latent health, no learning.
+3. **Optimizer still steps** (post-AGC norm ~8–12). Updates are dominated by **heavily
+   clipped F_c and B gradients** — the stack walks into a basin where F_c predicts badly
+   (model loss 0.2→3.1) while copy baseline stays easy.
 
-**royal-cherry-17:** AGC swaps freeze for **destructive learning** — worse for gates, better
-for diagnosing that the spike region must be **avoided or exited**, not merely clipped through.
+4. **Slot/rank collapse** follows over ~2500 steps of continued training at `L_flow≈2.5–3.0`.
+   This is **active destruction**, not freeze — the opposite of elated's illusory latent health.
+
+5. **Guards are blind:** they watch post-AGC grad norm, not `L_flow` level or `agc_*_max_ratio`.
+
+---
+
+## What worked
+
+- Zero grad skips through 11350 steps.
+- Clean pass through step **8500** (elated's death step).
+- Pre-8600 training matched cerulean/elated trajectory (rank ~13.9, `L_flow` ~0.26–0.32).
+- Best copy ratio **0.851** @8500 — closest to gate of any point in the run.
+
+## What broke
+
+- Cliff at **8600** (not 8500).
+- `F_c` forward prediction destroyed; rank 13.9→5.8; copy ratio 0.85→12.7.
+- No recovery over 2750 steps of continued training.
+- Run killed externally at 11350 before 15k target.
+
+---
 
 ## Conclusion
 
-AGC is **necessary but not sufficient** for investigation 005. Next attempt must combine
-AGC with at least one of: halved flow LR, tighter λ_Fc, optimizer reset on resume, and/or
-abort when `L_flow` or `agc_Fc_max_ratio` crosses sustained danger bands. Fresh 15k from init
-with AGC is also on the table if resume keeps re-entering the same basin.
+AGC solves the **grad-skip death spiral** but introduces a **worse failure mode**: training
+continues through an unstable forward-loss region with mutilated gradients, collapsing slots.
+
+Next interventions should target **forward-loss / AGC-ratio signals**, not post-AGC grad alone.
+
+See `NEXT_STEPS.md`.
