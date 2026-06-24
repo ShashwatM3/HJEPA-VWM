@@ -1,4 +1,4 @@
-# Run — agc-resume-17 (pending W&B name)
+# Run — royal-cherry-17
 
 ## What this run tests
 
@@ -13,7 +13,7 @@ AGC (λ_Fc=0.10, λ_B=0.20) clips the 30–100 grad band in-place; post-AGC
 `grad_skip_threshold=150` skips only tail catastrophes. Training should pass step 8500
 with `grad_skipped=0` and continue updating weights through 15k.
 
-## Command (launch before W&B assigns display name)
+## Command
 
 ```bash
 cd /workspace/hierarchal-jepa-flow-world-model   # or repo root on pod
@@ -40,8 +40,9 @@ AGC is **on by default** (`cfg.train.agc_enabled=True`). No extra flags unless t
 
 ## W&B
 
+- Run name: `royal-cherry-17`
+- Run id: _TBD — fill after launch from W&B URL_
 - Project: `hjepa-vwm` (entity `smahalanobis-uc-davis`)
-- Run name: **TBD** — rename this folder to the W&B display name after launch.
 
 ## Parent
 

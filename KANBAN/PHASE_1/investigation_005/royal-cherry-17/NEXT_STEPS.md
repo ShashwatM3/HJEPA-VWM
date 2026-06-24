@@ -1,12 +1,12 @@
-# Next steps — agc-resume-17
+# Next steps — royal-cherry-17
 
 ## Before launch
 
-1. Pod: `git pull` branch `phase1-v0.2-frozen-encoder` (commit ≥ `1ae2e09`).
+1. Pod: `git pull` branch `phase1-v0.2-frozen-encoder` (commit ≥ `92a3b96`).
 2. `python train.py --stage0-only`
 3. Confirm `/workspace/checkpoints/phase1_step7500.pt` exists.
 4. Launch in `tmux` (see command in `DESCRIPTION.md`).
-5. Rename this folder to the W&B display name once assigned.
+5. Record W&B run id in `DESCRIPTION.md` once assigned.
 
 ## On success
 

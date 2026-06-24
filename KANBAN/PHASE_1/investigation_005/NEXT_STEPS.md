@@ -7,9 +7,9 @@
 [`cerulean-snow-13`](../investigation_003/cerulean-snow-13/) (config win)
 → [`elated-snowflake-15`](elated-snowflake-15/) (15k failed at grad-skip 8500)
 → [`drawn-elevator-16`](drawn-elevator-16/) (resume @7500, LR halved — high skip rate)
-→ **[`agc-resume-17`](agc-resume-17/)** (resume @7500 + AGC, code `1ae2e09`)
+→ **[`royal-cherry-17`](royal-cherry-17/)** (resume @7500 + AGC, code `1ae2e09`)
 
-## Immediate — launch agc-resume-17
+## Immediate — royal-cherry-17
 
 Follow [`AGENT_FILES/SETUPS/SETUP.md`](../../AGENT_FILES/SETUPS/SETUP.md) Path B, then:
 
@@ -36,10 +36,10 @@ freezing training; `grad_skip_threshold=150` is tail-only.
 
 ## On success
 
-- Update [`agc-resume-17/OBSERVATIONS.md`](agc-resume-17/OBSERVATIONS.md)
+- Update [`royal-cherry-17/OBSERVATIONS.md`](royal-cherry-17/OBSERVATIONS.md)
 - **Close investigation 005**
 - Phase 2 per [`AGENT_FILES/PHASES/PHASE_2.md`](../../AGENT_FILES/PHASES/PHASE_2.md)
 
 ## On failure
 
-See [`agc-resume-17/NEXT_STEPS.md`](agc-resume-17/NEXT_STEPS.md).
+See [`royal-cherry-17/NEXT_STEPS.md`](royal-cherry-17/NEXT_STEPS.md).

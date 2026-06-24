@@ -20,17 +20,17 @@ horizon.
 | [002](investigation_002/) | Is dataloader throughput sufficient for full SSv2? | **CLOSED** | 4 |
 | [003](investigation_003/) | Why does `c_t` collapse? | **CLOSED** | 9 |
 | [004](investigation_004/) | Is VICReg-C needed beyond `lambda_var=0.5`? | **PAUSED** | 1 (Run A) |
-| [005](investigation_005/) | Can we finish the 15k acceptance run? | **ACTIVE** | 2 |
+| [005](investigation_005/) | Can we finish the 15k acceptance run? | **ACTIVE** | 3 |
 
 **Winning config:** full SSv2, `horizon_k=12`, `lambda_var=0.5`, no slot loss.
 
-**Active work:** Launch [`agc-resume-17`](investigation_005/agc-resume-17/) — resume @7500 with AGC (commit `1ae2e09`).
+**Active work:** [`royal-cherry-17`](investigation_005/royal-cherry-17/) — resume @7500 with AGC (commit `1ae2e09`).
 
 ---
 
 ## Complete W&B run index (hjepa-vwm)
 
-All 16 runs from project dashboard, in W&B creation order:
+All runs from project dashboard, in W&B creation order:
 
 | # | Run name | ID | Runtime | Investigation | BRIEF |
 |---|---|---|---|---|---|
@@ -49,7 +49,8 @@ All 16 runs from project dashboard, in W&B creation order:
 | 13 | `cerulean-snow-13` | 4lo4j7qb | 3h7m | 003 | **Run 6** ✓ |
 | 14 | `jolly-forest-14` | 8bkeeuio | 1h32m | 003 | TBD |
 | 15 | `elated-snowflake-15` | jhodg49x | 5h25m | 005 | 15k fail |
-| 16 | `drawn-elevator-16` | 0n5mx3qf | 3h29m | 005 | resume |
+| 16 | `drawn-elevator-16` | 0n5mx3qf | 3h29m | 005 | resume fail |
+| 17 | `royal-cherry-17` | _TBD_ | — | 005 | AGC resume |
 
 Project URL: https://wandb.ai/smahalanobis-uc-davis/hjepa-vwm
 
