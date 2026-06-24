@@ -171,6 +171,86 @@ def attention_entropy(bottleneck: nn.Module, detailed: Tensor) -> dict[str, floa
     }
 
 
+def adaptive_gradient_clip(
+    module: nn.Module,
+    clip_factor: float,
+    eps: float = 1e-3,
+) -> dict[str, float]:
+    """Per-tensor AGC: clip gradients when ||g|| exceeds λ(||w|| + ε).
+
+    Implements the Brock et al. rule used in NFNet training: each parameter
+    tensor is scaled in-place so no single weight block can propose an update
+    far larger than its own weight scale. This absorbs moderate flow-matching
+    spikes (elated step-8450 class) instead of freezing training on the first
+    global norm above 50.
+
+    Args:
+        module: Trainable module with optional `.grad` on its parameters.
+        clip_factor: λ — maximum allowed gradient-to-weight norm ratio.
+        eps: Floor added to ||w|| in the bound (numerical stability).
+    Returns:
+        Metrics dict with clipped tensor count and max pre-clip ratio seen.
+    """
+    _require_torch()
+    clipped_tensors = 0
+    max_ratio = 0.0
+    for param in module.parameters():
+        if param.grad is None:
+            continue
+        grad = param.grad.detach()
+        weight_norm = param.detach().float().norm()
+        grad_norm = grad.float().norm()
+        bound = clip_factor * (weight_norm + eps)
+        if bound <= 0:
+            continue
+        ratio = float((grad_norm / bound).item())
+        max_ratio = max(max_ratio, ratio)
+        if grad_norm > bound:
+            clipped_tensors += 1
+            param.grad.mul_(bound / (grad_norm + eps))
+    return {
+        "agc_clipped_tensors": float(clipped_tensors),
+        "agc_max_ratio": max_ratio,
+        "agc_any_clipped": float(clipped_tensors > 0),
+    }
+
+
+def apply_trainable_agc(
+    bottleneck: nn.Module,
+    coarse_flow: nn.Module,
+    *,
+    enabled: bool,
+    lambda_bottleneck: float,
+    lambda_coarse_flow: float,
+    eps: float,
+) -> dict[str, float]:
+    """Apply module-specific AGC to bottleneck B and coarse flow F_c.
+
+    Args:
+        bottleneck: Trainable bottleneck B.
+        coarse_flow: Trainable coarse flow F_c.
+        enabled: When False, returns ``agc_active=0`` without touching gradients.
+        lambda_bottleneck: λ for B (milder — healthy grads stay ~2–3).
+        lambda_coarse_flow: λ for F_c (primary instability source).
+        eps: AGC denominator floor passed to :func:`adaptive_gradient_clip`.
+    Returns:
+        Flat metrics dict for W&B logging (``agc_B_*``, ``agc_Fc_*``).
+    """
+    _require_torch()
+    if not enabled:
+        return {"agc_active": 0.0}
+    metrics: dict[str, float] = {"agc_active": 1.0}
+    for prefix, module, clip_factor in (
+        ("agc_B", bottleneck, lambda_bottleneck),
+        ("agc_Fc", coarse_flow, lambda_coarse_flow),
+    ):
+        sub = adaptive_gradient_clip(module, clip_factor, eps)
+        metrics[f"{prefix}_clipped"] = sub["agc_clipped_tensors"]
+        metrics[f"{prefix}_max_ratio"] = sub["agc_max_ratio"]
+        metrics[f"{prefix}_any_clipped"] = sub["agc_any_clipped"]
+    return metrics
+
+
 def gradient_health(model: nn.Module) -> dict[str, float]:
     """Summarize trainable parameter gradient health.
 

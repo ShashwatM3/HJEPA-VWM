@@ -125,10 +125,23 @@ class TrainConfig:
     # Tighter clip + skip-step guard added 2026-06-10. The clip-by-norm at 1.0
     # divides the gradient by `grad_norm / 1.0` to clip; in bf16 that division
     # destroys direction precision once the divisor is more than a few hundred.
-    # Pair with `grad_skip_threshold` so any pre-clip norm above the threshold
-    # skips the optimizer step entirely (see train.train_step).
+    # AGC (below) clips moderate per-tensor spikes first; `grad_skip_threshold`
+    # is a tail guard on the post-AGC global norm (see train.train_step).
     grad_clip: float = 0.5
-    grad_skip_threshold: float = 50.0
+    # Raised from 50 after elated-snowflake-15: healthy pre-break max was ~31;
+    # first skip at 64.7 with L_flow≈1.9. AGC handles the 30–100 band; skip
+    # only true blowups (8500 spike ~170).
+    grad_skip_threshold: float = 150.0
+    # Adaptive Gradient Clipping (AGC): per-tensor ||g|| <= λ(||w|| + eps).
+    # Calibrated from elated healthy phase (grad p95≈3); tune λ via logged
+    # agc_*_max_ratio (target ~5–10% of steps with agc_*_clipped > 0).
+    agc_enabled: bool = True
+    agc_lambda_bottleneck: float = 0.20
+    agc_lambda_coarse_flow: float = 0.10
+    agc_eps: float = 1e-3
+    # Log-only early warning (elated: step 8400 had grad≈31, L_flow≈1.35).
+    instability_warn_grad_norm: float = 30.0
+    instability_warn_l_flow: float = 1.0
     ema_m_start: float = 0.996
     ema_m_end: float = 0.9999
     ema_schedule_steps: int = 105_000

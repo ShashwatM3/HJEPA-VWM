@@ -27,6 +27,7 @@ except ModuleNotFoundError:  # pragma: no cover
 from config import Config
 from data import build_dataloader
 from diagnostics import (
+    apply_trainable_agc,
     attention_entropy,
     coarse_baselines,
     cross_video_cosine,
@@ -237,19 +238,29 @@ def train_step(
         if cfg.train.lambda_slot > 0.0:
             loss = loss + cfg.train.lambda_slot * slot_loss
     loss.backward()
-    grad_norm = torch.nn.utils.clip_grad_norm_(
-        list(bottleneck.parameters()) + list(coarse_flow.parameters()), cfg.train.grad_clip
+    agc_metrics = apply_trainable_agc(
+        bottleneck,
+        coarse_flow,
+        enabled=cfg.train.agc_enabled,
+        lambda_bottleneck=cfg.train.agc_lambda_bottleneck,
+        lambda_coarse_flow=cfg.train.agc_lambda_coarse_flow,
+        eps=cfg.train.agc_eps,
     )
-    # Survivability guard added 2026-06-10 after the run-1 explosion (POSTMORTEM_RUN1.md).
-    # If the pre-clip gradient is non-finite or larger than `grad_skip_threshold`,
-    # skip the optimizer step entirely: zero the gradient, do not update parameters,
-    # do not update EMA. One bad batch loses one update, not the whole run. At the
-    # current (lr=1e-4 / 2e-4, clip=0.5) settings this should fire ~never; any
-    # nonzero `grad_skipped` rate in a healthy run is a stop-and-investigate signal.
+    trainable = list(bottleneck.parameters()) + list(coarse_flow.parameters())
+    grad_norm = torch.nn.utils.clip_grad_norm_(trainable, cfg.train.grad_clip)
+    # Survivability guard (POSTMORTEM_RUN1.md; retuned after elated-snowflake-15).
+    # AGC runs first and clips per-tensor spikes; this checks the post-AGC global
+    # norm returned by clip_grad_norm_ (total norm before the 0.5 global rescale).
+    # Skip only tail catastrophes — not the 30–100 band that elated showed at
+    # L_flow≈1.9 (step 8450 grad≈65).
     grad_norm_f = float(grad_norm)
     grad_skipped = (
         not math.isfinite(grad_norm_f)
         or grad_norm_f > cfg.train.grad_skip_threshold
+    )
+    instability_warn = (
+        grad_norm_f > cfg.train.instability_warn_grad_norm
+        and float(flow_loss.detach().float().item()) > cfg.train.instability_warn_l_flow
     )
     if grad_skipped:
         optimizer.zero_grad(set_to_none=True)
@@ -268,7 +279,9 @@ def train_step(
         "L_slot": float(slot_loss.detach().float().item()),
         "grad_norm": grad_norm_f,
         "grad_skipped": float(grad_skipped),
+        "instability_warn": float(instability_warn),
         "ema_m": momentum,
+        **agc_metrics,
     }
 
 
@@ -516,6 +529,30 @@ def parse_args() -> argparse.Namespace:
         help="Peak LR for coarse flow F_c (cfg.train.lr_coarse_flow, default 2e-4). "
         "Applied after --resume; overrides checkpoint scheduled LR.",
     )
+    parser.add_argument(
+        "--no-agc",
+        action="store_true",
+        help="Disable adaptive gradient clipping (cfg.train.agc_enabled).",
+    )
+    parser.add_argument(
+        "--agc-lambda-bottleneck",
+        type=float,
+        default=None,
+        help="AGC λ for bottleneck B (cfg.train.agc_lambda_bottleneck, default 0.20).",
+    )
+    parser.add_argument(
+        "--agc-lambda-coarse-flow",
+        type=float,
+        default=None,
+        help="AGC λ for coarse flow F_c (cfg.train.agc_lambda_coarse_flow, default 0.10).",
+    )
+    parser.add_argument(
+        "--grad-skip-threshold",
+        type=float,
+        default=None,
+        help="Post-AGC global grad-norm tail guard (cfg.train.grad_skip_threshold, "
+        "default 150). Steps above this skip optimizer.step().",
+    )
     return parser.parse_args()
 
 
@@ -542,6 +579,14 @@ def main() -> None:
         cfg.train.lr_bottleneck = args.lr_bottleneck
     if args.lr_coarse_flow is not None:
         cfg.train.lr_coarse_flow = args.lr_coarse_flow
+    if args.no_agc:
+        cfg.train.agc_enabled = False
+    if args.agc_lambda_bottleneck is not None:
+        cfg.train.agc_lambda_bottleneck = args.agc_lambda_bottleneck
+    if args.agc_lambda_coarse_flow is not None:
+        cfg.train.agc_lambda_coarse_flow = args.agc_lambda_coarse_flow
+    if args.grad_skip_threshold is not None:
+        cfg.train.grad_skip_threshold = args.grad_skip_threshold
     if args.stage0_only:
         run_stage0(cfg)
     else:
