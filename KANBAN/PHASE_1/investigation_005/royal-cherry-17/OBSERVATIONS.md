@@ -206,3 +206,69 @@ continues through an unstable forward-loss region with mutilated gradients, coll
 Next interventions should target **forward-loss / AGC-ratio signals**, not post-AGC grad alone.
 
 See `NEXT_STEPS.md`.
+
+---
+
+## Why ~8500? (no hidden switch — traced 2026-06-24)
+
+**Short answer:** nothing in the code flips at step 8500. The break is a **landscape /
+optimization-state** event that happens to cluster around global steps **8400–8600** once
+weights have trained for ~3 epochs and rank has plateaued (~13.7).
+
+### What we verified in code
+
+| Candidate | At step 8500? | Verdict |
+|---|---|---|
+| LR schedule (`lr_scale`) | `lr_mult≈0.471`, smooth cosine | **Continuous** — Δ per 50 steps ≈ −0.0058 |
+| EMA momentum (`ema_cosine`) | `ema_m≈0.996063` | **Continuous** — tiny change per step |
+| Checkpoint load/save | last save **7500**, next **10000** | **Save only** — no training change |
+| `diag_every=500` | yes, 8500 is a diag step | **Logging only** — `run_diagnostics` is `no_grad` |
+| `log_every=50` | yes | **Logging only** |
+| Epoch boundary (full SSv2) | epoch 3 ends ~**7917**; 8500 is ~583 steps into epoch 4 | **Not aligned** with 8500 |
+| `horizon_k`, `lambda_var`, AGC | constant from CLI/config | **No step hook** |
+| Loss / backward path | identical every step in `train_step` | **Same graph** |
+
+All three runs (elated, drawn, royal) share **identical** `lr_mult` and `ema_m` at the same
+global step — confirmed from W&B.
+
+### Exact break steps differ
+
+| Run | First instability | Global step |
+|---|---|---|
+| elated | `L_flow` spike + grad 30 @8400; skip @8450 | **8400–8500** |
+| drawn (resume @7500) | first skip @8550 | **8550** |
+| royal | `L_flow` cliff @8600 | **8600** |
+
+So “8500” is a **cluster**, not a magic number. Royal actually broke **100 steps later** than
+elated; drawn **50 steps later**.
+
+### Data-flow trace (one training step — nothing step-indexed except LR/EMA)
+
+```
+DataLoader batch  →  E(context) → B → c_t
+                 →  E(target)  → B_EMA → c_plus (stop-grad)
+eps_c, tau_c ~ random (per step, not a function of step index)
+z_c = interpolate(c_plus, eps_c, tau_c)
+u_c_hat = F_c(z_c, tau_c, c_t)   # 6 transformer blocks; condition_dropout 10%
+L = L_flow(u_c_hat, u_c) + λ_var * L_var(c_t)
+backward → [AGC on B, F_c] → clip_grad_norm(0.5) → skip? → AdamW.step(lr * lr_scale(step))
+→ EMA update(m=ema_cosine(step))
+```
+
+The only step-indexed quantities are `lr_scale(step)` and `ema_cosine(step)` — both smooth.
+
+### Why it *looks* sharp at 8500
+
+1. **Elated's famous skip is exactly @8500** on a log+diag step — anchors attention there.
+2. **Logging every 50 steps** hides within-bin cliffs (royal: healthy @8550, cliff @8600).
+3. **By ~8k steps** rank has plateaued (~13.7–13.9) and `L_flow` is low (~0.26–0.32) — the
+   stack is in a **sharp region** of the flow-matching landscape; one hard batch can flip
+   `L_flow` from ~0.3 to ~1–3 (elated @8400, royal @8600).
+4. **Not LR warming** — peak LR was step 1500; @8500 LR is **falling** (~47% of peak).
+
+### peachy-terrain-5 @8500 is a red herring
+
+Run-1 postmortem also cites “best copy @8500” but that was a **different** schedule (30k steps,
+10k warmup, likely `ssv2_tiny`). Same step index, different dynamics — not evidence of a
+universal step-8500 hook.
+
