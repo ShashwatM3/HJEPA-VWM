@@ -24,7 +24,7 @@ horizon.
 
 **Winning config:** full SSv2, `horizon_k=12`, `lambda_var=0.5`, no slot loss.
 
-**Active work:** Verify [`drawn-elevator-16`](investigation_005/drawn-elevator-16/) resume outcome on W&B.
+**Active work:** Launch [`agc-resume-17`](investigation_005/agc-resume-17/) — resume @7500 with AGC (commit `1ae2e09`).
 
 ---
 
