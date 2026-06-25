@@ -182,6 +182,18 @@ class TrainConfig:
     recon_warmup_steps: int = 2_000
     lr_decoder: float = 1e-4  # peak LR for the reconstruction decoder D
     agc_lambda_decoder: float = 0.20  # AGC λ for D (mirrors the bottleneck)
+    # Prediction-side reconstruction anchor (option 3, the VITA-style joint objective).
+    # Decode the PREDICTED future latent c_hat back to the future detailed features
+    # e_{t+k} and penalize MSE, with the gradient flowing THROUGH F_c — and into B via
+    # the F_c conditioning on c_t (not detached) — so the objective rewards a c that is
+    # PREDICTABLE, not merely reconstructable. Runs ALONGSIDE the present anchor
+    # (lambda_recon), reusing the same decoder D and the same recon_warmup ramp.
+    # fanciful-lake-18 motivated this: option 1 removed the cliff but left the copy gate
+    # failing (F_c loses to copy) while L_recon_chat ≈ L_recon_cplus showed present-anchor
+    # recon is blind to prediction error. Default 0.0 => prediction branch not run
+    # (byte-identical to the option-1 baseline); with it on, the diag readout
+    # L_recon_chat should DROP. See KANBAN investigation_006/fanciful-lake-18/NEXT_STEPS.
+    lambda_recon_pred: float = 0.0
     horizon_k: int = 4  # single fixed horizon for Phases 1-3 (Phase 4: multi-horizon)
     frame_stride: int = 2
     precision: str = "bf16"

@@ -21,13 +21,16 @@ horizon.
 | [003](investigation_003/) | Why does `c_t` collapse? | **CLOSED** | 9 |
 | [004](investigation_004/) | Is VICReg-C needed beyond `lambda_var=0.5`? | **PAUSED** | 1 (Run A) |
 | [005](investigation_005/) | Can we finish the 15k acceptance run? | **ACTIVE** | 3 |
-| [006](investigation_006/) | Does a reconstruction anchor break the rank ceiling? | **OPEN** | 0 (pending launch) |
+| [006](investigation_006/) | Does a reconstruction anchor break the rank ceiling? | **ACTIVE** | 1 (`fanciful-lake-18`) |
 
 **Winning config:** full SSv2, `horizon_k=12`, `lambda_var=0.5`, no slot loss.
 
-**Active work:** [`investigation_006`](investigation_006/) — option-1 reconstruction anchor
-(`models.Decoder`, `--lambda-recon`, gradient into B only). Run recipe + SSH steps in its
-`NEXT_STEPS.md`. Variance floor stays on; default off = byte-identical baseline.
+**Active work:** [`investigation_006`](investigation_006/) — reconstruction anchor. Run 1
+(`fanciful-lake-18`, option 1, gradient into B only) **removed the Mode-B cliff** (first
+run stable past 8600, to 14400) but did **not** break the rank ceiling (~13.3) and the
+copy gate stayed failed (2.59). Next: **option 3** — add the predicted-latent anchor
+through `F_c` (joint objective; the tech-lead's VITA-based design), motivated by run 1's
+evidence. See [`investigation_006/NEXT_STEPS.md`](investigation_006/NEXT_STEPS.md).
 
 ---
 
@@ -54,6 +57,7 @@ All runs from project dashboard, in W&B creation order:
 | 15 | `elated-snowflake-15` | jhodg49x | 5h25m | 005 | 15k fail |
 | 16 | `drawn-elevator-16` | 0n5mx3qf | 3h29m | 005 | resume fail |
 | 17 | `royal-cherry-17` | 0xv4upvb | 4h52m | 005 | AGC resume — skip-free, rank collapse |
+| 18 | `fanciful-lake-18` | yd5958s6 | 6h29m | 006 | recon anchor (λ=0.05) — cliff removed, rank ceiling held, copy gate failed |
 
 Project URL: https://wandb.ai/smahalanobis-uc-davis/hjepa-vwm
 

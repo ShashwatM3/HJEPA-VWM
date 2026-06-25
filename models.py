@@ -556,6 +556,23 @@ def smoke_test_models() -> None:
     assert any(p.grad is not None for p in bottleneck.parameters())
     assert all(p.grad is None for p in coarse_flow.parameters())
     assert all(p.grad is None for p in target_bottleneck.parameters())
+    # Reconstruction anchor (option 3) gradient contract — the INVERSE of option 1:
+    # D(c_hat) vs e_{t+k} must reach the decoder, F_c, AND B (via the F_c conditioning
+    # on c_t, intentionally not detached), but still NEVER the EMA bottleneck. c_hat is
+    # the rectified-flow one-step endpoint estimate from the trained predictor.
+    bottleneck.zero_grad(set_to_none=True)
+    coarse_flow.zero_grad(set_to_none=True)
+    decoder.zero_grad(set_to_none=True)
+    abstract_p = bottleneck(detailed)
+    u_c_hat_p = coarse_flow(z_c, tau, abstract_p)
+    c_hat_p = z_c + (1.0 - tau.reshape(-1, 1, 1)) * u_c_hat_p
+    recon_pred = reconstruction_loss(decoder(c_hat_p), target_detailed)
+    assert recon_pred.requires_grad and torch.isfinite(recon_pred), recon_pred
+    recon_pred.backward()
+    assert any(p.grad is not None for p in decoder.parameters())
+    assert any(p.grad is not None for p in coarse_flow.parameters())  # inverse of option 1
+    assert any(p.grad is not None for p in bottleneck.parameters())
+    assert all(p.grad is None for p in target_bottleneck.parameters())
     from diagnostics import attention_entropy, slot_diversity_rank
 
     attn = attention_entropy(bottleneck, detailed)

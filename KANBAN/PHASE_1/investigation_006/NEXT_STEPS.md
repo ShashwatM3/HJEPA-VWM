@@ -2,16 +2,21 @@
 
 ## Experiment ladder
 
-| # | `lambda_recon` | Variance floor | Purpose |
+| # | Run | `lambda_recon` | Result |
 |---|---|---|---|
-| 1 | **0.05** | on (0.5) | Does reconstruction lift `c_effective_rank` past ~13 without hurting `L_flow`? |
-| _later_ | — | — | Option 3 (through-`F_c`) only if run 1 lifts rank AND `L_recon_chat`−`L_recon_cplus` gap is large |
+| 1 | [`fanciful-lake-18`](fanciful-lake-18/OBSERVATIONS.md) | 0.05 (present anchor) | **DONE.** Cliff removed; rank ceiling NOT broken (~13.3); copy gate failed (2.59). |
+| 2 | _(next — spawn folder)_ | 0.05 present + **0.05 predicted (option 3, through-`F_c`)** | Test whether the predicted-latent anchor fixes the copy gate. |
+
+**Decision after run 1:** proceed to **option 3 as an added branch** (present + predicted,
+simultaneously — the tech-lead's joint-objective design). The pre-registered gate's literal
+reading said "don't" (rank flat, `chat−cplus` gap tiny), but run 1 **falsified the gate's
+premise**: `F_c` loses to copy while `c_hat` reconstructs as well as `c_plus`, proving
+present-anchored recon is blind to prediction error. Full reasoning in
+[`fanciful-lake-18/NEXT_STEPS.md`](fanciful-lake-18/NEXT_STEPS.md) §"The option-3 decision".
 
 No calibration step: `reconstruction_loss` is a **scale-free relative MSE** (~1.0
 baseline), so `lambda_recon=0.05` is a fixed, meaningful weight. The linear ramp over
-`recon_warmup_steps` (default 2000) protects the fragile early phase. If
-`c_effective_rank` does not move after ~2–3k post-ramp steps, raise to 0.1; if
-`L_flow` / `coarse_vs_copy_ratio` degrade, drop to 0.02.
+`recon_warmup_steps` (default 2000) protects the fragile early phase.
 
 ---
 

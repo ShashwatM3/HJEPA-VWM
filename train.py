@@ -226,7 +226,7 @@ def train_step(
     context_clip, target_clip = (x.to(device, non_blocking=True) for x in batch)
     optimizer.zero_grad(set_to_none=True)
     with autocast_context(device, cfg):
-        abstract, target_abstract, detailed, _ = _coarse_forward(
+        abstract, target_abstract, detailed, target_detailed = _coarse_forward(
             encoder, bottleneck, target_bottleneck, context_clip, target_clip
         )
         eps_c = torch.randn_like(target_abstract)
@@ -257,12 +257,29 @@ def train_step(
         # heavy N_ctx x D_e forward), so the baseline stays byte-identical; L_recon_*
         # is logged from run_diagnostics instead.
         recon_loss_val = 0.0
+        recon_pred_loss_val = 0.0
         recon_scale = 0.0
+        if cfg.train.lambda_recon > 0.0 or cfg.train.lambda_recon_pred > 0.0:
+            recon_scale = min(1.0, step / max(1, cfg.train.recon_warmup_steps))
         if cfg.train.lambda_recon > 0.0:
             recon_loss = reconstruction_loss(decoder(abstract), detailed)
-            recon_scale = min(1.0, step / max(1, cfg.train.recon_warmup_steps))
             loss = loss + cfg.train.lambda_recon * recon_scale * recon_loss
             recon_loss_val = float(recon_loss.detach().float().item())
+        # Reconstruction anchor (option 3): decode the PREDICTED future latent c_hat and
+        # penalize MSE against the frozen future features e_{t+k} (target_detailed). c_hat
+        # is the rectified-flow one-step endpoint estimate built from the SAME u_c_hat
+        # already computed for flow_loss (no extra F_c forward), so the gradient flows
+        # through F_c AND — via the F_c conditioning on c_t — into B. The conditioning
+        # path is intentionally NOT detached (VITA-style joint training: c is shaped to be
+        # predictable, not merely reconstructable). target_detailed is frozen (detached
+        # inside reconstruction_loss). Reuses the present anchor's warmup ramp. Default
+        # off => not run, so the option-1 baseline stays byte-identical. With this on, the
+        # diag readout L_recon_chat should drop (the gradient now acts on it).
+        if cfg.train.lambda_recon_pred > 0.0:
+            c_hat = z_c + (1.0 - tau_c.reshape(-1, 1, 1)) * u_c_hat
+            recon_pred_loss = reconstruction_loss(decoder(c_hat), target_detailed)
+            loss = loss + cfg.train.lambda_recon_pred * recon_scale * recon_pred_loss
+            recon_pred_loss_val = float(recon_pred_loss.detach().float().item())
     loss.backward()
     agc_metrics = apply_trainable_agc(
         bottleneck,
@@ -310,6 +327,7 @@ def train_step(
         "L_cov": float(cov_loss.detach().float().item()),
         "L_slot": float(slot_loss.detach().float().item()),
         "L_recon": recon_loss_val,
+        "L_recon_pred": recon_pred_loss_val,
         "recon_scale": recon_scale,
         "grad_norm": grad_norm_f,
         "grad_skipped": float(grad_skipped),
@@ -602,11 +620,22 @@ def parse_args() -> argparse.Namespace:
         "calibrate against the logged baseline L_recon_present magnitude.",
     )
     parser.add_argument(
+        "--lambda-recon-pred",
+        type=float,
+        default=None,
+        help="Prediction-side reconstruction-anchor weight (option 3: decode the "
+        "PREDICTED c_hat -> e_{t+k}, grad through F_c and into B via the conditioning). "
+        "0 = option-1 baseline (prediction branch not run). Runs alongside --lambda-recon, "
+        "reusing the same decoder and --recon-warmup-steps ramp. Watch L_recon_chat drop "
+        "and coarse_vs_copy_ratio fall below 1.",
+    )
+    parser.add_argument(
         "--recon-warmup-steps",
         type=int,
         default=None,
-        help="Linear ramp length for lambda_recon (cfg.train.recon_warmup_steps, "
-        "default 2000). Protects the fragile early phase (royal-cherry-17 8600 cliff).",
+        help="Linear ramp length for lambda_recon / lambda_recon_pred "
+        "(cfg.train.recon_warmup_steps, default 2000). Protects the fragile early phase "
+        "(royal-cherry-17 8600 cliff).",
     )
     parser.add_argument(
         "--lr-bottleneck",
@@ -670,6 +699,8 @@ def main() -> None:
         cfg.train.lambda_var = args.lambda_var
     if args.lambda_recon is not None:
         cfg.train.lambda_recon = args.lambda_recon
+    if args.lambda_recon_pred is not None:
+        cfg.train.lambda_recon_pred = args.lambda_recon_pred
     if args.recon_warmup_steps is not None:
         cfg.train.recon_warmup_steps = args.recon_warmup_steps
     if args.lr_bottleneck is not None:

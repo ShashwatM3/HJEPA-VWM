@@ -43,3 +43,33 @@ mechanism; metrics and interpretation are appended as dated sections once runs l
 - The 8000–9000 window — does the cliff soften / shift with richer `c`?
 - `coarse_vs_copy_ratio` and `L_flow` — recon must NOT degrade prediction.
 - `L_recon_chat` − `L_recon_cplus` gap — the data-driven warrant for option 3.
+
+---
+
+## 2026-06-25 — fanciful-lake-18 (first active run, λ_recon=0.05) — results
+
+Full analysis in [`fanciful-lake-18/OBSERVATIONS.md`](fanciful-lake-18/OBSERVATIONS.md).
+Run reached step 14400 (killed by operator), full SSv2, royal-cherry regime + recon.
+Reading the signals above against the data:
+
+| Signal | Pre-run question | What the run showed |
+|---|---|---|
+| `c_effective_rank` | climb past ~13? | **No** — plateaued 13.1–13.3, same ceiling. Primary hypothesis refuted. |
+| 8000–9000 cliff | soften? | **Removed entirely.** `agc_Fc` peaked 17.9 (royal: 1284); rank held; 0 skips to 14400. |
+| `coarse_vs_copy_ratio` / `L_flow` | no regression? | `L_flow` healthy (~0.38). Copy gate **persistently failed** (floor 1.43, end 2.59) — first sustained honest read. |
+| `L_recon_chat − cplus` | option-3 warrant? | Gap ~0.007 (tiny) — but this **refutes the gate's premise**, see below. |
+
+**Synthesis — option 1 is a stability win and a rank-enrichment null.** The anchor's real
+effect is regularizing `B` so `F_c` never enters the Mode-B blow-up (confirming the
+*secondary* hypothesis, not the primary one). It does **not** enrich rank and has **no**
+prediction term, so the copy gate stays failed.
+
+**Belief update on the option-3 gate.** The pre-run gate (Signals, above) assumed a small
+`chat−cplus` gap means "`F_c` predicts fine → option 3 unwarranted." fanciful **falsifies
+that**: `F_c` loses to copy by 1.4–2.6× *while* `c_hat` reconstructs `e_{t+k}` as well as
+`c_plus`. Conclusion: **present-anchored recon is blind to prediction error** (it saturates
+on static shared content at the ~0.6 floor). So the small gap is evidence the recon signal
+is in the *wrong place*, not evidence against routing it through `F_c`. The data-backed next
+lever is therefore **option 3 / the predicted-latent anchor through `F_c`** (= the tech-lead's
+VITA-based proposal), run *alongside* the present anchor. Carry the caveat: option 3 is not
+expected to break the rank ceiling (looks structural at 128:1 compression — open question).
