@@ -21,10 +21,13 @@ horizon.
 | [003](investigation_003/) | Why does `c_t` collapse? | **CLOSED** | 9 |
 | [004](investigation_004/) | Is VICReg-C needed beyond `lambda_var=0.5`? | **PAUSED** | 1 (Run A) |
 | [005](investigation_005/) | Can we finish the 15k acceptance run? | **ACTIVE** | 3 |
+| [006](investigation_006/) | Does a reconstruction anchor break the rank ceiling? | **OPEN** | 0 (pending launch) |
 
 **Winning config:** full SSv2, `horizon_k=12`, `lambda_var=0.5`, no slot loss.
 
-**Active work:** Next run after [`royal-cherry-17`](investigation_005/royal-cherry-17/) — AGC + `--lr-coarse-flow 1e-4` from ckpt 7500.
+**Active work:** [`investigation_006`](investigation_006/) — option-1 reconstruction anchor
+(`models.Decoder`, `--lambda-recon`, gradient into B only). Run recipe + SSH steps in its
+`NEXT_STEPS.md`. Variance floor stays on; default off = byte-identical baseline.
 
 ---
 

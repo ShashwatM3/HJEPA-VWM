@@ -86,6 +86,39 @@ def flow_matching_loss(u_hat: Tensor, u_target: Tensor) -> Tensor:
     return (u_hat - u_target).pow(2).mean()
 
 
+def reconstruction_loss(pred_detailed: Tensor, target_detailed: Tensor) -> Tensor:
+    """Scale-free (relative) MSE reconstruction of the frozen detailed features.
+
+    The reconstruction anchor: a small decoder `D` maps the abstract latent back to
+    the frozen-encoder detailed features, forcing the bottleneck to keep `c`
+    information-rich — directly attacking the ~13 effective-rank ceiling and the
+    identical-`c` representational collapse the variance floor alone cannot stop.
+
+    NORMALIZED by the target variance so the value is scale-free (~1.0 == as bad as
+    predicting the target mean, 0.0 == perfect), independent of the V-JEPA feature
+    magnitude. This removes the per-run lambda calibration step: `lambda_recon`
+    weights a quantity whose baseline is always ~1, so the term's share of the loss
+    is predictable across runs.
+
+    The target is the FROZEN encoder output, so it is detached via `as_target`: the
+    anchor pins `c` to real per-video content but never lets reconstruction rewrite
+    the target. In option 1 this scores the present (`D(c_t)` vs `e_t`) with the
+    gradient flowing into `D` and `B` only; the same function scores the future
+    readouts (`c_plus`, `c_hat`) under `no_grad` at diagnostic cadence.
+
+    Args:
+        pred_detailed: (B, N, D_e) decoder output `e_hat`.
+        target_detailed: (B, N, D_e) frozen encoder features (context or future clip).
+    Returns:
+        Scalar relative-MSE reconstruction loss (numerator / target variance).
+    """
+    _require_torch()
+    target = as_target(target_detailed)
+    mse = (pred_detailed - target).pow(2).mean()
+    denom = target.float().var(unbiased=False).clamp_min(1e-8)
+    return mse / denom
+
+
 def variance_floor(abstract: Tensor, std_target: float = 1.0) -> Tensor:
     """Per-dimension variance floor on the abstract latent `c_t` (replaces SIGReg).
 

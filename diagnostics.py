@@ -218,23 +218,27 @@ def adaptive_gradient_clip(
 def apply_trainable_agc(
     bottleneck: nn.Module,
     coarse_flow: nn.Module,
+    decoder: nn.Module,
     *,
     enabled: bool,
     lambda_bottleneck: float,
     lambda_coarse_flow: float,
+    lambda_decoder: float,
     eps: float,
 ) -> dict[str, float]:
-    """Apply module-specific AGC to bottleneck B and coarse flow F_c.
+    """Apply module-specific AGC to bottleneck B, coarse flow F_c, and decoder D.
 
     Args:
         bottleneck: Trainable bottleneck B.
         coarse_flow: Trainable coarse flow F_c.
+        decoder: Reconstruction decoder D (no grads when lambda_recon=0 -> no-op).
         enabled: When False, returns ``agc_active=0`` without touching gradients.
         lambda_bottleneck: λ for B (milder — healthy grads stay ~2–3).
         lambda_coarse_flow: λ for F_c (primary instability source).
+        lambda_decoder: λ for D (mirrors the bottleneck).
         eps: AGC denominator floor passed to :func:`adaptive_gradient_clip`.
     Returns:
-        Flat metrics dict for W&B logging (``agc_B_*``, ``agc_Fc_*``).
+        Flat metrics dict for W&B logging (``agc_B_*``, ``agc_Fc_*``, ``agc_D_*``).
     """
     _require_torch()
     if not enabled:
@@ -243,6 +247,7 @@ def apply_trainable_agc(
     for prefix, module, clip_factor in (
         ("agc_B", bottleneck, lambda_bottleneck),
         ("agc_Fc", coarse_flow, lambda_coarse_flow),
+        ("agc_D", decoder, lambda_decoder),
     ):
         sub = adaptive_gradient_clip(module, clip_factor, eps)
         metrics[f"{prefix}_clipped"] = sub["agc_clipped_tensors"]

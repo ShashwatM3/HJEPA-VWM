@@ -70,6 +70,16 @@ class ModelConfig:
     f_c_heads: int = 8
     condition_dropout: float = 0.10
 
+    # Reconstruction decoder D (reconstruction anchor, option 1). A deliberately
+    # small cross-attention expander: c_t (N_c x D_c) -> e_hat (N_ctx x D_e). It
+    # exists only to supply an information-richness gradient to B, NOT as a
+    # showpiece generator (that is the separate Phase 3 frame generator on pixels).
+    # Generic by design so the through-F_c "future anchor" (option 3) is a caller
+    # change, not a rewrite. See KANBAN reconstruction-anchor investigation.
+    decoder_dim: int = 256
+    decoder_blocks: int = 2
+    decoder_heads: int = 8
+
     # NOTE: no tubelet_dropout (removed in v0.2 — frozen encoder).
     # NOTE: no encoder_depth/heads — fixed by the pretrained checkpoint.
 
@@ -156,6 +166,22 @@ class TrainConfig:
     # Default 0.0 -> term computed for logging (L_slot) but NOT added to loss.
     # Nonzero is the primary knob after Run A showed c_slot_diversity_rank≈1.6/32.
     lambda_slot: float = 0.0
+    # Reconstruction anchor (option 1: gradient through B only, NOT through F_c).
+    # Decode c_t back to the frozen detailed features e_t and penalize MSE, forcing
+    # c_t to stay information-rich (attacks the ~13 effective-rank ceiling and the
+    # identical-c representational collapse). Default 0.0 -> the decoder is NOT run
+    # in the train step (avoids the heavy N_ctx x D_e forward) so the baseline is
+    # byte-identical; L_recon_* readouts are still logged at diag cadence. The loss
+    # is a SCALE-FREE relative MSE (~1.0 baseline), so lambda_recon needs no per-run
+    # calibration: 0.05 is the recommended first nonzero value. Nonzero ramps
+    # linearly over recon_warmup_steps because early training is the fragile phase
+    # (royal-cherry-17 8600 cliff). The through-F_c future anchor (option 3) is
+    # intentionally NOT wired; the split diag readouts (present / c_plus / c_hat)
+    # scope whether it is warranted.
+    lambda_recon: float = 0.0
+    recon_warmup_steps: int = 2_000
+    lr_decoder: float = 1e-4  # peak LR for the reconstruction decoder D
+    agc_lambda_decoder: float = 0.20  # AGC λ for D (mirrors the bottleneck)
     horizon_k: int = 4  # single fixed horizon for Phases 1-3 (Phase 4: multi-horizon)
     frame_stride: int = 2
     precision: str = "bf16"

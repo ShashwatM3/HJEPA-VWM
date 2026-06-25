@@ -384,9 +384,92 @@ class CoarseFlow(nn.Module):
         return self.norm(x[:, : self.cfg.n_c])
 
 
+class DecoderBlock(nn.Module):
+    """One cross-attention + MLP block for the reconstruction decoder.
+
+    Args:
+        queries: (B, N_ctx, dim) output-token queries.
+        memory: (B, N_c, dim) projected abstract latent (keys/values).
+    Returns:
+        queries: (B, N_ctx, dim) updated output-token representations.
+    """
+
+    def __init__(self, dim: int, heads: int, mlp_ratio: int = 4):
+        """Initialize the cross-attention and per-token MLP sublayers."""
+        _require_torch()
+        super().__init__()
+        self.norm_q = nn.LayerNorm(dim)
+        self.cross_attn = nn.MultiheadAttention(dim, heads, batch_first=True)
+        self.norm_mlp = nn.LayerNorm(dim)
+        self.mlp = nn.Sequential(
+            nn.Linear(dim, dim * mlp_ratio), nn.GELU(), nn.Linear(dim * mlp_ratio, dim)
+        )
+
+    def forward(self, queries: Tensor, memory: Tensor) -> Tensor:
+        """Cross-attend output queries into the abstract latent, then MLP-mix."""
+        attn, _ = self.cross_attn(self.norm_q(queries), memory, memory, need_weights=False)
+        queries = queries + attn
+        return queries + self.mlp(self.norm_mlp(queries))
+
+
+class Decoder(nn.Module):
+    """Reconstruct frozen detailed features from the abstract latent (richness anchor).
+
+    A deliberately small cross-attention expander: `N_ctx` learned output-token
+    queries cross-attend into the `N_c` abstract slots and project to `D_e`, giving
+    `e_hat` (B, N_ctx, D_e). The reconstruction MSE against the frozen detailed
+    features forces `c` to stay information-rich, attacking the ~13 effective-rank
+    ceiling and the identical-`c` representational collapse.
+
+    GENERIC BY DESIGN: `forward` takes any (B, N_c, D_c) latent. Option 1 feeds the
+    online `c_t`, so the gradient flows into `D` and `B` only (`F_c` is untouched
+    because we decode `c_t`, not `c_hat`). The through-`F_c` "future anchor"
+    (option 3) would feed `c_hat` instead with no change here — only the train.py
+    caller changes. This is NOT the Phase 3 frame generator (pixels); it
+    reconstructs encoder features and exists only to supply a training signal.
+
+    Args:
+        latent: (B, N_c, D_c) abstract latent (`c_t` in option 1).
+    Returns:
+        pred_detailed: (B, N_ctx, D_e) reconstructed detailed features `e_hat`.
+    """
+
+    def __init__(self, cfg: ModelConfig):
+        """Initialize the latent projection, output queries, blocks, and head."""
+        _require_torch()
+        super().__init__()
+        self.cfg = cfg
+        dim = cfg.decoder_dim
+        self.kv_proj = nn.Linear(cfg.d_c, dim)
+        # Orthogonal output-token queries: decorrelated start (mirrors Bottleneck).
+        q = torch.empty(cfg.n_ctx, dim)
+        nn.init.orthogonal_(q)
+        self.queries = nn.Parameter(q)
+        self.blocks = nn.ModuleList(
+            [DecoderBlock(dim, cfg.decoder_heads) for _ in range(cfg.decoder_blocks)]
+        )
+        self.out_norm = nn.LayerNorm(dim)
+        self.out_proj = nn.Linear(dim, cfg.d_e)
+
+    def forward(self, latent: Tensor) -> Tensor:
+        """Expand the abstract latent back to detailed features `e_hat`.
+
+        Args:
+            latent: (B, N_c, D_c) abstract latent (online `c_t` in option 1).
+        Returns:
+            pred_detailed: (B, N_ctx, D_e) reconstructed detailed features.
+        """
+        b = latent.shape[0]
+        memory = self.kv_proj(latent)
+        queries = self.queries[None].expand(b, -1, -1)
+        for block in self.blocks:
+            queries = block(queries, memory)
+        return self.out_proj(self.out_norm(queries))
+
+
 def build_phase1_modules(
       cfg: Config, *, load_encoder: bool = True
-  ) -> tuple[nn.Module | None, Bottleneck, TargetBottleneck, CoarseFlow]:
+  ) -> tuple[nn.Module | None, Bottleneck, TargetBottleneck, CoarseFlow, Decoder]:
     """Construct all Phase 1 modules in data-path order.
 
     Keeping construction in one place gives Stage 0 a single canonical module
@@ -397,14 +480,15 @@ def build_phase1_modules(
         load_encoder: When False, skip loading the (large) frozen encoder — used by
             shape/gradient smoke tests that synthesize `e_t` directly.
     Returns:
-        Modules `(encoder, bottleneck, target_bottleneck, coarse_flow)`; `encoder`
-        is None when `load_encoder=False`.
+        Modules `(encoder, bottleneck, target_bottleneck, coarse_flow, decoder)`;
+        `encoder` is None when `load_encoder=False`.
     """
     encoder = FrozenEncoder(cfg.model) if load_encoder else None
     bottleneck = Bottleneck(cfg.model)
     target_bottleneck = TargetBottleneck(bottleneck)
     coarse_flow = CoarseFlow(cfg.model)
-    return encoder, bottleneck, target_bottleneck, coarse_flow
+    decoder = Decoder(cfg.model)
+    return encoder, bottleneck, target_bottleneck, coarse_flow, decoder
 
 
 def smoke_test_models() -> None:
@@ -418,13 +502,16 @@ def smoke_test_models() -> None:
         covariance_floor,
         flow_matching_loss,
         interpolate,
+        reconstruction_loss,
         slot_diversity_loss,
         variance_floor,
         velocity_target,
     )
 
     cfg = Config()
-    _, bottleneck, target_bottleneck, coarse_flow = build_phase1_modules(cfg, load_encoder=False)
+    _, bottleneck, target_bottleneck, coarse_flow, decoder = build_phase1_modules(
+        cfg, load_encoder=False
+    )
     target_bottleneck.copy_weights_from(bottleneck)
     detailed = torch.randn(2, cfg.model.n_ctx, cfg.model.d_e)
     target_detailed = torch.randn(2, cfg.model.n_tgt, cfg.model.d_e)
@@ -455,6 +542,20 @@ def smoke_test_models() -> None:
     assert slot_loss.requires_grad and torch.isfinite(slot_loss), slot_loss
     slot_loss.backward()
     assert any(p.grad is not None for p in bottleneck.parameters())
+    # Reconstruction anchor (option 1) gradient contract: D(c_t) vs e_t reaches the
+    # decoder and B, but NEVER F_c (we decode c_t, not c_hat) or the EMA bottleneck.
+    bottleneck.zero_grad(set_to_none=True)
+    coarse_flow.zero_grad(set_to_none=True)
+    decoder.zero_grad(set_to_none=True)
+    e_hat = decoder(bottleneck(detailed))
+    assert e_hat.shape == (2, cfg.model.n_ctx, cfg.model.d_e), e_hat.shape
+    recon = reconstruction_loss(e_hat, detailed)
+    assert recon.requires_grad and torch.isfinite(recon), recon
+    recon.backward()
+    assert any(p.grad is not None for p in decoder.parameters())
+    assert any(p.grad is not None for p in bottleneck.parameters())
+    assert all(p.grad is None for p in coarse_flow.parameters())
+    assert all(p.grad is None for p in target_bottleneck.parameters())
     from diagnostics import attention_entropy, slot_diversity_rank
 
     attn = attention_entropy(bottleneck, detailed)

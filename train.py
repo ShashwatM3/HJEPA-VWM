@@ -27,6 +27,7 @@ except ModuleNotFoundError:  # pragma: no cover
 from config import Config
 from data import build_dataloader
 from diagnostics import (
+    _no_drop,
     apply_trainable_agc,
     attention_entropy,
     coarse_baselines,
@@ -40,6 +41,7 @@ from losses import (
     covariance_floor,
     flow_matching_loss,
     interpolate,
+    reconstruction_loss,
     slot_diversity_loss,
     variance_floor,
     velocity_target,
@@ -47,7 +49,8 @@ from losses import (
 from models import build_phase1_modules
 
 # Module bundle order throughout: (encoder E, bottleneck B, target_bottleneck B_EMA,
-# coarse_flow F_c).
+# coarse_flow F_c, decoder D). D is the reconstruction-anchor decoder (option 1);
+# it is built/saved/loaded always but only trained when lambda_recon > 0.
 
 
 def _require_torch() -> None:
@@ -95,22 +98,28 @@ def lr_scale(step: int, warmup_steps: int, max_steps: int) -> float:
 
 
 def make_optimizer(
-    bottleneck: nn.Module, coarse_flow: nn.Module, cfg: Config
+    bottleneck: nn.Module, coarse_flow: nn.Module, decoder: nn.Module, cfg: Config
 ) -> torch.optim.Optimizer:
     """Create AdamW param groups for the trainable modules only (E is frozen).
+
+    The decoder D is always in the optimizer so it trains/saves/loads consistently;
+    when lambda_recon=0 it simply receives no gradient (AdamW skips ``None`` grads),
+    so its parameters never move on the baseline.
 
     Args:
         bottleneck: Trainable bottleneck B.
         coarse_flow: Coarse flow F_c.
+        decoder: Reconstruction decoder D.
         cfg: Config with locked Phase 1 learning rates.
     Returns:
-        AdamW optimizer over B and F_c (the encoder is not in any group).
+        AdamW optimizer over B, F_c, and D (the encoder is not in any group).
     """
     _require_torch()
     return torch.optim.AdamW(
         [
             {"params": bottleneck.parameters(), "lr": cfg.train.lr_bottleneck, "name": "B"},
             {"params": coarse_flow.parameters(), "lr": cfg.train.lr_coarse_flow, "name": "F_c"},
+            {"params": decoder.parameters(), "lr": cfg.train.lr_decoder, "name": "D"},
         ],
         betas=cfg.train.adam_betas,
         weight_decay=cfg.train.weight_decay,
@@ -128,8 +137,8 @@ def apply_lr_schedule(
 
 
 def peak_base_lrs(cfg: Config) -> list[float]:
-    """Peak (pre-schedule) learning rates for bottleneck B and coarse flow F_c."""
-    return [cfg.train.lr_bottleneck, cfg.train.lr_coarse_flow]
+    """Peak (pre-schedule) LRs for B, F_c, and D — order matches make_optimizer groups."""
+    return [cfg.train.lr_bottleneck, cfg.train.lr_coarse_flow, cfg.train.lr_decoder]
 
 
 def device_for_training() -> torch.device:
@@ -169,8 +178,8 @@ def _coarse_forward(
     target_bottleneck: nn.Module,
     context_clip: Tensor,
     target_clip: Tensor,
-) -> tuple[Tensor, Tensor]:
-    """Compute the online `c_t` and the detached target `c_plus`.
+) -> tuple[Tensor, Tensor, Tensor, Tensor]:
+    """Compute the online `c_t`, the detached target `c_plus`, and both detailed tensors.
 
     Args:
         encoder: Frozen V-JEPA 2 encoder E.
@@ -179,7 +188,10 @@ def _coarse_forward(
         context_clip: (B, 8, 3, 256, 256) encoder-normalized context window.
         target_clip: (B, 8, 3, 256, 256) encoder-normalized future window.
     Returns:
-        (abstract, target_abstract): c_t (grad) and c_plus (stop-grad).
+        (abstract, target_abstract, detailed, target_detailed): c_t (grad), c_plus
+        (stop-grad), and the two frozen detailed tensors e_t / e_plus (no-grad). The
+        detailed tensors are returned (not just c_t) so the reconstruction anchor and
+        diagnostics can reuse them without a second frozen-encoder forward.
     """
     with torch.no_grad():
         detailed = encoder(context_clip)
@@ -187,12 +199,12 @@ def _coarse_forward(
     with torch.no_grad():
         target_detailed = encoder(target_clip)
     target_abstract = target_bottleneck(target_detailed)  # B_EMA + as_target inside
-    return abstract, target_abstract
+    return abstract, target_abstract, detailed, target_detailed
 
 
 def train_step(
     batch: tuple[Tensor, Tensor],
-    modules: tuple[nn.Module, nn.Module, nn.Module, nn.Module],
+    modules: tuple[nn.Module, nn.Module, nn.Module, nn.Module, nn.Module],
     optimizer: torch.optim.Optimizer,
     step: int,
     cfg: Config,
@@ -210,11 +222,11 @@ def train_step(
     Returns:
         Scalar metrics for logging.
     """
-    encoder, bottleneck, target_bottleneck, coarse_flow = modules
+    encoder, bottleneck, target_bottleneck, coarse_flow, decoder = modules
     context_clip, target_clip = (x.to(device, non_blocking=True) for x in batch)
     optimizer.zero_grad(set_to_none=True)
     with autocast_context(device, cfg):
-        abstract, target_abstract = _coarse_forward(
+        abstract, target_abstract, detailed, _ = _coarse_forward(
             encoder, bottleneck, target_bottleneck, context_clip, target_clip
         )
         eps_c = torch.randn_like(target_abstract)
@@ -237,16 +249,36 @@ def train_step(
             loss = loss + cfg.train.lambda_cov * cov_loss
         if cfg.train.lambda_slot > 0.0:
             loss = loss + cfg.train.lambda_slot * slot_loss
+        # Reconstruction anchor (option 1): decode the ONLINE c_t back to e_hat and
+        # penalize MSE against the frozen e_t. The gradient flows into D and B only
+        # (abstract is online; detailed is frozen/no-grad; F_c is untouched because
+        # we decode c_t, not c_hat). Ramp linearly over recon_warmup_steps to protect
+        # the fragile early phase. Default off => decoder is NOT run here (skips the
+        # heavy N_ctx x D_e forward), so the baseline stays byte-identical; L_recon_*
+        # is logged from run_diagnostics instead.
+        recon_loss_val = 0.0
+        recon_scale = 0.0
+        if cfg.train.lambda_recon > 0.0:
+            recon_loss = reconstruction_loss(decoder(abstract), detailed)
+            recon_scale = min(1.0, step / max(1, cfg.train.recon_warmup_steps))
+            loss = loss + cfg.train.lambda_recon * recon_scale * recon_loss
+            recon_loss_val = float(recon_loss.detach().float().item())
     loss.backward()
     agc_metrics = apply_trainable_agc(
         bottleneck,
         coarse_flow,
+        decoder,
         enabled=cfg.train.agc_enabled,
         lambda_bottleneck=cfg.train.agc_lambda_bottleneck,
         lambda_coarse_flow=cfg.train.agc_lambda_coarse_flow,
+        lambda_decoder=cfg.train.agc_lambda_decoder,
         eps=cfg.train.agc_eps,
     )
-    trainable = list(bottleneck.parameters()) + list(coarse_flow.parameters())
+    trainable = (
+        list(bottleneck.parameters())
+        + list(coarse_flow.parameters())
+        + list(decoder.parameters())
+    )
     grad_norm = torch.nn.utils.clip_grad_norm_(trainable, cfg.train.grad_clip)
     # Survivability guard (POSTMORTEM_RUN1.md; retuned after elated-snowflake-15).
     # AGC runs first and clips per-tensor spikes; this checks the post-AGC global
@@ -277,6 +309,8 @@ def train_step(
         "L_var": float(var_loss.detach().float().item()),
         "L_cov": float(cov_loss.detach().float().item()),
         "L_slot": float(slot_loss.detach().float().item()),
+        "L_recon": recon_loss_val,
+        "recon_scale": recon_scale,
         "grad_norm": grad_norm_f,
         "grad_skipped": float(grad_skipped),
         "instability_warn": float(instability_warn),
@@ -288,7 +322,7 @@ def train_step(
 def save_checkpoint(
     path: Path,
     step: int,
-    modules: tuple[nn.Module, nn.Module, nn.Module, nn.Module],
+    modules: tuple[nn.Module, nn.Module, nn.Module, nn.Module, nn.Module],
     optimizer: torch.optim.Optimizer,
     cfg: Config,
 ) -> None:
@@ -302,13 +336,14 @@ def save_checkpoint(
         cfg: Config serialized as nested dicts.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    _, bottleneck, target_bottleneck, coarse_flow = modules
+    _, bottleneck, target_bottleneck, coarse_flow, decoder = modules
     torch.save(
         {
             "global_step": step,
             "bottleneck": bottleneck.state_dict(),
             "target_bottleneck": target_bottleneck.state_dict(),
             "coarse_flow": coarse_flow.state_dict(),
+            "decoder": decoder.state_dict(),
             "optimizer": optimizer.state_dict(),
             "config": json.loads(json.dumps(cfg, default=lambda o: getattr(o, "__dict__", str(o)))),
         },
@@ -318,15 +353,19 @@ def save_checkpoint(
 
 def load_checkpoint(
     path: str | Path,
-    modules: tuple[nn.Module, nn.Module, nn.Module, nn.Module],
+    modules: tuple[nn.Module, nn.Module, nn.Module, nn.Module, nn.Module],
     optimizer: torch.optim.Optimizer | None = None,
 ) -> int:
     """Load a Phase 1 checkpoint and return its global step (encoder untouched)."""
     ckpt = torch.load(path, map_location="cpu")
-    _, bottleneck, target_bottleneck, coarse_flow = modules
+    _, bottleneck, target_bottleneck, coarse_flow, decoder = modules
     bottleneck.load_state_dict(ckpt["bottleneck"])
     target_bottleneck.load_state_dict(ckpt["target_bottleneck"])
     coarse_flow.load_state_dict(ckpt["coarse_flow"])
+    # Backward-compat: pre-reconstruction checkpoints have no "decoder"; leave D at
+    # its fresh init (it is only meaningful once lambda_recon > 0 has trained it).
+    if "decoder" in ckpt:
+        decoder.load_state_dict(ckpt["decoder"])
     if optimizer is not None and "optimizer" in ckpt:
         optimizer.load_state_dict(ckpt["optimizer"])
     return int(ckpt.get("global_step", 0))
@@ -342,16 +381,17 @@ def _build_and_init(cfg: Config, device: torch.device, load_encoder: bool = True
     Returns:
         Module bundle `(encoder, bottleneck, target_bottleneck, coarse_flow)`.
     """
-    encoder, bottleneck, target_bottleneck, coarse_flow = build_phase1_modules(
+    encoder, bottleneck, target_bottleneck, coarse_flow, decoder = build_phase1_modules(
         cfg, load_encoder=load_encoder
     )
     bottleneck = bottleneck.to(device)
     target_bottleneck = target_bottleneck.to(device)
     coarse_flow = coarse_flow.to(device)
+    decoder = decoder.to(device)
     if encoder is not None:
         encoder = encoder.to(device)
     target_bottleneck.copy_weights_from(bottleneck)
-    return encoder, bottleneck, target_bottleneck, coarse_flow
+    return encoder, bottleneck, target_bottleneck, coarse_flow, decoder
 
 
 def run_stage0(cfg: Config) -> None:
@@ -360,9 +400,9 @@ def run_stage0(cfg: Config) -> None:
     set_seed(cfg.seed)
     device = device_for_training()
     modules = _build_and_init(cfg, device, load_encoder=True)
-    encoder, bottleneck, target_bottleneck, coarse_flow = modules
+    encoder, bottleneck, target_bottleneck, coarse_flow, decoder = modules
     assert sum(p.numel() for p in encoder.parameters() if p.requires_grad) == 0, "E not frozen"
-    optimizer = make_optimizer(bottleneck, coarse_flow, cfg)
+    optimizer = make_optimizer(bottleneck, coarse_flow, decoder, cfg)
     batch = (
         torch.randn(2, cfg.model.t_ctx, 3, cfg.model.h, cfg.model.w, device=device),
         torch.randn(2, cfg.model.t_ctx, 3, cfg.model.h, cfg.model.w, device=device),
@@ -380,15 +420,15 @@ def run_stage0(cfg: Config) -> None:
 
 def run_diagnostics(
     batch: tuple[Tensor, Tensor],
-    modules: tuple[nn.Module, nn.Module, nn.Module, nn.Module],
+    modules: tuple[nn.Module, nn.Module, nn.Module, nn.Module, nn.Module],
     cfg: Config,
     device: torch.device,
 ) -> dict[str, float]:
     """Run Phase 1 diagnostics on a fixed validation batch."""
-    encoder, bottleneck, target_bottleneck, coarse_flow = modules
+    encoder, bottleneck, target_bottleneck, coarse_flow, decoder = modules
     context_clip, target_clip = (x.to(device, non_blocking=True) for x in batch)
     with torch.no_grad():
-        abstract, target_abstract = _coarse_forward(
+        abstract, target_abstract, detailed, target_detailed = _coarse_forward(
             encoder, bottleneck, target_bottleneck, context_clip, target_clip
         )
         eps_c = torch.randn_like(target_abstract)
@@ -400,14 +440,51 @@ def run_diagnostics(
     metrics.update(effective_rank(abstract))
     metrics.update(slot_diversity_rank(abstract))
     metrics.update(coarse_baselines(coarse_flow, z_c, tau_c, abstract, target_abstract, eps_c))
-    metrics.update(gradient_health(nn.ModuleList([bottleneck, coarse_flow])))
-    # Attention entropy needs the bottleneck's pre-attention input (e_t); the
-    # encoder forward is cheap at diag cadence and avoids threading `detailed`
-    # out of `_coarse_forward` (which the training step does not need).
-    with torch.no_grad():
-        detailed = encoder(context_clip)
+    metrics.update(gradient_health(nn.ModuleList([bottleneck, coarse_flow, decoder])))
+    metrics.update(reconstruction_readouts(decoder, coarse_flow, abstract, target_abstract,
+                                           detailed, target_detailed, z_c, tau_c))
+    # Reuse the detailed tensor from `_coarse_forward` (no second encoder forward).
     metrics.update(attention_entropy(bottleneck, detailed))
     return metrics
+
+
+def reconstruction_readouts(
+    decoder: nn.Module,
+    coarse_flow: nn.Module,
+    abstract: Tensor,
+    target_abstract: Tensor,
+    detailed: Tensor,
+    target_detailed: Tensor,
+    z_c: Tensor,
+    tau_c: Tensor,
+) -> dict[str, float]:
+    """Log-only reconstruction readouts that also SCOPE the option-3 decision.
+
+    Computed under no-grad at diag cadence so the baseline (lambda_recon=0) still
+    gets `L_recon_present` for calibrating lambda_recon. In option 1 the decoder is
+    trained ONLY on the present (`c_t` -> `e_t`); evaluating it on the true future
+    (`c_plus` -> `e_plus`) and the PREDICTED future (`c_hat` -> `e_plus`) tells us,
+    from data, whether routing reconstruction through `F_c` (option 3) is warranted:
+    a large `L_recon_chat` - `L_recon_cplus` gap means `F_c`'s one-step guess lands
+    where the representation reconstructs poorly. `c_hat` is the rectified-flow
+    one-step endpoint estimate; condition dropout is disabled for a clean readout.
+
+    Returns:
+        Metrics dict: `L_recon_present`, `L_recon_cplus`, `L_recon_chat`.
+    """
+    _require_torch()
+    with torch.no_grad():
+        u_c_hat = coarse_flow(z_c, tau_c, abstract, condition_drop=_no_drop(abstract))
+        c_hat = z_c + (1.0 - tau_c.reshape(-1, 1, 1)) * u_c_hat
+        return {
+            "L_recon_present": float(reconstruction_loss(decoder(abstract), detailed).item()),
+            "L_recon_cplus": float(
+                reconstruction_loss(decoder(target_abstract), target_detailed).item()
+            ),
+            "L_recon_chat": float(
+                reconstruction_loss(decoder(c_hat), target_detailed).item()
+            ),
+        }
 
 
 def run_training(cfg: Config, steps: int, resume: str | None = None) -> None:
@@ -416,8 +493,8 @@ def run_training(cfg: Config, steps: int, resume: str | None = None) -> None:
     set_seed(cfg.seed)
     device = device_for_training()
     modules = _build_and_init(cfg, device, load_encoder=True)
-    _, bottleneck, target_bottleneck, coarse_flow = modules
-    optimizer = make_optimizer(bottleneck, coarse_flow, cfg)
+    _, bottleneck, target_bottleneck, coarse_flow, decoder = modules
+    optimizer = make_optimizer(bottleneck, coarse_flow, decoder, cfg)
     start_step = load_checkpoint(resume, modules, optimizer) if resume else 0
     # Peak LRs always come from config/CLI — not checkpoint param_group["lr"], which
     # stores the *scheduled* LR at save time and would double-apply cosine decay on resume.
@@ -516,6 +593,22 @@ def parse_args() -> argparse.Namespace:
         "sits well below var_floor_std_target (1.0) and cross_video_cosine climbs.",
     )
     parser.add_argument(
+        "--lambda-recon",
+        type=float,
+        default=None,
+        help="Reconstruction-anchor weight (option 1: decode c_t -> e_t, grad into "
+        "B only, NOT F_c). 0 = baseline (decoder runs at diag cadence for "
+        "L_recon_present calibration only). Nonzero ramps in over --recon-warmup-steps; "
+        "calibrate against the logged baseline L_recon_present magnitude.",
+    )
+    parser.add_argument(
+        "--recon-warmup-steps",
+        type=int,
+        default=None,
+        help="Linear ramp length for lambda_recon (cfg.train.recon_warmup_steps, "
+        "default 2000). Protects the fragile early phase (royal-cherry-17 8600 cliff).",
+    )
+    parser.add_argument(
         "--lr-bottleneck",
         type=float,
         default=None,
@@ -575,6 +668,10 @@ def main() -> None:
         cfg.train.horizon_k = args.horizon_k
     if args.lambda_var is not None:
         cfg.train.lambda_var = args.lambda_var
+    if args.lambda_recon is not None:
+        cfg.train.lambda_recon = args.lambda_recon
+    if args.recon_warmup_steps is not None:
+        cfg.train.recon_warmup_steps = args.recon_warmup_steps
     if args.lr_bottleneck is not None:
         cfg.train.lr_bottleneck = args.lr_bottleneck
     if args.lr_coarse_flow is not None:
