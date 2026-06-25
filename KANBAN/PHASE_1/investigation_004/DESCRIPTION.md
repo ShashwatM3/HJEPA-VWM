@@ -17,17 +17,23 @@ sign-off (reverses v0.2 "no covariance initially").
 
 ## Parent context
 
-- Branched from: [investigation_003](investigation_003/)
-- Code: `losses.py` covariance_floor, `--lambda-cov` (default 0)
+- Branched from: [investigation_003](../investigation_003/)
+- Code: VICReg-C covariance penalty added flag-gated in `7b05aef`; `--lambda-cov` CLI in
+  `578421b` (default 0). Term is the mean squared off-diagonal of the `c_t` feature
+  covariance, pooled across batch×slots.
 - Analysis: [`AGENT_FILES/KANBAN/04-FIX-DIMENSIONAL-COLLAPSE/ANALYSIS_AND_DECISIONS.md`](../../AGENT_FILES/KANBAN/04-FIX-DIMENSIONAL-COLLAPSE/ANALYSIS_AND_DECISIONS.md)
 
 ## Runs
 
-| Run | Role |
-|---|---|
-| [`exalted-lion-6`](../investigation_003/exalted-lion-6/) | Tiny diagnostic baseline (cross-link) |
-| **Run A** = [`sleek-leaf-7`](../investigation_003/sleek-leaf-7/) | Full SSv2, `lambda_cov=0`, stopped @3500 — **executed** |
-| Run B (calibrated `lambda_cov`) | **Not executed** — slot-loss path superseded |
+| Run | `lambda_cov` (verified W&B) | Role |
+|---|---|---|
+| [`exalted-lion-6`](../investigation_003/exalted-lion-6/) | — (flag absent) | Tiny diagnostic baseline (cross-link) |
+| **Run A** = [`sleek-leaf-7`](../investigation_003/sleek-leaf-7/) | **0** | Full SSv2; logs `L_cov` only for calibration; stopped @3500 — **executed** |
+| Run B (isolated calibrated `lambda_cov`) | — | **Not executed** — slot-loss path then `lambda_var=0.5` superseded it |
 
-`L_cov` logged on all runs at `lambda_cov=0` for calibration. Dedicated VICReg-C A/B
-was deprioritized after `lambda_var=0.5` win in [investigation_003](../investigation_003/).
+**λ_cov reality across adjacent runs (verified via MCP):** `serene-cloud-8`,
+`skilled-waterfall-10`, `olive-terrain-11`, `copper-sky-12` all ran `lambda_cov=0.0027`
+— but always as a gentle **adjunct to slot loss**, never isolated. `cerulean-snow-13`
+and `jolly-forest-14` ran `lambda_cov=0`. So VICReg-C was **never** tested as the
+primary isolated lever. Dedicated A/B was deprioritized after the `lambda_var=0.5` win
+in [investigation_003](../investigation_003/).

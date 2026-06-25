@@ -87,3 +87,58 @@ point to it; do not duplicate it here.
 
 Phase 2 adds fine flow; Phase 3 adds pixels; Phase 4 adds multi-horizon coarse
 prediction. KANBAN only tracks Phase 1 research until Phase 2 opens its own folder.
+
+---
+
+## Code hygiene
+
+Keep the production path clean. When writing or modifying training code, regularizers,
+or diagnostics:
+
+- Prefer **flags over hard-coded constants** for any empirical knob.
+- Default flags to **current behavior**, so the baseline is one switch away and
+  reproducible (`--lambda-var`, `--lr-coarse-flow`, AGC all follow this).
+- **Bake fixes in, gate experiments.** Settled fixes become defaults with the flag
+  removed (e.g. init `62b94dd`); only live experimental knobs stay as switches.
+- **No dead code.** When an investigation rejects a mechanism, remove the abandoned
+  regularizer and unused branches (slot loss was rejected — do not leave it wired into
+  the loss by default).
+- When in doubt, write less code.
+
+---
+
+## Internal cross-reference
+
+Before introducing a new mechanism, read the relevant investigation(s) and the code to
+learn why the current approach was chosen. The KANBAN exists to stop re-litigating
+settled questions. If a hypothesis was rejected and recorded in an
+`OBSERVATIONS.md` (e.g. slot-diversity loss as a training objective, H3 in
+investigation_003), **do not silently resurrect it without new evidence** — cite the
+prior result and state what is different now.
+
+---
+
+## External research
+
+When a problem is not addressed by the existing investigations or codebase, research
+external techniques (papers, established architectures, OSS). Propose a technique only
+if either: (a) it is demonstrated effective on the **specific** problem we face, or
+(b) it enhances the architecture while addressing the open issue. Report the **source,
+the evidence, and the risk** before proposing implementation (as was done for the
+slot-diversity penalty: Perceiver / Slot-Attention collapse, "Trap of Mediocrity").
+
+---
+
+## Empirical grounding via W&B
+
+Use the W&B MCP server (project `hjepa-vwm`, entity `smahalanobis-uc-davis`) whenever a
+hypothesis or fact-check benefits from real run data:
+
+- Before proposing a config change, **check whether a similar config was already tried**
+  and what happened (e.g. λ_cov=0.0027 ran four times as a slot adjunct — never isolated).
+- When brainstorming next steps, **pull recent run trajectories** rather than trusting
+  what the chat or files claim.
+- When debugging an unexpected metric, **verify the trajectory in W&B** before drawing
+  conclusions (post-AGC grad norm hid the royal-cherry cliff; the cliff was at 8600,
+  not 8500).
+- **Never invent metric values from memory — pull them.**

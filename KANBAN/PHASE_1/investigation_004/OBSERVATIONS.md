@@ -19,24 +19,27 @@ Step-3500 verdict on full SSv2, `lambda_cov=0`:
 ## Evidence without dedicated VICReg A/B
 
 VICReg-C (`lambda_cov`) was **never tested as the primary isolated lever**. It appeared
-only as a low-weight **adjunct** alongside slot loss on Runs 3–5
+only as a low-weight **adjunct** alongside slot loss on the slot-arc runs
 ([`serene-cloud-8`](../investigation_003/serene-cloud-8/),
 [`skilled-waterfall-10`](../investigation_003/skilled-waterfall-10/),
+[`olive-terrain-11`](../investigation_003/olive-terrain-11/),
 [`copper-sky-12`](../investigation_003/copper-sky-12/)) at **`lambda_cov=0.0027`** —
-not at `lambda_cov=0` for calibration.
+all confirmed via W&B config. Because slot loss dominated those runs and then
+Goodharted, the covariance term's isolated effect is **unobservable** from them.
 
-- **`sleek-leaf-7`** (Run A): `lambda_cov=0` — logs `L_cov` magnitude only; used to
-  calibrate the 0.0027 weight used later
-- **Runs 3–5**: `lambda_cov=0.0027` active with slot loss — VICReg-C tried as adjunct,
-  not isolated; slot path rejected for Goodhart
-- **`cerulean-snow-13`**: first run with **`lambda_cov=0`** and no slot loss — rank
+- **`sleek-leaf-7`** (Run A): `lambda_cov=0` — logs `L_cov` magnitude only (20.18 @3500);
+  used to calibrate the 0.0027 weight (5% of `L_flow`) applied later
+- **Slot-arc runs (serene/skilled/olive/copper)**: `lambda_cov=0.0027` active with slot
+  loss — VICReg-C tried as adjunct, not isolated; slot path rejected for Goodhart
+- **`cerulean-snow-13`, `jolly-forest-14`**: `lambda_cov=0` and no slot loss — rank
   ~13.7 via `lambda_var=0.5` alone
 
 ## Belief (current)
 
-VICReg-C is **reasonable escalation** if rank plateaus too low after a **complete** stable 15k run
-([investigation_005](investigation_005/)). It is **not** the first lever; strong variance floor was
-underestimated in original `lambda_var=0.1` default.
+VICReg-C is a **reasonable escalation** if rank plateaus too low after a **complete**
+stable 15k run ([investigation_005](../investigation_005/)). It is **not** the first
+lever; the strong variance floor was underestimated in the original `lambda_var=0.1`
+default.
 
 ## SIGReg
 

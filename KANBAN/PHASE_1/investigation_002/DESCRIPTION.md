@@ -17,11 +17,12 @@ Full SSv2 experiments are impractical until throughput improves.
 ## Parent context
 
 - Operational plan: [`AGENT_FILES/KANBAN/01-OPTIMIZE-DATALOADER/`](../../AGENT_FILES/KANBAN/01-OPTIMIZE-DATALOADER/)
-- Related to [investigation_001](investigation_001/) (same era) but independent question
-- Contingency if insufficient: [`AGENT_FILES/KANBAN/03-CPU-TO-GPU-OFFLOAD/`](../../AGENT_FILES/KANBAN/03-CPU-TO-GPU-OFFLOAD/) — **not needed**
+- Related to [investigation_001](../investigation_001/) (same era) but independent question
+- Contingency if insufficient: [`AGENT_FILES/KANBAN/03-CPU-TO-GPU-OFFLOAD/`](../../AGENT_FILES/KANBAN/03-CPU-TO-GPU-OFFLOAD/) — **deferred, not needed yet**
 
 ## Runs in this investigation
 
-Smoke runs only — no dedicated training run. W&B smokes:
-`youthful-pond-1`, `efficient-aardvark-2`, `charmed-haze-4` (timed throughput checks,
-not training experiments). See OBSERVATIONS.md.
+Smoke runs only — no dedicated training run. Four W&B smokes (all `ssv2_tiny`):
+`youthful-pond-1` (connectivity), `efficient-aardvark-2` (1.66 s/step pre-fix baseline),
+`comfy-glade-3` (`--log-every 1` dense smoke, pre-fix), `charmed-haze-4` (1.41 s/step
+post-fix). Timed throughput checks, not training experiments. See OBSERVATIONS.md.

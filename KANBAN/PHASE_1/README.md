@@ -43,20 +43,22 @@ All runs from project dashboard, in W&B creation order:
 | 7 | `sleek-leaf-7` | rpxyg9qt | 1h39m | 003 | **Run 2** |
 | 8 | `serene-cloud-8` | dhp1i3fk | 1h32m | 003 | **Run 3** |
 | 9 | `confused-butterfly-9` | m30jxiye | 1s | 003 | fail |
-| 10 | `skilled-waterfall-10` | 27i1r9qi | 1h8m | 003 | **Run 4** |
-| 11 | `olive-terrain-11` | q40nq0l3 | 1h58m | 003 | TBD |
-| 12 | `copper-sky-12` | ejror834 | 2h24m | 003 | **Run 5** |
+| 10 | `skilled-waterfall-10` | 27i1r9qi | 1h8m | 003 | **Run 4** (ran k=4, raw slot — inert) |
+| 11 | `olive-terrain-11` | q40nq0l3 | 1h58m | 003 | Run 5a (first centered-slot k=12) |
+| 12 | `copper-sky-12` | ejror834 | 2h24m | 003 | **Run 5b** (slot Goodhart confirmed) |
 | 13 | `cerulean-snow-13` | 4lo4j7qb | 3h7m | 003 | **Run 6** ✓ |
-| 14 | `jolly-forest-14` | 8bkeeuio | 1h32m | 003 | TBD |
+| 14 | `jolly-forest-14` | 8bkeeuio | 1h32m | 003 | Run 6b (winning-config repeat, crashed @3900) |
 | 15 | `elated-snowflake-15` | jhodg49x | 5h25m | 005 | 15k fail |
 | 16 | `drawn-elevator-16` | 0n5mx3qf | 3h29m | 005 | resume fail |
 | 17 | `royal-cherry-17` | 0xv4upvb | 4h52m | 005 | AGC resume — skip-free, rank collapse |
 
 Project URL: https://wandb.ai/smahalanobis-uc-davis/hjepa-vwm
 
-**Mapping notes:** Runs 7–12 matched to BRIEF 2–5 by chronology + runtime + chat logs.
-`olive-terrain-11` and `jolly-forest-14` are recorded but config mapping is uncertain —
-verify on W&B config panel.
+**Mapping notes (resolved via W&B MCP, 2026-06-25):** all run configs are now confirmed
+against the W&B config panel. `olive-terrain-11` = first centered-slot k=12 run (slot=0.05,
+cov=0.0027); `jolly-forest-14` = winning-config repeat (var=0.5, k=12, no slot), crashed
+@3900. `skilled-waterfall-10` actually ran at **k=4** (launch drift) on the inert raw slot
+loss. See each run's DESCRIPTION for the verified command/config.
 
 ---
 

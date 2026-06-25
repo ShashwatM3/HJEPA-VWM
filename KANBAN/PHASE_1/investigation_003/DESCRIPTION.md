@@ -24,19 +24,22 @@ Low rank means the bottleneck is not carrying future-relevant structure; Phase 2
 
 ## Runs in this investigation
 
-| Run | BRIEF | Role |
+Listed in W&B chronological order (the BRIEF "Run N" labels are a coarser narrative
+overlay; verified configs are in each run's DESCRIPTION).
+
+| Run | BRIEF | Role (verified vs W&B) |
 |---|---|---|
-| [`exalted-lion-6`](exalted-lion-6/) | P1 | **First** — tiny diagnostic; slot redundancy + feature correlation dominant |
-| [`sleek-leaf-7`](sleek-leaf-7/) | **Run 2** | Full SSv2 baseline / VICReg Run A @3500 |
-| [`confused-butterfly-9`](confused-butterfly-9/) | — | Failed launch (1s) |
-| [`serene-cloud-8`](serene-cloud-8/) | **Run 3** | Aggressive slot loss + k=4 — Goodhart |
-| [`skilled-waterfall-10`](skilled-waterfall-10/) | **Run 4** | k=12 slot loss inert (loss/metric mismatch) |
-| [`olive-terrain-11`](olive-terrain-11/) | — | Intermediate k=12 attempt (config TBD on W&B) |
-| [`copper-sky-12`](copper-sky-12/) | **Run 5** | Centered slot loss — Goodhart + grad spikes |
-| [`jolly-forest-14`](jolly-forest-14/) | — | Intermediate pre-elated run (config TBD) |
-| [`cerulean-snow-13`](cerulean-snow-13/) | **Run 6** | **Win:** `lambda_var=0.5`, no slot loss |
+| [`exalted-lion-6`](exalted-lion-6/) | P1 | **First** — tiny diagnostic; flag-based init ablation → init is a non-lever; pointed at VICReg-C |
+| [`sleek-leaf-7`](sleek-leaf-7/) | **Run 2** | Full SSv2 baseline / VICReg Run A @3500; per-head metric exposes slot collapse (1.62) |
+| [`serene-cloud-8`](serene-cloud-8/) | **Run 3** | k=4, **raw** slot loss 0.25 — early Goodhart |
+| [`confused-butterfly-9`](confused-butterfly-9/) | — | Failed launch (1s, k=4 slot=0.25) |
+| [`skilled-waterfall-10`](skilled-waterfall-10/) | **Run 4** | **k=4** (not 12 — launch drift), raw slot 0.05 **inert** → exposed loss/metric bug |
+| [`olive-terrain-11`](olive-terrain-11/) | Run 5a | **First centered-slot k=12** run (slot=0.05) — Goodhart begins; killed @3900 |
+| [`copper-sky-12`](copper-sky-12/) | **Run 5b** | Re-run of olive — Goodhart confirmed (rank→4.8, cosine 0.84) + grad spikes |
+| [`cerulean-snow-13`](cerulean-snow-13/) | **Run 6** | **Win:** `lambda_var=0.5`, k=12, no slot |
+| [`jolly-forest-14`](jolly-forest-14/) | Run 6b | Winning-config repeat (var=0.5, k=12); reproduced cerulean, crashed @3900 |
 
 ## Spawned
 
-- [investigation_004](investigation_004/) — VICReg-C path (Run A executed; Run B not run)
-- [investigation_005](investigation_005/) — complete 15k with winning config
+- [investigation_004](../investigation_004/) — VICReg-C path (Run A executed; Run B not run)
+- [investigation_005](../investigation_005/) — complete 15k with winning config

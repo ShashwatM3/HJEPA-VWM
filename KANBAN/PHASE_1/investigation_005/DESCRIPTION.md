@@ -18,8 +18,8 @@ Partial wins on shorter runs do not unlock the hierarchy work.
 ## Parent context
 
 - Spec gates: [`AGENT_FILES/PHASES/PHASE_1.md`](../../AGENT_FILES/PHASES/PHASE_1.md) §12
-- Config from: [investigation_003](investigation_003/) (`cerulean-snow-13`)
-- Stability guards from: [investigation_001](investigation_001/)
+- Config from: [investigation_003](../investigation_003/) (`cerulean-snow-13`)
+- Stability guards from: [investigation_001](../investigation_001/)
 
 ## Runs
 
