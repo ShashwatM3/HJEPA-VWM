@@ -23,7 +23,7 @@ The dependency chain, and the question each phase answers:
 
 | Phase | Adds | Question answered | Status |
 |---|---|---|---|
-| **1** | Bottleneck `B` + coarse flow `F_c` | *Can a compressed latent learn coarse dynamics at one horizon?* | implemented; Run 2 pending |
+| **1** | Bottleneck `B` + coarse flow `F_c` | *Can a compressed latent learn coarse dynamics at one horizon?* | implemented; investigation 005 active (15k acceptance) |
 | **2** | Fine flow `F_e` (predicts future `e` conditioned on predicted `c`) | *Does the hierarchy work — does the abstract level steer the detailed level?* | spec'd |
 | **3** | VAE `A` + frame generator `D` | *Can predicted latents be decoded into actual pixels?* | spec'd |
 | **4** | Multi-horizon coarse prediction | *Can ONE predictor handle multiple time scales?* | spec'd, deferred |
@@ -54,12 +54,12 @@ conceptual tool you learned in file 04 amortizes across all three.
 ### 4a. The limitation it removes
 
 Phase 1's predictor answers exactly one question: "what does the world
-look like **4 frames** (≈ a third of a second) from now?" `horizon_k = 4`
-is baked into the data pipeline — the target window always sits 4 frames
-ahead. A world model with one fixed lookahead is like a chess engine that
-can only think exactly one move ahead: useful, but not *planning*.
-Different decisions need different time scales — "where will the hand be
-in 0.3s?" vs "will the cup be off the table in 3s?"
+look like **k frames** from now?" The **operating value is `horizon_k=12`**
+(≈ 1 second at 12 fps); `config.py` still defaults to 4 for backward
+compatibility. A world model with one fixed lookahead is like a chess
+engine that can only think exactly one move ahead: useful, but not
+*planning*. Different decisions need different time scales — "where will
+the hand be in 0.3s?" vs "will the cup be off the table in 3s?"
 
 ### 4b. The naive fix and why it's rejected
 
@@ -109,7 +109,7 @@ k  ~ Categorical({4, 8, 16, 32}, p = {0.30, 0.30, 0.25, 0.15})
 target clip = the window ending at t + k        ← data pipeline change
 c⁺ = B_EMA(E(x_{≤t+k}))                          ← same machinery, k-dependent window
 v̂  = F_c(z_τ, τ, c_t, h_k)                      ← new argument
-L  = ‖v̂ − (c⁺ − ε)‖² + 0.1·L_var(c_t)            ← unchanged
+L  = ‖v̂ − (c⁺ − ε)‖² + λ_var·L_var(c_t)            ← unchanged (operating λ_var=0.5)
 ```
 
 What does **not** change is most of the lesson:
@@ -166,11 +166,11 @@ Multi-horizon multiplies the *evaluation* surface (everything ×4) and
 slightly complicates data sampling — all worthless if single-horizon
 prediction doesn't work, and confusing to debug if latent health is
 already questionable. It extends `F_c` — so it inherits whatever Phase 1
-produces. Concretely: if `c_effective_rank` is still ~5 when Phase 4
-starts, all four horizons will be predicting within that same impoverished
-5-dim subspace, and far-horizon gates will be testing dynamics the latent
-may not even represent. Fixing latent richness *first* is not
-perfectionism; it's sequencing.
+produces. Concretely: if `c_effective_rank` is still ~13 when Phase 4
+starts, all four horizons will be predicting within that same subspace,
+and far-horizon gates will be testing dynamics the latent may not fully
+represent. Fixing latent richness *first* is not perfectionism; it's
+sequencing.
 
 ## 5. Questions to test yourself
 

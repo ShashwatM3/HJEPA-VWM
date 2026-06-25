@@ -189,9 +189,15 @@ bf16 keeps fp32's full exponent and sacrifices mantissa. Consequences:
 ```python
 global_batch = 64
 stage1_steps = 15_000      # was 30_000
-horizon_k = 4              # predict 4 frames ahead
+horizon_k = 4              # config default; operating value is 12 (see below)
 frame_stride = 2           # context samples every 2nd frame
 ```
+
+**Config default vs operating value:** `config.py` ships with
+`horizon_k=4` and `lambda_var=0.10` (matching `UNDERSTANDING.md` §2.6).
+Validated Phase 1 runs override via CLI: **`--horizon-k 12 --lambda-var 0.5`**
+(investigation 003, run `cerulean-snow-13`). Always record which you used —
+W&B snapshots the resolved config at launch.
 
 Definitions, precisely:
 
@@ -216,26 +222,44 @@ Why per-step thinking dominates anyway: LR schedule, EMA schedule, warmup,
 checkpoint cadence are all written in steps, because what matters to the
 optimizer is the number of updates, not dataset passes.
 
-`horizon_k = 4` and `frame_stride = 2` define the prediction problem
-itself: context = 8 frames sampled every 2nd frame (≈ 1.3s of 12fps SSv2
-video); target window = same geometry shifted 4 raw frames (≈ 0.33s)
-ahead. Far enough that "copy the present" is beatable, near enough that
-prediction is possible. Phase 4 generalizes k (file 11).
+`horizon_k` and `frame_stride` define the prediction problem itself:
+context = 8 frames sampled every 2nd frame (≈ 1.3s of 12fps SSv2 video);
+target window = same geometry shifted `horizon_k` raw frames ahead.
+
+- **At `horizon_k=4` (config default):** target starts 4 frames later —
+  ≈ 0.33s ahead, with heavy overlap between context and target windows
+  (file 13). Too easy for a low-rank latent to survive.
+- **At `horizon_k=12` (operating default):** target starts 12 frames later
+  — ≈ 1.0s ahead, minimal overlap (frames 12 and 14 only). Harder task
+  that forces richer representations. Phase 4 generalizes k further (file 11).
+
+Recommended launch for acceptance runs:
+
+```bash
+python train.py --data ssv2 --steps 15000 --horizon-k 12 --lambda-var 0.5
+```
 
 ## 6. The loss weights
 
 ```python
-lambda_var = 0.10
+lambda_var = 0.10          # config default
+lambda_cov = 0.0           # VICReg-C; logged always, added only if > 0
+lambda_slot = 0.0          # slot diversity; logged always, added only if > 0
 var_floor_std_target = 1.0
 ```
 
-Total loss = `L_flow + 0.10 · L_var`. The 10:1 ratio encodes the
-philosophy from file 06: flow matching is the *objective*, the variance
-floor is a *constraint fence*. In a healthy run L_var ≈ 0 within a few
-hundred steps and the total is effectively pure L_flow. If you ever see
-the two terms competing (L_var persistently > 0 while L_flow falls),
-something is pushing `c_t` toward deadness and the fence is holding it
-back — investigate rather than retune λ.
+Total loss = `L_flow + λ_var · L_var + λ_cov · L_cov + λ_slot · L_slot`.
+
+**Operating weight:** `λ_var = 0.50` (investigation 003). At 0.10 the
+ratio is 10:1 flow-to-var — the floor is a light fence. At 0.50 the floor
+actively fights collapse and rank rises to ~13+. The config default (0.10)
+reproduces the v0.2 baseline for ablations; production runs use 0.50.
+
+In a healthy run L_var ≈ 0 within a few hundred steps and the total is
+effectively pure L_flow. If you ever see the two terms competing (L_var
+persistently > 0 while L_flow falls), something is pushing `c_t` toward
+deadness and the fence is holding it back — investigate rather than
+retune λ blindly.
 
 ## 7. Cadences
 

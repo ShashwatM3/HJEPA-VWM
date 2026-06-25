@@ -53,8 +53,10 @@
 | **Full collapse** | `c_t` constant for all inputs; loss excellent, information zero | 06 |
 | **Dimensional collapse** | `c_t` varies only inside a low-dim subspace; caught by effective rank / dead-dim fraction | 06 |
 | **Directional collapse** | Vectors vary in magnitude but share direction; caught by cross-video cosine | 06 |
-| **Variance floor (`L_var`)** | Hinge: per-dim std across batch must reach 1.0; forbids constants, never rewards variance; λ=0.10 | 06 |
-| **SIGReg / VICReg** | Covariance-decorrelation regularizers; removed in v0.2 by supervisor directive ("variance floor only, initially"); the documented escalation path for low rank | 06, 03 |
+| **Variance floor (`L_var`)** | Hinge: per-dim std across batch must reach 1.0; forbids constants, never rewards variance; config default λ=0.10, operating λ=0.50 | 06 |
+| **`L_cov` / `lambda_cov`** | VICReg-C off-diagonal covariance penalty; always logged, added to loss only if λ>0; investigation 004 paused | 06 |
+| **`L_slot` / `lambda_slot`** | Within-video slot diversity penalty; always logged, added only if λ>0; aggressive values Goodhart the metric | 06, 03 |
+| **SIGReg / VICReg** | Covariance-decorrelation regularizers; removed as default in v0.2; optional escalation via `lambda_cov` | 06, 03 |
 
 ## Metrics & evaluation
 
@@ -63,7 +65,10 @@
 | **`c_std_mean/median`** | Per-dim std of `c_t` across the batch | ≈ 1.0 | 06 |
 | **`c_dead_dim_frac`** | Fraction of dims with std < 10% of median | ≈ 0 | 06 |
 | **`c_cross_video_cosine`** | Mean pairwise cosine of different videos' `c_t` | < 0.5 | 06 |
-| **`c_effective_rank`** | exp(entropy of covariance eigenvalue distribution) — "how many dims really in use" | > 60 (Run 1: ~5) | 06 |
+| **`c_effective_rank`** | exp(entropy of covariance eigenvalue distribution) — "how many dims really in use" | > 60 spec; current best ~13–14 (Run 1: ~5) | 06 |
+| **`c_slot_diversity_rank`** | Effective rank across the 32 query slots within one video | → 32 | 06 |
+| **`c_attn_entropy`** | Cross-attention weight entropy per head; high = diffuse reads | moderate, heads differ | 06 |
+| **`grad_skipped`** | 1 if skip-guard fired this step (norm non-finite or >50); must stay 0 | 0 always | 07, 10 |
 | **Copy baseline** | Score of pretending future = present; gate: model ≤ 0.70× | — | 06 |
 | **Batch-mean baseline** | Score of predicting the average future; gate: model ≤ 0.50× (tests conditioning use) | — | 06 |
 | **Acceptance gate** | A falsifiable numeric criterion that defines phase success; loss alone is never one | — | 01, 06 |
@@ -96,7 +101,9 @@
 | **VP9 / .webm** | The delta-based codec SSv2 ships in; random frame access pays keyframe-seek costs | 08 |
 | **decord** | Video-decoding library; `num_threads=1` per reader (VP9 thread bug), parallelism via DataLoader workers instead | 08 |
 | **Dataloader-bound** | GPU waits on CPU decode; the regime we're in (~1.4 s/step); more CPU helps, bigger GPU doesn't | 08 |
-| **`horizon_k` / `frame_stride`** | Predict 4 raw frames ahead / sample context every 2nd frame | 07 |
+| **`horizon_k` / `frame_stride`** | Raw frames between context end and target start / sample every 2nd frame; operating k=12 (config default 4) | 07, 13 |
+| **`cerulean-snow-13`** | Investigation 003 winning W&B run: k=12, λ_var=0.5, rank ~13.7+, beats copy | — | 00, 09 |
+| **`BRIEF_V0_3.md`** | Current architecture brief; wins on Phase 1 operating hyperparameters | — | 00 |
 | **Shared augmentation** | One crop + one jitter for all 16 frames of a sample; augmentation must never change the relationship being learned | 08 |
 | **Stage 0** | One synthetic end-to-end train step asserting the invariants (encoder frozen, EMA moves, loss finite) before any long run | 09 |
 | **tmux** | Server-side terminal session that survives SSH disconnects; all long jobs run inside one | 09 |
@@ -105,7 +112,7 @@
 | **W&B** | Weights & Biases — metric time series + per-run config snapshot; wrapped in try/except (logging may never kill training) | 09 |
 | **Checkpoint/resume** | Every 2.5k steps: modules (incl. EMA twin) + optimizer state + step; schedules resume correctly because they're pure functions of step | 09 |
 | **Postmortem** | The written autopsy of a failure; converts a $10 crash into permanent rules (POSTMORTEM_RUN1.md) | 10 |
-| **Kanban / HUMAN_TASKS / PAUSE markers** | The agent–human handoff protocol: every dependency on the other actor is an explicit named pause | 09 |
+| **Kanban / investigations** | Research tracking under `KANBAN/PHASE_1/investigation_*/`; one folder per question, one per run | 09 |
 
 ---
 

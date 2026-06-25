@@ -385,8 +385,8 @@ class CoarseFlow(nn.Module):
 
 
 def build_phase1_modules(
-    cfg: Config, *, load_encoder: bool = True
-) -> tuple[nn.Module | None, Bottleneck, TargetBottleneck, CoarseFlow]:
+      cfg: Config, *, load_encoder: bool = True
+  ) -> tuple[nn.Module | None, Bottleneck, TargetBottleneck, CoarseFlow]:
     """Construct all Phase 1 modules in data-path order.
 
     Keeping construction in one place gives Stage 0 a single canonical module

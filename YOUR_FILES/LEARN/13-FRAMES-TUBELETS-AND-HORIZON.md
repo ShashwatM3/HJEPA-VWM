@@ -1,6 +1,12 @@
 # Frames, Tubelets, And Horizon
 
-## Current Pipeline (`horizon_k = 4`)
+> **What you'll understand after this file:** exactly how raw video frames
+> become context/target clips, how tubelets relate to frames, and why
+> `horizon_k=12` (not 4) is the current operating default.
+
+---
+
+## Current Pipeline (`horizon_k = 12`)
 
 **1. Pick one video.**
 
@@ -24,10 +30,10 @@ because V-JEPA groups every 2 frames into 1 tubelet.
 
 **3. Build the target clip.**
 
-Current `horizon_k = 4`, so the target starts 4 frames later:
+Current operating `horizon_k = 12`, so the target starts 12 frames later:
 
 ```text
-target frames = 4, 6, 8, 10, 12, 14, 16, 18
+target frames = 12, 14, 16, 18, 20, 22, 24, 26
 ```
 
 The target clip is also:
@@ -35,6 +41,12 @@ The target clip is also:
 ```text
 8 sampled frames = 4 V-JEPA tubelets
 ```
+
+**Overlap note:** context ends at frame 14; target starts at frame 12.
+Only frames **12 and 14** appear in both clips — minimal overlap. This is
+deliberate: at the old `horizon_k=4`, six of eight target frames overlapped
+the context, making "copy-ish" prediction too easy and letting low-rank
+latents survive (investigation 003).
 
 **4. V-JEPA encodes the context.**
 
@@ -70,7 +82,7 @@ Output:
 c_t = 32 abstract tokens
 ```
 
-This is the model’s compressed understanding of the context clip.
+This is the model's compressed understanding of the context clip.
 
 **6. V-JEPA encodes the target.**
 
@@ -133,41 +145,52 @@ More precisely:
 
 ```text
 given 4 context tubelets starting at frame 0,
-predict 4 target tubelets starting at frame 4
+predict 4 target tubelets starting at frame 12
 ```
 
-That is why there is high overlap, as observed via the metrics from the previous run.
+At `horizon_k=12` with `frame_stride=2`, the prediction horizon is
+**12 raw frames ≈ 1.0 second** ahead (SSv2 is ~12 fps).
 
 ---
 
-## Proposed `horizon_k = 12`
+## Legacy Pipeline (`horizon_k = 4`) — config default only
 
-Only step 3 changes.
+`config.py` still defaults to `horizon_k=4` for backward compatibility with
+the original v0.2 spec. Do not use this for new runs unless ablating.
 
-Context stays:
+Context stays the same:
 
 ```text
 context frames = 0, 2, 4, 6, 8, 10, 12, 14
 ```
 
-Target becomes:
+Target at k=4:
 
 ```text
-target frames = 12, 14, 16, 18, 20, 22, 24, 26
+target frames = 4, 6, 8, 10, 12, 14, 16, 18
 ```
-
-So now the model learns:
 
 ```text
 given 4 context tubelets starting at frame 0,
-predict 4 target tubelets starting at frame 12
+predict 4 target tubelets starting at frame 4
 ```
 
-Simple difference:
+Six of eight target frames overlap the context window. Copy baselines are
+easier to beat superficially, but the task does not force the bottleneck to
+use its full capacity — rank plateaued at ~5–9 under this setting.
 
-```text
-current:  target starts 4 frames later
-proposed: target starts 12 frames later
-```
+---
 
-Everything else stays the same.
+## Quick comparison
+
+| | `horizon_k=4` (legacy default) | `horizon_k=12` (operating) |
+|---|---|---|
+| Target start frame | 4 | 12 |
+| Time ahead (12 fps) | ~0.33 s | ~1.0 s |
+| Context/target overlap | 6 of 8 frames | 2 of 8 frames |
+| Empirical rank | ~5–9 | ~13–14+ |
+| CLI | (config default) | `--horizon-k 12` |
+
+Everything else — tubelet geometry, token counts, bottleneck, EMA target,
+flow matching — is identical. Horizon only changes *which* future window
+the dataloader samples.

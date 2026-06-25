@@ -4,6 +4,11 @@
 > the predictor outputs a "velocity" instead of the future latent directly,
 > what every tensor in `train_step` is, what adaLN-Zero conditioning means,
 > and why condition dropout exists.
+>
+> **Scope:** This file walks through **`F_c` (coarse flow)** in detail because
+> Phase 1 implements it. The **same rectified-flow recipe** is reused for
+> **`F_e` (fine flow, Phase 2)** and **`D` (frame generator, Phase 3)** —
+> different conditioning tensors and target shapes, identical training math.
 
 ---
 
@@ -220,7 +225,8 @@ z_τ  = (1−τ)·ε + τ·c⁺
 u    = c⁺ − ε                                # target velocity
 û    = F_c(z_τ, τ, c_t)             GRAD     # predicted velocity
 
-loss = ‖û − u‖² + 0.10 · L_var(c_t)
+loss = ‖û − u‖² + λ_var · L_var(c_t) + λ_cov · L_cov(c_t) + λ_slot · L_slot(c_t)
+       (λ_cov and λ_slot default to 0 — terms still logged every step)
 loss.backward()                              # grads flow to F_c AND through c_t to B
 clip, maybe-skip, optimizer.step()           # file 07
 EMA update of target_bottleneck              # file 05

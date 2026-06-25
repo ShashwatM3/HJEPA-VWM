@@ -118,9 +118,49 @@ its own contract. This kind of *bypass test* is the project's core
 discipline: every architectural claim must have a diagnostic that could
 falsify it.
 
-## 5. The actual pipeline, end to end
+## 5. The full pipeline (intended v0 architecture)
 
-Phase 1 (what exists today) trains the coarse level only:
+The project builds in phases, but the **target design** is always this stack.
+Read it top-to-bottom as information flowing from pixels → abstract dynamics
+→ detailed appearance → pixels again.
+
+```
+                         ┌──────── FROZEN encoder E (V-JEPA 2 ViT-L/16) ────────┐
+context clip x_{≤t}   ──►  E  ──► e_t  (1024×1024 — detailed)                   │
+                         └───────────────────────────────────────────────────────┘
+                                            │
+                                            ▼
+                              bottleneck B  ──► c_t  (32×256 — abstract)
+                                            │
+         ┌──────────────────────────────────┼──────────────────────────────────┐
+         ▼                                  │                                  │
+  F_c: coarse flow                          │  TARGET BRANCH (no grad ever):   │
+  z_τ, τ, cond c_t  →  velocity v̂_c        │  future clip ──► E ──► e⁺       │
+         │ integrate → ĉ⁺                    │              ──► B_EMA ──► c⁺     │
+         ▼                                  │                                  │
+  F_e: fine flow [Phase 2]                  │  (e⁺ also target for F_e)        │
+  cond (e_t, stopgrad(ĉ⁺)) → ê⁺             │                                  │
+         ▼                                  │                                  │
+  D: frame generator [Phase 3]              │                                  │
+  cond ê⁺ → future frames in VAE space      │                                  │
+         └──────────────────────────────────┴──────────────────────────────────┘
+```
+
+**Phase 4** adds horizon embedding `h_k` to `F_c` only — same hierarchy,
+multiple lookahead distances (file 11).
+
+Each major box maps to a curriculum file:
+- frozen encoder → `02-FROZEN-ENCODER.md`
+- bottleneck → `03-BOTTLENECK.md`
+- all three flow predictors (same math) → `04-FLOW-MATCHING.md`
+- EMA target branch → `05-EMA-AND-STOP-GRAD.md`
+- variance floor + diagnostics → `06-COLLAPSE-AND-METRICS.md`
+- phase schedule + multi-horizon → `11-PHASES-AND-MULTI-HORIZON.md`
+
+### 5b. Phase 1 subset (implemented today)
+
+Phase 1 trains **only the coarse level** — everything above `F_c` in the
+diagram. The fine flow, frame generator, and `h_k` do not exist in code yet.
 
 ```
                         ┌──────── FROZEN (pretrained V-JEPA 2 ViT-L/16) ────────┐
@@ -135,22 +175,18 @@ context clip x_{≤t}   ──►  encoder E  ──► e_t (1024×1024)        
         noise z_0, time τ  ──►  flow predictor F_c(z_τ, τ, c_t)  ──► velocity v̂
                                             │
                                             ▼
-                       L_flow = ‖v̂ − (c⁺_{t+k} − z_0)‖²     +    0.1 · L_var(c_t)
+                       L_flow = ‖v̂ − (c⁺_{t+k} − z_0)‖²     +    λ_var · L_var(c_t)
+                                                              (operating: λ_var = 0.5;
+                                                               config default: 0.10)
 
 TARGET (no gradients ever flow here):
 future clip x_{≤t+k}  ──► same frozen E ──► e⁺ ──► EMA copy B_EMA ──► c⁺_{t+k}
 ```
 
-Read it as: *encode the present, compress it, and learn a generative
-predictor that can transport noise to the compressed future — using the
-compressed present as the steering signal.*
-
-Each box is one file of this curriculum:
-- the frozen encoder → `02-FROZEN-ENCODER.md`
-- the bottleneck → `03-BOTTLENECK.md`
-- the flow predictor and L_flow → `04-FLOW-MATCHING.md`
-- the EMA target branch → `05-EMA-AND-STOP-GRAD.md`
-- L_var and the health metrics → `06-COLLAPSE-AND-METRICS.md`
+Read Phase 1 as: *encode the present, compress it, and learn a generative
+predictor that transports noise to the compressed future — using the compressed
+present as the steering signal.* Phases 2–3 extend the same flow-matching
+recipe to `e⁺` and then to pixels; Phase 4 extends `F_c` to multiple horizons.
 
 ## 6. What "success" means for Phase 1
 
@@ -165,8 +201,9 @@ Not "the loss went down." Loss always goes down. Success is defined by
 3. `c_t` must be **healthy**: variance alive, videos distinguishable,
    effective rank high enough that the latent actually uses its capacity.
 
-These gates are the project's definition of "the architecture works." A
-beautiful loss curve that fails the gates is a failure.
+These gates are Phase 1's definition of "the coarse level works." Later
+phases add their own gates (shuffled-c for `F_e`, pixel quality for `D` —
+file 11). A beautiful loss curve that fails the gates is a failure.
 
 ## 7. Mental model to carry forward
 

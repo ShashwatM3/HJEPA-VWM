@@ -143,3 +143,50 @@ this file.
 5. What's wrong with a diagnostic that can throw? *(It couples the
    monitor's failure to the patient's: you lose checkpointing, logging,
    and a clean final state precisely when you most need them.)*
+
+---
+
+## 7. Case study 2: the grad-skip death spiral (`elated-snowflake-15`)
+
+Run 1 taught us about gradient *explosions*. Investigation 005's
+`elated-snowflake-15` taught a different lesson: the skip-guard can
+**freeze training while metrics still look fine.**
+
+### Timeline
+
+| Step | Observation |
+|---|---|
+| 0 – ~8000 | Healthy. Matches `cerulean-snow-13`: copy ratio 0.83–0.96, rank ~13.7, std ~1.04, `grad_skipped=0` |
+| ~8500 | Single spike: `grad_norm=170`, `grad_skipped=1`, copy ratio jumps to 5.7 |
+| 8500 – ~13850 | **Every step skipped.** Weights frozen. Copy ratio stuck 3.5–5.7. |
+| ~13850 | Process ends. ~5300 steps of zero learning after the spike. |
+
+### The mechanism
+
+1. One batch at step ~8500 produces a pre-clip gradient norm of 170 —
+   above the skip threshold (50) but not a full NaN explosion.
+2. The skip-guard correctly discards the step. But unlike Run 1, the
+   weights do **not** go NaN — they stay in a bad region of the loss
+   surface.
+3. Every subsequent batch also produces huge gradients (norm 100–250).
+   The skip-guard fires on **every** step. The optimizer never updates.
+   EMA never updates (by design — file 07).
+4. **The latent metrics lie.** Forward passes still run; `c_std_mean`,
+   `c_cross_video_cosine`, and `c_effective_rank` look healthy (~0.17,
+   ~13.7, ~1.10) because they measure the *current* weights, not whether
+   those weights are *improving*. Copy ratio — which re-scores prediction
+   quality — reveals the truth: 3.5–5.7 means the model is worse than
+   "do nothing."
+
+### What this teaches
+
+| Lesson | Detail |
+|---|---|
+| **`grad_skipped` is a hard gate** | Any sustained nonzero rate means stop immediately — not "the guard is handling it" |
+| **Latent health ≠ training health** | Diagnostics on frozen weights can look fine while optimization is dead |
+| **Copy ratio is the canary** | When in doubt, trust the baseline ratios over variance/rank |
+| **Resume strategy matters** | Do not resume from the final checkpoint (garbage). Resume from **pre-spike** (~step 7500) with lower flow LR (`--lr-coarse-flow 1e-4`) |
+| **Different failure, same defense** | Run 1 needed lower peak LR; this run needed earlier intervention when skip rate went nonzero |
+
+This is why the health checklist in file 09 lists `grad_skipped == 0`
+as the first line — before any latent metric.

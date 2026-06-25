@@ -258,51 +258,45 @@ moving." Whether it actually does is checked empirically — by the
 acceptance baselines and latent-health metrics (file 06), never by
 inspection or hope.
 
-## 7. The open problem: effective rank ~5/256
+## 7. The open problem: effective rank — resolved partially, not fully
 
-In Run 1, `c_effective_rank` plateaued around ~5 (max possible 256). The
-latent was *not* fully collapsed (variance alive, cross-video cosine OK)
-but used ~2% of its dimensional capacity — like buying a 256-lane highway
-and using 5 lanes. Three candidate explanations were on the table, each
-with a different fix:
+In Run 1 (`peachy-terrain-5`), `c_effective_rank` plateaued around ~5 (max
+possible 256). The latent was *not* fully collapsed (variance alive,
+cross-video cosine OK) but used ~2% of its dimensional capacity — like
+buying a 256-lane highway and using 5 lanes. Investigation **003** traced
+the root cause to a combination of weak regularization and an too-easy
+prediction task:
 
-1. **Dataset too small** (~4k clips in ssv2_tiny; ~240 epochs in a 15k-step
-   run): there may genuinely be only ~5 axes of variation the model needs.
-   Fix: run on full SSv2. Lowest risk, tests data before architecture.
+1. **Dataset too small** (~4k clips in ssv2_tiny): rank rose modestly on
+   full SSv2 (~9 at step ~3.5k) but not enough alone.
 2. **Init/optimization artifact**: queries read out near-identical mean
-   tokens early. Fix: orthogonal query init, zero-init out_mlp (§4).
-3. **Missing regularizer**: the variance floor only prevents *constant*
-   `c_t`; it never asks for *decorrelated* dims, nor for *distinct slots*.
-   Fix: add a covariance term (VICReg-C) and/or a slot-diversity term.
+   tokens early. Fix: orthogonal query init, zero-init out_mlp (§4) — **done**.
+3. **Weak variance floor + easy horizon**: at `lambda_var=0.10` and
+   `horizon_k=4`, the task could be solved with a low-information latent.
+   The overlapping context/target windows (file 13) made "copy-ish"
+   prediction too easy.
 
-**Where this stands now (Phase 04 in progress):**
+**Where this stands now (June 2026):**
 
-- Fix (2) is **done** — both init fixes are baked in (§4).
-- Fix (1) is **done** — a baseline was run on full SSv2. Rank rose modestly
-  (to ~9 at step ~3.5k) but did not climb to the dimensionality we want, so
-  "data alone" is not the whole story.
-- The diagnostics were sharpened to localize the failure: `c_slot_diversity_rank`
-  (within-video effective rank of the 32 slot outputs) and per-head
-  `c_attn_entropy` were added. The dominant remaining symptom is **slot
-  collapse + near-uniform attention** — slots and heads stay too similar /
-  too diffuse — rather than only feature-dimension correlation.
-- Fix (3) is now being **trialed empirically** (not as a fully-committed
-  default): a *gentle* `covariance_floor` (VICReg-C, `lambda_cov`) and a
-  `slot_diversity_loss` (`lambda_slot`) exist in `losses.py` and are wired
-  into `train_step`; both are always logged but only added to the loss when
-  their `lambda` > 0. An over-aggressive first attempt (`lambda_slot=0.25`)
-  moved the slot metric but hurt prediction and destabilized training
-  (Goodhart behavior), so the current direction is *gentle* weights plus a
-  **harder task** — increasing the prediction horizon (`horizon_k`) so the
-  task can no longer be solved by a low-information latent.
+- **Winning config** (run `cerulean-snow-13`): full SSv2, `--horizon-k 12`,
+  `--lambda-var 0.5`, no slot loss. Rank rose to **~13.7+**, cosine
+  ~0.20–0.26, copy ratio < 1 in best windows, stable gradients.
+- **Slot/cov regularizers** exist in `losses.py` and are always logged
+  (`L_cov`, `L_slot`) but default off (`lambda_cov=0`, `lambda_slot=0`).
+  An aggressive slot loss (`lambda_slot=0.25`) moved the slot metric but
+  hurt prediction — Goodhart behavior. Investigation **004** (VICReg-C) is
+  **paused** — not needed yet.
+- **Remaining tension:** rank ~13–14 vs spec soft-target >60. The latent is
+  *alive and useful* (beats copy, videos distinguishable) but still
+  under-using capacity. This is no longer "is it collapsed?" but "can we
+  enrich it without breaking dynamics?"
 
-The lesson so far: init governs the *start*; the variance floor prevents
-*constant* output; but neither forces the latent to *use* its capacity. A
-weak (too-easy / too-overlapping) prediction task is what lets a low-rank
-latent survive — which is why the horizon change matters as much as the
-regularizers. Watch `c_effective_rank`, `c_slot_diversity_rank`,
-`c_attn_entropy`, and the `coarse_vs_copy_ratio` *together* — the
-regularizers can satisfy a single metric without improving the actual task.
+The lesson: init governs the *start*; the variance floor prevents
+*constant* output; task difficulty (`horizon_k`) and regularizer strength
+(`lambda_var`) govern how much capacity the model *needs* to use. Watch
+`c_effective_rank`, `c_slot_diversity_rank`, `c_attn_entropy`, and
+`coarse_vs_copy_ratio` *together* — a regularizer can satisfy one metric
+without improving the actual task.
 
 ## 8. Questions to test yourself
 

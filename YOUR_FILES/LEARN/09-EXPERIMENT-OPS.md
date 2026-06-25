@@ -46,6 +46,17 @@ Why both channels:
   you ask "what LR did peachy-terrain-5 use?", the answer is in its
   Overview tab, not in your memory or git archaeology).
 
+Reference runs to compare against:
+
+| Run | Role | Outcome |
+|---|---|---|
+| `peachy-terrain-5` | Run 1 postmortem | Gradient explosion at step ~10750 (file 10) |
+| `cerulean-snow-13` | Investigation 003 win | `k=12`, `λ_var=0.5`; rank ~13.7+, beats copy |
+| `elated-snowflake-15` | Investigation 005 fail | Grad-skip death spiral at step 8500 (file 10 §7) |
+| `drawn-elevator-16` | Investigation 005 resume | Resume from step ~7500 with lower flow LR — verify on W&B |
+
+Full run index: [`KANBAN/PHASE_1/README.md`](../../KANBAN/PHASE_1/README.md).
+
 Operational notes learned in Run 1:
 
 - W&B is wrapped in try/except and **degrades to a warning** if login or
@@ -128,10 +139,14 @@ Every 2,500 steps (and at the end), `save_checkpoint` writes to
   resuming with it continues seamlessly.
 - `global_step` and the full serialized `config`.
 
-Resume: `python train.py --resume /workspace/checkpoints/phase1_step10000.pt`
+Resume: `python train.py --resume /workspace/checkpoints/phase1_step7500.pt`
 — reloads modules + optimizer and continues the step counter (so LR/EMA
 schedules pick up exactly where they left off; both are pure functions of
 `step`, which is what makes resume *correct* and not just *possible*).
+
+After a grad-skip death spiral (file 10 §7), resume from a **pre-spike**
+checkpoint — not the final one — and consider lowering coarse-flow LR:
+`--lr-coarse-flow 1e-4` (run `drawn-elevator-16` strategy).
 
 Two honest limitations worth knowing (fine for Phase 1 scale, would need
 fixing for serious runs): the dataloader's RNG state isn't saved (resumed
@@ -158,21 +173,28 @@ L_var ≈ 0 after first ~500 steps
 c_std_mean ≈ 1.0, c_dead_dim_frac ≈ 0
 c_cross_video_cosine < 0.5
 ratios falling over time; gates at end: copy ≤ 0.70, batch-mean ≤ 0.50
-c_effective_rank: the number to watch grow (Run 1 plateaued ~5)
+c_effective_rank: watch it grow (current best ~13–14; spec soft-target >60)
 ```
 
 ## 7. The human/agent Kanban workflow
 
-Because the agent can't SSH into pods, the operational docs are split by
-*actor*, under `AGENT_FILES/KANBAN/<NN-TASK>/`:
+Training research is tracked under **`KANBAN/PHASE_1/`** — one folder per
+investigation, one subfolder per W&B run:
 
-- `DETAILED_UNDERSTAND.md` — why this task exists, success criteria.
-- `TASKS.md` — the agent's checklist, with explicit `⏸ PAUSE` markers
-  where it must stop and wait for human-provided info.
-- `HUMAN_TASKS.md` — your checklist: the literal commands to run on the
-  pod, what output to paste back.
-- `POSTMORTEM_*.md` — written after failures (Run 1's lives in
-  `02-LAUNCH-FULL-PHASE-1-RUN/`).
+```
+KANBAN/PHASE_1/
+├── README.md                    ← status table, full W&B run index
+├── investigation_001/           ← numerical stability (Run 1)
+├── investigation_003/           ← collapse / rank (cerulean-snow-13 win)
+├── investigation_005/           ← 15k acceptance (active)
+└── ...
+```
+
+Each run folder holds `DESCRIPTION.md`, `OBSERVATIONS.md`, `NEXT_STEPS.md`.
+Read [`KANBAN/PROTOCOL.md`](../../KANBAN/PROTOCOL.md) before editing.
+
+Legacy launch docs also live under `AGENT_FILES/KANBAN/02-LAUNCH-FULL-PHASE-1-RUN/`
+(including `POSTMORTEM_RUN1.md` — the source for file 10).
 
 The handoff protocol is the point: every place where progress depends on
 information only one actor can obtain is an explicit, named pause — not an

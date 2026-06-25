@@ -137,7 +137,8 @@ definition of cheating. Collapse is this cheat taken to its limit.
 
 ## 4. The complete gradient map of Phase 1
 
-Worth having in your head as a picture:
+Worth having in your head as a picture (**Phase 1 gradient routing** — Phase 2
+adds `F_e`, Phase 3 adds `D`; encoder and target-branch rules stay the same):
 
 ```
                                  GRADIENTS FLOW          GRADIENTS BLOCKED

@@ -14,8 +14,16 @@
 >
 > **How it relates to other docs.** `AGENT_FILES/KNOWLEDGE/` is the *spec* —
 > written to constrain a coding agent. These files are the *textbook* —
-> written to teach a human. Where they overlap, the spec wins on numbers;
-> these files win on explanation.
+> written to teach a human. Where they overlap, **`BRIEF_V0_3.md` wins on
+> Phase 1 operating numbers** (validated on real runs); `UNDERSTANDING.md`
+> §2.6 wins on architecture shapes; `config.py` defaults are not always the
+> same as the operating CLI flags — see file 07. These files win on
+> explanation.
+>
+> **Prerequisite concepts** (JEPA, flow matching, ViTs, EMA targets, etc.)
+> are taught in [`../LEARN_THEORY/`](../LEARN_THEORY/00-INDEX.md) — general
+> ML knowledge, not codebase-specific. Read that folder first if any concept
+> in Part I feels unfamiliar.
 
 ---
 
@@ -38,7 +46,7 @@ afterwards.
 
 | File | Topic | The question it answers |
 |---|---|---|
-| [`06-COLLAPSE-AND-METRICS.md`](06-COLLAPSE-AND-METRICS.md) | Collapse modes, variance floor, the 5 diagnostics | How can self-supervised learning silently fail, and how do we catch it? |
+| [`06-COLLAPSE-AND-METRICS.md`](06-COLLAPSE-AND-METRICS.md) | Collapse modes, variance floor, the 7 diagnostic families | How can self-supervised learning silently fail, and how do we catch it? |
 
 ### Part III — How we train it (MLOps)
 
@@ -62,39 +70,88 @@ afterwards.
 ## The 60-second version of the whole project
 
 We are building a **video world model**: a system that watches a few frames
-of video and predicts what the *state of the world* will be a moment later —
-not the pixels, but a compact internal description.
+of video and predicts what the *state of the world* will be later — first as
+compressed latents, then (Phase 3) as watchable pixels.
 
-The pipeline:
+**Intended architecture (full v0 — Phases 1–3, plus Phase 4 multi-horizon):**
 
 ```
-video frames
-   → frozen pretrained encoder (V-JEPA 2)   → e_t  (1024 tokens — detailed)
-   → trainable bottleneck                    → c_t  (32 tokens — abstract)
-   → flow-matching predictor F_c             → predicted future c_{t+k}
+                         ┌──────── FROZEN encoder E (V-JEPA 2 ViT-L/16) ────────┐
+context clip x_{≤t}   ──►  E  ──► e_t  (1024 tokens × 1024 dims — detailed)     │
+                         └───────────────────────────────────────────────────────┘
+                                            │
+                                            ▼
+                              bottleneck B  ──► c_t  (32 × 256 — abstract)
+                                            │
+         ┌──────────────────────────────────┼──────────────────────────────────┐
+         │                                  │                                  │
+         ▼                                  │                                  │
+  F_c — coarse flow                         │     TARGET (stop-grad + EMA):    │
+  rectified flow: noise → c⁺                │     future clip x_{≤t+k}         │
+  conditioned on c_t                        │       ──► E ──► e⁺ ──► B_EMA     │
+         │                                  │              ──► c⁺_{t+k}        │
+         ▼                                  │                                  │
+  predicted abstract future ĉ⁺              │                                  │
+         │                                  │                                  │
+         ▼                                  │                                  │
+  F_e — fine flow [Phase 2]                 │                                  │
+  rectified flow: noise → e⁺                │                                  │
+  conditioned on (e_t, stopgrad(ĉ⁺))       │                                  │
+         │                                  │                                  │
+         ▼                                  │                                  │
+  predicted detailed future ê⁺              │                                  │
+         │                                  │                                  │
+         ▼                                  │                                  │
+  D — frame generator [Phase 3]             │                                  │
+  flow in frozen VAE latent space           │                                  │
+         │                                  │                                  │
+         ▼                                  │                                  │
+  predicted future frames (pixels)          │                                  │
+         └──────────────────────────────────┴──────────────────────────────────┘
+
+Phase 4: same stack, but F_c takes a horizon embedding h_k — one shared
+predictor, k ∈ {4, 8, 16, 32} (file 11).
 ```
 
-Only the bottleneck and the predictor train. The target for prediction comes
-from an EMA (slow-moving) copy of the bottleneck applied to the *future*
-clip, with gradients blocked. A small variance floor keeps `c_t` from
-collapsing to a constant. Five diagnostic metrics watch for subtler
-failures. Phase 1 (now) proves the coarse level works; Phases 2–4 add a fine
-predictor, a frame generator, and multi-horizon prediction.
+Three flow-matching networks (`F_c`, `F_e`, `D`) share one recipe (file 04).
+The hierarchy is the bet: abstract `c` steers detailed `e`, which steers
+pixels — verified by bypass tests (shuffled-c, shuffled-e), not assumed.
 
-Everything else in this curriculum is the detail behind that paragraph.
+**Cross-cutting machinery (all latent-training phases):** targets from an EMA
+copy of the bottleneck on the *future* clip, with gradients blocked on the
+target branch; variance floor on `c_t`; seven diagnostic metric families.
+
+**What's implemented in code today:** Phase 1 only — `E`, `B`, `B_EMA`, `F_c`.
+`F_e`, `D`, and `h_k` are spec'd but not built. See § below.
+
+Everything else in this curriculum is the detail behind this diagram.
 
 ---
 
-## Honest state of the project as of writing (2026-06-10)
+## Honest state of the project as of writing (2026-06-23)
 
-- Phase 1 implementation: **done** and smoke-tested.
-- Run 1 of Phase 1 training: **crashed at step ~10750** (gradient explosion
-  at peak LR — see `10-FAILURE-MODES.md`, it's the best teaching material in
-  the repo).
-- Fixes landed: lower peak LR, tighter clipping, NaN skip-guard, 15k-step
-  budget. Run 2 pending.
-- Known open question: `c_effective_rank` stuck at ~5 of 256 — the bottleneck
-  is using ~2% of its capacity. Whether this is a dataset-size artifact, an
-  initialization artifact, or a missing-regularizer problem is the live
-  research question (see `06-COLLAPSE-AND-METRICS.md` §6 and
-  `03-BOTTLENECK.md` §7).
+- **Phase / stage:** Phase 1, Stage 1 only — coarse dynamics (`B`, `B_EMA`,
+  `F_c`). `F_e`, `D`, and multi-horizon `h_k` are not built yet.
+- **Code:** Implemented at repo root (`train.py`, `models.py`, `losses.py`,
+  `diagnostics.py`, `data.py`, `config.py`); not a planning-only repo.
+- **Investigations** (see [`KANBAN/PHASE_1/README.md`](../../KANBAN/PHASE_1/README.md)):
+  - **001** CLOSED — Run 1 (`peachy-terrain-5`) gradient explosion at step
+    ~10750 (file 10).
+  - **002** CLOSED — dataloader throughput sufficient for full SSv2.
+  - **003** CLOSED — collapse / low rank; **winning config:** full SSv2,
+    `--horizon-k 12`, `--lambda-var 0.5`, no slot loss; best run
+    **`cerulean-snow-13`** (rank ~13.7+, cosine ~0.20, beats copy baseline).
+  - **004** PAUSED — VICReg-C (`--lambda-cov`) not needed yet given strong
+    variance floor.
+  - **005** ACTIVE — complete the **15k acceptance run**; `elated-snowflake-15`
+    hit a grad-skip death spiral at step 8500; **`drawn-elevator-16`** resume
+    from pre-spike checkpoint — verify outcome on W&B.
+- **15k acceptance:** Not cleanly complete. Short-window success on
+  `cerulean-snow-13`; full 15k failed once; resume in progress.
+- **Operating vs default hyperparameters:** `config.py` defaults
+  `horizon_k=4`, `lambda_var=0.10`. Validated operating values are
+  **`--horizon-k 12 --lambda-var 0.5`** (file 07). Recommended launch:
+  `python train.py --data ssv2 --steps 15000 --horizon-k 12 --lambda-var 0.5`
+- **Open tensions:** `c_effective_rank` ~13–14 vs spec soft-target >60;
+  whether gentle `lambda_cov` helps; optimizer stability late in long runs
+  (file 10 §7 — a second failure mode distinct from Run 1).

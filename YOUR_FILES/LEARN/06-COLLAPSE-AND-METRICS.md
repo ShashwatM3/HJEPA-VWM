@@ -1,7 +1,7 @@
 # 06 — Collapse and the Measurement System: How Self-Supervised Learning Fails Silently, and How We Catch It
 
 > **What you'll understand after this file:** the taxonomy of collapse, the
-> variance floor (our one anti-collapse loss) line by line, all five
+> variance floor (our one anti-collapse loss) line by line, all seven
 > diagnostic metric families with healthy/sick values, the acceptance
 > baselines that define Phase 1 success, and why SIGReg was removed.
 
@@ -60,7 +60,11 @@ Mechanics, slowly:
    — "how much does this coordinate differ between different videos?"
 3. **Hinge** each dimension at 1.0: dimensions with std ≥ 1 contribute
    zero; dimensions below contribute `1 − std`.
-4. Average. Weight in the total loss: `λ_var = 0.10`.
+4. Average. Weight in the total loss: `λ_var` — **`0.10` in `config.py`
+   defaults; `0.50` in validated operating runs** (`cerulean-snow-13`,
+   investigation 003). At 0.10, `c_std_mean` can sit ~0.45 and cosine
+   stays high (~0.7–0.8); at 0.50 the floor actively fights collapse
+   pressure and rank rises to ~13+.
 
 Three properties to internalize:
 
@@ -70,11 +74,13 @@ Three properties to internalize:
 - **It's per-dimension across the batch** — the same quantity
   `variance_stats` monitors. Loss and diagnostic look at the same object,
   so the metric can verify the loss is doing its job.
-- **It's deliberately weak (λ=0.10).** Its only job is to fence off the
-  constant solution. *Semantics come from L_flow.* If you find yourself
-  cranking λ_var to fix representation quality, you're treating the
-  symptom — variance can be high and meaningless (noise has great
-  variance).
+- **It's deliberately weak at the default (λ=0.10).** At that weight its
+  only job is to fence off the constant solution. *Semantics come from
+  L_flow.* Investigation 003 showed 0.10 was too weak for full SSv2 —
+  operating weight **0.50** is required for healthy variance and rank.
+  If you find yourself cranking λ_var beyond 0.5 to fix representation
+  quality, you're treating the symptom — variance can be high and
+  meaningless (noise has great variance).
 
 Why std-across-batch and not within-sample? Collapse means "all *inputs*
 map to the same output" — a between-inputs property. A constant-per-video
@@ -99,8 +105,12 @@ initially."** The reasoning chain:
    rank rises only because a loss term pushes the number, the metric stops
    being evidence.
 
-The word *initially* matters: SIGReg is the documented escalation if data
-and init changes don't lift the rank (file 03 §7). Removed ≠ refuted.
+The word *initially* matters: optional **`covariance_floor`** (VICReg-C,
+`lambda_cov`) and **`slot_diversity_loss`** (`lambda_slot`) exist in code
+and are always logged, but default off. Investigation **004** (VICReg-C)
+is paused — not needed yet at `lambda_var=0.5`. SIGReg remains the
+documented escalation if rank stays stuck after task/regularizer tuning
+(file 03 §7). Removed ≠ refuted.
 
 ## 3. The instrument panel: every diagnostic, with healthy/sick readings
 
@@ -142,8 +152,9 @@ variance is spread evenly over k dims and zero elsewhere, effective rank ≈
 k. It's the smooth version of counting nonzero eigenvalues.
 
 - **Spec healthy:** > 60 (of 256).
-- **Run 1 reality:** ~5. Not collapsed (other metrics fine) but using ~2%
-  of capacity — the open problem of file 03 §7.
+- **Run 1 reality:** ~5. Not collapsed but using ~2% of capacity.
+- **Current best (`cerulean-snow-13`):** ~13–14. Alive, beats copy,
+  distinguishable — but still far below the >60 soft target.
 - **NaN-robustness:** after Run 1, this function returns NaN instead of
   crashing when the covariance is non-finite. Design rule learned the hard
   way: **diagnostics must never be able to kill the training loop** —
@@ -176,12 +187,38 @@ test against a null model.
 
 ### 3e. `gradient_health` → `grad_global_norm`, `grad_has_nan`, `grad_param_count`
 
-Optimization-side vitals: global gradient norm, any-NaN flag, and the
-count of parameters carrying gradients. The last one is an invariant check
-in disguise — if the count changes between steps, something structural
-broke (a module silently detached, a param freeze leaked). Plus, from the
-training step itself: `grad_norm` (pre-clip, every step) and
-`grad_skipped` (whether the skip-guard fired — file 07).
+Optimization-side vitals at diagnostic cadence: global gradient norm, any-NaN
+flag, and the count of parameters carrying gradients. The last one is an
+invariant check in disguise — if the count changes between steps, something
+structural broke (a module silently detached, a param freeze leaked).
+
+Plus, from the training step itself (every 50 steps, not just diagnostics):
+**`grad_norm`** (pre-clip — shows intent) and **`grad_skipped`** (whether
+the skip-guard fired — file 07). **`grad_skipped` must stay at 0** for the
+entire run; sustained skips mean the optimizer is frozen while metrics may
+still look fine (file 10 §7, run `elated-snowflake-15`).
+
+### 3f. `slot_diversity_rank` → `c_slot_diversity_rank`
+
+Within each video, treat the 32 slot outputs as 32 vectors of dim 256 and
+compute effective rank across slots (same entropy formula as 3c, but over
+slots not feature dims).
+
+- **Healthy:** rank approaching 32 — each slot carries distinct information.
+- **Sick:** rank near 1 — all slots collapse to the same summary; the
+  bottleneck is wasting its query budget. Run A with aggressive
+  `lambda_slot=0.25` moved this metric but hurt copy ratio (Goodhart).
+
+### 3g. `attention_entropy` → `c_attn_entropy`, `c_attn_entropy_min`
+
+Per-head entropy of the cross-attention weights (queries reading encoder
+tokens). High entropy = diffuse attention (reading everything equally);
+low entropy = peaked attention (specialized lookups).
+
+- **Healthy:** moderate entropy, heads differ (`c_attn_entropy_min` not
+  stuck at the floor).
+- **Sick:** near-maximum entropy on all heads — queries not specializing;
+  often co-occurs with slot collapse.
 
 ## 4. How to read the panel (triage runbook)
 
@@ -218,10 +255,11 @@ collapse pressure — investigate even though nothing has "failed" yet.
 3. Why does the variance floor use a hinge instead of rewarding variance?
    *(Only the constant solution must be forbidden; rewarding variance
    invites high-variance noise — variance is necessary, not sufficient.)*
-4. Both ratio gates pass but effective rank is 5. Did Phase 1 succeed?
-   *(By the formal gates, the dynamics test passed; the latent-quality
-   bar (>60) failed — so no, the acceptance criteria are conjunctive. This
-   exact tension is the project's live question.)*
+4. Both ratio gates pass but effective rank is 13. Did Phase 1 succeed?
+   *(By the formal gates, dynamics may pass; the latent-quality bar (>60)
+   still fails — acceptance criteria are conjunctive. Rank ~13 is the
+   current reality, not Run 1's ~5; the question shifted from "is it
+   collapsed?" to "can we enrich further?")*
 5. Why are diagnostics computed on a fixed validation batch? *(Numbers
    must be comparable across steps; with a changing batch you can't tell
    model change from data change.)*

@@ -14,7 +14,8 @@ treats a sentence: chop it into pieces ("patches"), embed each piece as a
 vector ("token"), and run transformer blocks (self-attention + MLP) over
 the token sequence. "ViT-L/16" decodes as:
 
-- **L** = Large: 24 transformer blocks, embedding dim 1024, ~300M params.
+- **L** = Large: 24 transformer blocks, embedding dim 1024, ~300M params
+  (all frozen — zero trainable; forward cost remains, backward does not).
 - **/16** = each patch is 16×16 pixels.
 
 For a 256×256 image: 256/16 = **16 patches per side** → a 16×16 grid →
