@@ -73,3 +73,33 @@ is in the *wrong place*, not evidence against routing it through `F_c`. The data
 lever is therefore **option 3 / the predicted-latent anchor through `F_c`** (= the tech-lead's
 VITA-based proposal), run *alongside* the present anchor. Carry the caveat: option 3 is not
 expected to break the rank ceiling (looks structural at 128:1 compression — open question).
+
+---
+
+## 2026-06-25 — easy-blaze-19 (option 3, λ_recon_pred=0.05) — NEGATIVE RESULT
+
+Full analysis: [`easy-blaze-19/OBSERVATIONS.md`](easy-blaze-19/OBSERVATIONS.md). Clean A/B vs
+fanciful (same seed/config, only `lambda_recon_pred` 0 → 0.05); completed full 15k.
+
+**Option 3 did not work.** Routing reconstruction through `F_c` on the predicted latent:
+- **No prediction gain** — `coarse_vs_copy_ratio` tracks fanciful, ends slightly worse (2.95 vs 2.59); `L_recon_chat` did not drop; `L_recon_pred` pinned at ~0.64 all run.
+- **Mild representation harm** — rank 12.6 vs 13.1, cross-video cosine 0.41 vs 0.32, std 0.95 vs 1.01 (gentle Mode-A drift, late-accelerating).
+- **Stability fine** — no cliff, `agc_Fc` 9–18, 0 skips. The option-3 risk did not materialize.
+
+**Why — the capacity floor (decisive).** In *both* runs `L_recon_present ≈ cplus ≈ chat ≈ pred
+≈ 0.60`. `c` (8,192 numbers) can only rebuild ~40% of `e`; the rest is unreachable at 128:1.
+So a good and a bad prediction reconstruct identically → the recon objective is **blind to
+prediction quality at every τ**, and `F_c` gets no corrective gradient. Training-through-`F_c`
+cannot beat a structural floor.
+
+**Belief correction:** the prior section concluded option 3 was the data-backed lever to fix
+prediction. easy-blaze **refutes that** — it's the right *target* but the reconstruction
+*channel* is too low-capacity to carry the signal. Also: **cheap-vs-clean `c_hat` is moot**
+(both hit the floor).
+
+**Revised open question (the live one):** is the 0.60 floor **weight-bound or capacity-bound**?
+A `lambda_recon=0.2` ablation answers it cheaply (does `L_recon_present` drop below ~0.55?). If
+weight-bound → bigger λ / bigger `c`, then re-test option 3. If capacity-bound → reconstruction
+is the wrong lever for prediction; pivot to the **task/horizon** (copy is strong because `c`
+barely moves over horizon-12: `‖Δc‖/‖c‖` ~0.38 and falling). See
+[`easy-blaze-19/NEXT_STEPS.md`](easy-blaze-19/NEXT_STEPS.md).

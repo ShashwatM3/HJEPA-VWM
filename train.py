@@ -675,6 +675,39 @@ def parse_args() -> argparse.Namespace:
         help="Post-AGC global grad-norm tail guard (cfg.train.grad_skip_threshold, "
         "default 150). Steps above this skip optimizer.step().",
     )
+    # investigation_007 capacity-floor sweep: decoder size, latent size, checkpoint dir.
+    # All architecture knobs (set on cfg.model BEFORE the modules are built); changing
+    # any of them makes a checkpoint shape-incompatible — do NOT --resume across them.
+    parser.add_argument(
+        "--decoder-dim",
+        type=int,
+        default=None,
+        help="Reconstruction decoder D width (cfg.model.decoder_dim, default 256). "
+        "Capacity-floor sweep axis: tests whether D is too thin to expand c->e.",
+    )
+    parser.add_argument(
+        "--decoder-blocks",
+        type=int,
+        default=None,
+        help="Reconstruction decoder D depth (cfg.model.decoder_blocks, default 2). "
+        "Capacity-floor sweep axis (depth probe).",
+    )
+    parser.add_argument(
+        "--n-c",
+        type=int,
+        default=None,
+        help="Abstract latent slot count n_c (cfg.model.n_c, default 32). Latent "
+        "BANDWIDTH = n_c * d_c; raising it widens the information channel (128:1 -> "
+        "64:1 at 64). Tests the capacity-bound hypothesis. Audited: no hard-coded 32.",
+    )
+    parser.add_argument(
+        "--checkpoint-dir",
+        type=str,
+        default=None,
+        help="Checkpoint output dir (cfg.checkpoint_dir, default /workspace/checkpoints). "
+        "MANDATORY per-run when launching parallel sweeps — a shared dir clobbers "
+        "phase1_step*.pt across runs in real time.",
+    )
     return parser.parse_args()
 
 
@@ -715,6 +748,15 @@ def main() -> None:
         cfg.train.agc_lambda_coarse_flow = args.agc_lambda_coarse_flow
     if args.grad_skip_threshold is not None:
         cfg.train.grad_skip_threshold = args.grad_skip_threshold
+    # Architecture knobs (investigation_007) — set on cfg.model before modules are built.
+    if args.decoder_dim is not None:
+        cfg.model.decoder_dim = args.decoder_dim
+    if args.decoder_blocks is not None:
+        cfg.model.decoder_blocks = args.decoder_blocks
+    if args.n_c is not None:
+        cfg.model.n_c = args.n_c
+    if args.checkpoint_dir is not None:
+        cfg.checkpoint_dir = args.checkpoint_dir
     if args.stage0_only:
         run_stage0(cfg)
     else:

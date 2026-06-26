@@ -92,5 +92,6 @@ stays failed.
 
 | Run | Role | Outcome |
 |---|---|---|
-| [`fanciful-lake-18`](fanciful-lake-18/) | First active run: royal-cherry regime + `lambda_recon=0.05` | Mode-B cliff removed; rank ceiling held (~13.3); copy gate failed (2.59) → motivates option 3 |
-| _(next)_ | Option 3: add predicted-latent anchor through `F_c` (joint objective) | pending launch |
+| [`fanciful-lake-18`](fanciful-lake-18/) | First active run: royal-cherry regime + `lambda_recon=0.05` | Mode-B cliff removed; rank ceiling held (~13.3); copy gate failed (2.59) → motivated option 3 |
+| [`easy-blaze-19`](easy-blaze-19/) | Option 3: predicted-latent anchor through `F_c` (`lambda_recon_pred=0.05`) | **Negative.** No prediction gain (copy 2.95), `L_recon_chat` flat, mild rep. harm. Capacity floor (~0.60) blocks it. |
+| _(next)_ | Capacity-floor probe: `lambda_recon=0.2` — is 0.60 weight- or capacity-bound? | pending launch |

@@ -21,16 +21,21 @@ horizon.
 | [003](investigation_003/) | Why does `c_t` collapse? | **CLOSED** | 9 |
 | [004](investigation_004/) | Is VICReg-C needed beyond `lambda_var=0.5`? | **PAUSED** | 1 (Run A) |
 | [005](investigation_005/) | Can we finish the 15k acceptance run? | **ACTIVE** | 3 |
-| [006](investigation_006/) | Does a reconstruction anchor break the rank ceiling? | **ACTIVE** | 1 (`fanciful-lake-18`) |
+| [006](investigation_006/) | Does a reconstruction anchor break the rank ceiling? | **ACTIVE** | 2 (`fanciful-lake-18`, `easy-blaze-19`) |
+| [007](investigation_007/) | What binds the ~0.60 reconstruction capacity floor? | **OPEN** | 0 (8-run sweep, pending launch) |
 
 **Winning config:** full SSv2, `horizon_k=12`, `lambda_var=0.5`, no slot loss.
 
 **Active work:** [`investigation_006`](investigation_006/) — reconstruction anchor. Run 1
-(`fanciful-lake-18`, option 1, gradient into B only) **removed the Mode-B cliff** (first
-run stable past 8600, to 14400) but did **not** break the rank ceiling (~13.3) and the
-copy gate stayed failed (2.59). Next: **option 3** — add the predicted-latent anchor
-through `F_c` (joint objective; the tech-lead's VITA-based design), motivated by run 1's
-evidence. See [`investigation_006/NEXT_STEPS.md`](investigation_006/NEXT_STEPS.md).
+(`fanciful-lake-18`, option 1) **removed the Mode-B cliff** but did not break the rank ceiling
+(~13.3) or fix the copy gate. Run 2 (`easy-blaze-19`, option 3, predicted-latent anchor through
+`F_c`) is a **negative result**: no prediction gain + mild representation harm, because the
+reconstruction channel is **capacity-saturated at ~0.60** (`c` rebuilds only ~40% of `e` at
+128:1) and so is blind to prediction quality. This spawned **[`investigation_007`](investigation_007/)** —
+an 8-run, 8-GPU-parallel OFAT sweep over `lambda_recon` × decoder size × `n_c` to find what
+**binds** that floor (weight-, decoder-, or capacity-bound). Design:
+[`investigation_007/SWEEP_PLAN`](investigation_007/SWEEP_PLAN_decoder_capacity.md); execution:
+[`investigation_007/GUIDE`](investigation_007/GUIDE.md). CLI flags implemented; pending launch.
 
 ---
 
@@ -58,6 +63,7 @@ All runs from project dashboard, in W&B creation order:
 | 16 | `drawn-elevator-16` | 0n5mx3qf | 3h29m | 005 | resume fail |
 | 17 | `royal-cherry-17` | 0xv4upvb | 4h52m | 005 | AGC resume — skip-free, rank collapse |
 | 18 | `fanciful-lake-18` | yd5958s6 | 6h29m | 006 | recon anchor (λ=0.05) — cliff removed, rank ceiling held, copy gate failed |
+| 19 | `easy-blaze-19` | 3syv6wp2 | 6h10m | 006 | option 3 (λ_pred=0.05) — negative: capacity floor blocks prediction gain |
 
 Project URL: https://wandb.ai/smahalanobis-uc-davis/hjepa-vwm
 
