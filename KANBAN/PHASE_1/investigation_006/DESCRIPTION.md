@@ -47,7 +47,7 @@ choice of *what* you decode and *where* the gradient goes:
 |---|---|---|---|---|
 | **1 — present anchor** | online `c_t` → `e_t` | `D`, `B` (never `F_c`) | representation richness / stability | **Built first** (de-risk). Done: `fanciful-lake-18`. |
 | **2 — the brief's version** | `c_hat` → `e_t`, with brief's stop-grad rule #2 (`c_hat` detached before fine head) | `D` only (recon does not shape `c`/`F_c`) | — | **Rejected.** The detach makes recon a passive readout, not a force on `c`; "brief is a pre-experiment prior, not ground truth." |
-| **3 — predicted-latent anchor** | predicted `c_hat` → `e_{t+k}` | `D`, `F_c`, **`B` via conditioning** | prediction quality (copy gate) | **Next run.** Implemented as `--lambda-recon-pred`. |
+| **3 — predicted-latent anchor** | predicted `c_hat` → `e_{t+k}` | `D`, `F_c`, **`B` via conditioning** | prediction quality (copy gate) | **Tested in `easy-blaze-19`.** Stable, but did not improve copy gate; recon channel saturated. |
 
 **Why option 1 first, then option 3 (not straight to 3).** The path was deliberately
 *phased to de-risk*, not because the endpoint differs from the joint objective. Option 1
@@ -92,5 +92,5 @@ stays failed.
 
 | Run | Role | Outcome |
 |---|---|---|
-| [`fanciful-lake-18`](fanciful-lake-18/) | First active run: royal-cherry regime + `lambda_recon=0.05` | Mode-B cliff removed; rank ceiling held (~13.3); copy gate failed (2.59) → motivates option 3 |
-| _(next)_ | Option 3: add predicted-latent anchor through `F_c` (joint objective) | pending launch |
+| [`fanciful-lake-18`](fanciful-lake-18/) | First active run: royal-cherry regime + `lambda_recon=0.05` | Mode-B cliff removed; rank ceiling held (~13.3); copy gate failed (2.59) → motivated option 3 |
+| [`easy-blaze-19`](easy-blaze-19/) | Option 3: add `lambda_recon_pred=0.05` through `F_c` while keeping present anchor | Full 15k finished; copy gate unchanged / slightly worse; `L_recon_pred` flat; ~0.60 recon capacity floor identified |

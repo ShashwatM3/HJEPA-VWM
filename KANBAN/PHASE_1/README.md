@@ -21,16 +21,17 @@ horizon.
 | [003](investigation_003/) | Why does `c_t` collapse? | **CLOSED** | 9 |
 | [004](investigation_004/) | Is VICReg-C needed beyond `lambda_var=0.5`? | **PAUSED** | 1 (Run A) |
 | [005](investigation_005/) | Can we finish the 15k acceptance run? | **ACTIVE** | 3 |
-| [006](investigation_006/) | Does a reconstruction anchor break the rank ceiling? | **ACTIVE** | 1 (`fanciful-lake-18`) |
+| [006](investigation_006/) | Does a reconstruction anchor break the rank ceiling? | **ACTIVE** | 2 (`fanciful-lake-18`, `easy-blaze-19`) |
 
 **Winning config:** full SSv2, `horizon_k=12`, `lambda_var=0.5`, no slot loss.
 
-**Active work:** [`investigation_006`](investigation_006/) — reconstruction anchor. Run 1
-(`fanciful-lake-18`, option 1, gradient into B only) **removed the Mode-B cliff** (first
-run stable past 8600, to 14400) but did **not** break the rank ceiling (~13.3) and the
-copy gate stayed failed (2.59). Next: **option 3** — add the predicted-latent anchor
-through `F_c` (joint objective; the tech-lead's VITA-based design), motivated by run 1's
-evidence. See [`investigation_006/NEXT_STEPS.md`](investigation_006/NEXT_STEPS.md).
+**Active work:** [`investigation_006`](investigation_006/) — reconstruction anchor.
+Run 1 (`fanciful-lake-18`, option 1, gradient into B only) **removed the Mode-B cliff**
+but did **not** break the rank ceiling (~13.3) and the copy gate stayed failed. Run 2
+(`easy-blaze-19`, option 3, predicted-latent anchor through `F_c`) completed the full
+15k but **did not improve prediction**: the copy gate stayed on the fanciful curve,
+`L_recon_pred` stayed flat, and the ~0.60 reconstruction floor appears capacity
+saturated. See [`investigation_006/NEXT_STEPS.md`](investigation_006/NEXT_STEPS.md).
 
 ---
 
@@ -58,6 +59,7 @@ All runs from project dashboard, in W&B creation order:
 | 16 | `drawn-elevator-16` | 0n5mx3qf | 3h29m | 005 | resume fail |
 | 17 | `royal-cherry-17` | 0xv4upvb | 4h52m | 005 | AGC resume — skip-free, rank collapse |
 | 18 | `fanciful-lake-18` | yd5958s6 | 6h29m | 006 | recon anchor (λ=0.05) — cliff removed, rank ceiling held, copy gate failed |
+| 19 | `easy-blaze-19` | 3syv6wp2 | — | 006 | option 3 (λ_recon=0.05 + λ_recon_pred=0.05) — full 15k, stable negative result |
 
 Project URL: https://wandb.ai/smahalanobis-uc-davis/hjepa-vwm
 

@@ -5,93 +5,51 @@
 | # | Run | `lambda_recon` | Result |
 |---|---|---|---|
 | 1 | [`fanciful-lake-18`](fanciful-lake-18/OBSERVATIONS.md) | 0.05 (present anchor) | **DONE.** Cliff removed; rank ceiling NOT broken (~13.3); copy gate failed (2.59). |
-| 2 | _(next — spawn folder)_ | 0.05 present + **0.05 predicted (option 3, through-`F_c`)** | Test whether the predicted-latent anchor fixes the copy gate. |
+| 2 | [`easy-blaze-19`](easy-blaze-19/OBSERVATIONS.md) | 0.05 present + **0.05 predicted (option 3, through-`F_c`)** | **DONE.** Stable full 15k, but copy gate unchanged / worse; `L_recon_pred` flat; recon floor identified. |
 
-**Decision after run 1:** proceed to **option 3 as an added branch** (present + predicted,
-simultaneously — the tech-lead's joint-objective design). The pre-registered gate's literal
-reading said "don't" (rank flat, `chat−cplus` gap tiny), but run 1 **falsified the gate's
-premise**: `F_c` loses to copy while `c_hat` reconstructs as well as `c_plus`, proving
-present-anchored recon is blind to prediction error. Full reasoning in
-[`fanciful-lake-18/NEXT_STEPS.md`](fanciful-lake-18/NEXT_STEPS.md) §"The option-3 decision".
+**Decision after run 2:** do **not** repeat option 3 at the same capacity. The joint
+objective was implemented faithfully and ran cleanly, but the reconstruction channel is
+saturated near relative MSE ~0.60 and cannot transmit prediction-quality information to
+`F_c`. Full reasoning in [`easy-blaze-19/OBSERVATIONS.md`](easy-blaze-19/OBSERVATIONS.md).
 
-No calibration step: `reconstruction_loss` is a **scale-free relative MSE** (~1.0
-baseline), so `lambda_recon=0.05` is a fixed, meaningful weight. The linear ramp over
-`recon_warmup_steps` (default 2000) protects the fragile early phase.
-
----
-
-## How to run the new code on the pod (Path B — code already deployed)
-
-Repo on pod: `/workspace/hierarchal-jepa-flow-world-model`. Full operator guide:
-[`AGENT_FILES/SETUPS/SETUP.md`](../../AGENT_FILES/SETUPS/SETUP.md) Path B.
-
-### 1. Laptop — commit & push
-
-```bash
-cd /Users/gobus/Desktop/main/projects/NURON/HJEPA-VWM
-git add -A
-git commit -m "Add option-1 reconstruction anchor (decoder D, lambda_recon, split readouts)"
-git push origin phase1-v0.2-frozen-encoder   # or merge to main first, then push main
-```
-
-### 2. Pod — SSH in & pull
-
-```bash
-ssh runpod-jepa                 # or the exact command from the RunPod Connect tab
-cd /workspace/hierarchal-jepa-flow-world-model
-git fetch origin
-git checkout phase1-v0.2-frozen-encoder && git pull origin phase1-v0.2-frozen-encoder
-git log -1 --oneline            # must match the laptop commit
-# requirements.txt unchanged -> no pip install needed
-```
-
-### 3. Pod — sanity (the new gradient contract runs here)
-
-```bash
-# Option-1 routing contract: recon grad reaches D + B, never F_c / EMA (asserted in smoke test)
-python -c "from models import smoke_test_models; smoke_test_models()"
-# Encoder-loaded forward/backward/EMA sanity (~2 min)
-python train.py --stage0-only
-```
-
-### 4. Pod — first active run (mirrors `royal-cherry-17` regime for a clean A/B)
-
-```bash
-tmux new -s recon_run
-cd /workspace/hierarchal-jepa-flow-world-model
-python train.py --data ssv2 --steps 15000 --horizon-k 12 --lambda-var 0.5 \
-  --lr-coarse-flow 1e-4 --lambda-recon 0.05 --recon-warmup-steps 2000 \
-  --log-every 50 --diag-every 500
-# Detach: Ctrl+B then D.  Reattach: tmux attach -t recon_run
-```
-
-Checkpoints land at `/workspace/checkpoints/phase1_step*.pt`. Resume with
-`--resume /workspace/checkpoints/phase1_stepXXXX.pt` (decoder is loaded if present,
-else left at init — backward compatible with pre-recon checkpoints).
+The remaining fork is no longer present-vs-predicted reconstruction. It is whether to
+first make reconstruction unsaturated enough to carry future-prediction error, or to
+change the prediction target / horizon because copy-forward may be too strong at
+`horizon_k=12`.
 
 ---
 
-## After launch (KANBAN hygiene)
+## Candidate follow-up investigations
 
-When the run gets a W&B name, create `investigation_006/<wandb-name>/` with the triad
-and fill its `DESCRIPTION.md` (hypothesis, exact command, config delta) per
-[`../PROTOCOL.md`](../../PROTOCOL.md).
+### A. Break the reconstruction floor
 
-## Watch / abort rules
+Open a new investigation if the team still wants reconstruction to train prediction.
+The run question should be explicit: can any decoder / bottleneck setting move the
+readouts below the ~0.60 floor enough that `L_recon_chat` and `L_recon_cplus` separate?
 
-**Success signals:** `c_effective_rank` climbs past ~13 (toward >60); `coarse_vs_copy_ratio`
-stays ≤ 1 and does not rise; `L_flow` does not deteriorate vs `royal-cherry-17`; the
-8000–9000 window does not cliff.
+Possible levers:
+- larger `c` capacity,
+- larger / deeper decoder `D`,
+- higher `lambda_recon` / `lambda_recon_pred`,
+- a controlled capacity ablation to locate whether the floor is in `c`, `D`, or both.
 
-**Abort if** (reuse the [005](../investigation_005/royal-cherry-17/NEXT_STEPS.md) rules):
-- `L_flow > 1.5` for 200 consecutive steps
-- `c_effective_rank` drops > 3 points in 500 steps
-- `agc_Fc_max_ratio` median > 200 over any 500-step window
-- new: `agc_D_max_ratio` median > 200 (decoder destabilizing) or `L_recon` rising while `L_flow` rises
+Only after the floor moves should option 3 be retried.
 
-## Decision gate for option 3
+### B. Revisit the copy gate target
 
-Promote to the through-`F_c` future anchor only if run 1 (a) lifts rank without
-`L_flow` harm AND (b) shows a large `L_recon_chat` − `L_recon_cplus` gap (F_c's guess
-lands where the representation reconstructs poorly). Otherwise the indirect route
-sufficed, or recon needs re-tuning first.
+Open a separate investigation if the team believes horizon-12 copy is intrinsically too
+strong. `coarse_copy_loss` keeps falling late, so the prediction failure may be a target /
+horizon property rather than a missing reconstruction branch. This would point toward
+changing horizon design or the prediction target, not another decoder-side auxiliary
+loss.
+
+---
+
+## Do not do next
+
+- Do not rerun `lambda_recon=0.05` + `lambda_recon_pred=0.05` as-is.
+- Do not spend a run only on a "clean" option-3 variant before addressing the
+  reconstruction floor. The easy-blaze result says the current channel is blind even
+  when trained through `F_c`.
+- Do not record option 3 as a stability failure. Stability held; the failure was lack
+  of useful signal.

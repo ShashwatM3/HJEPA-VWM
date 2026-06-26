@@ -73,3 +73,35 @@ is in the *wrong place*, not evidence against routing it through `F_c`. The data
 lever is therefore **option 3 / the predicted-latent anchor through `F_c`** (= the tech-lead's
 VITA-based proposal), run *alongside* the present anchor. Carry the caveat: option 3 is not
 expected to break the rank ceiling (looks structural at 128:1 compression — open question).
+
+---
+
+## 2026-06-26 — easy-blaze-19 (option 3, λ_recon=0.05 + λ_recon_pred=0.05) — results
+
+Full analysis in [`easy-blaze-19/OBSERVATIONS.md`](easy-blaze-19/OBSERVATIONS.md).
+Run completed the full 15k steps. This was the clean A/B against `fanciful-lake-18`:
+same regime and seed/config family, with the predicted-latent reconstruction branch
+turned on.
+
+| Signal | Option-3 question | What the run showed |
+|---|---|---|
+| `coarse_vs_copy_ratio` | Does through-`F_c` recon fix prediction? | **No.** Matched-step curve stayed on top of fanciful: ~1.43 best, ~2.7-3.0 late. |
+| `L_recon_pred` | Does the new objective descend? | **No.** Stayed ~0.64-0.65 all run. |
+| Reconstruction readouts | Can recon see prediction quality? | **No.** Present / future / predicted readouts all pinned near the ~0.60 floor. |
+| Stability | Does extra `F_c` gradient reintroduce Mode B? | **No.** Zero skips / NaNs; `agc_Fc` stayed controlled. |
+| Representation health | Any adverse side effect? | **Mild yes.** Rank, cosine, std, and `L_var` drifted worse than fanciful. |
+
+**Synthesis — option 3 is a clean negative result.** The joint objective ran stably,
+so this is not an implementation-miss or blow-up. It failed because the reconstruction
+channel is already capacity-saturated at this bottleneck / decoder setting. Around
+relative MSE ~0.60, a good coarse prediction and a bad coarse prediction decode almost
+equally well because the decoder can only recover the static/shared portion of `e`.
+That means `L_recon_pred` cannot tell `F_c` how to predict better, so the copy gate
+does not move.
+
+**Belief update on the reconstruction lever.** `fanciful-lake-18` showed present recon
+was blind to prediction error. `easy-blaze-19` shows that routing training through that
+blind channel does not make it informative. The cheap-vs-clean option-3 distinction is
+therefore not the next bottleneck; breaking the ~0.60 reconstruction floor is. If that
+floor is structural at 128:1 compression, reconstruction may simply be the wrong lever
+for beating copy at horizon 12.
