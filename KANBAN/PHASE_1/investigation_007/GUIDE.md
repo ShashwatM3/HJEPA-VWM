@@ -67,6 +67,8 @@ to its own file, all backgrounded, grouped in W&B via `WANDB_RUN_GROUP`.
 tmux new -s sweep007
 cd /workspace/hierarchal-jepa-flow-world-model
 mkdir -p logs
+export HF_HOME=/workspace/hf_cache             # fresh tmux shell loses your step-2 export;
+                                               # without it the runs miss the warm V-JEPA cache
 export WANDB_RUN_GROUP=inv007_capacity_floor   # W&B auto-groups all runs in this shell
                                                # (W&B: "Specify the experiment name to
                                                #  automatically group runs together.")
@@ -106,6 +108,54 @@ echo "ALL RUNS DONE"
 Why `CUDA_VISIBLE_DEVICES=$i`: it makes process `i` see **only** physical GPU `i` (remapped to
 its local `cuda:0`), so each run is isolated to one card. This is the standard CUDA mechanism
 RunPod exposes; no framework changes needed.
+
+### 3b. 5-GPU pod (e.g. A100 SXM) — two waves of 5 (10 configs)
+
+With 5 GPUs we run **two sequential waves of 5** instead of one 8-wide pass. Since the second
+wave would otherwise leave GPUs idle, we extend the design to **10 configs**, adding two
+axis-saturation extremes (`lambda_recon=1.0`, `n_c=256`) that close the OFAT blind spot where a
+"flat" axis is ambiguous with "not pushed hard enough" (rationale in
+[`SWEEP_PLAN`](SWEEP_PLAN_decoder_capacity.md) §3 / §4b).
+
+**GPU *type* changes nothing here:** VRAM is a non-issue on A100 (40/80 GB — same as on the RTX
+PROs, §6), there is **no DDP** so SXM/NVLink interconnect is irrelevant, pinning is still
+`CUDA_VISIBLE_DEVICES`, and no precision/flag changes are needed. Fewer concurrent runs also
+means *less* network-volume contention, so each run may step slightly faster than 8-wide.
+
+```bash
+tmux new -s sweep007
+cd /workspace/hierarchal-jepa-flow-world-model
+mkdir -p logs
+export HF_HOME=/workspace/hf_cache             # fresh tmux shell — re-export (see 3a note)
+export WANDB_RUN_GROUP=inv007_capacity_floor
+
+launch() {   # args: lambda decoder_dim decoder_blocks n_c gpu_index
+  local L=$1 DDIM=$2 DBLK=$3 NC=$4 G=$5
+  local tag="L${L}_D${DDIM}x${DBLK}_nc${NC}"
+  CUDA_VISIBLE_DEVICES=$G python train.py \
+    --data ssv2 --steps 15000 --horizon-k 12 --lambda-var 0.5 --lr-coarse-flow 1e-4 \
+    --lambda-recon $L --lambda-recon-pred 0 --recon-warmup-steps 2000 \
+    --decoder-dim $DDIM --decoder-blocks $DBLK --n-c $NC \
+    --checkpoint-dir /workspace/ckpt/$tag \
+    --log-every 50 --diag-every 500 > logs/$tag.log 2>&1 &
+  echo "launched GPU $G -> $tag (pid $!)"
+}
+
+# --- Wave 1: weight axis (3) + decoder axis (2) ---
+wave1=( "0.1 256 2 32" "0.2 256 2 32" "0.5 256 2 32" "0.05 512 2 32" "0.05 512 4 32" )
+for i in "${!wave1[@]}"; do read L D B N <<< "${wave1[$i]}"; launch $L $D $B $N $i; done
+wait; echo "WAVE 1 DONE"
+
+# --- Wave 2: latent axis (2) + combined + saturation extremes (NEW) ---
+wave2=( "0.05 256 2 64" "0.05 256 2 128" "0.2 512 2 64" "1.0 256 2 32" "0.05 256 2 256" )
+for i in "${!wave2[@]}"; do read L D B N <<< "${wave2[$i]}"; launch $L $D $B $N $i; done
+wait; echo "WAVE 2 DONE — ALL 10 RUNS COMPLETE"
+```
+
+Total wall-clock ≈ 2× a single wave (~6–8h). **Watch the two new runs specifically:** `L1.0...`
+for `L_flow` degradation (recon now equals the flow weight), and `...nc256` for slot-collapse
+(`c_slot_diversity_rank`, `c_cross_video_cosine`) — both flagged in SWEEP_PLAN §4b as the only
+elevated-risk points. All 10 still group live under `inv007_capacity_floor` in W&B.
 
 ## 4. Monitor
 

@@ -160,6 +160,19 @@ moves the floor?**" — a one-factor-at-a-time scan answers that.
 
 All with **`lambda_recon_pred = 0`** (isolate the floor question). One wave on 8 GPUs ≈ 3–4h.
 
+**Saturation extremes (runs 9–10) — added when GPU slots are otherwise idle.** On a 5-GPU pod
+the wave splits into **two passes of 5** (GUIDE §3b); rather than leave 2 cards idle in pass 2
+we extend to **10 configs** with the two axis-saturation points below. They close the OFAT
+blind spot the modest ladders leave open: if weight/`n_c` look *flat* at the floor, runs 1–7
+can't distinguish "axis doesn't bind it" from "axis not pushed hard enough." These extremes
+make that call — and they're **pre-committable** (don't depend on results), unlike an
+interaction run, which can't be chosen until the binding axis is known.
+
+| # | `lambda_recon` | Decoder | `n_c` | Probes |
+|---|---|---|---|---|
+| 9 | **1.0** | 256×2 | 32 | weight saturation (recon = `L_flow` weight — the ceiling of the lever) |
+| 10 | 0.05 | 256×2 | **256** | `n_c` saturation (8× baseline, 32:1→16:1) — the information-limit stress test |
+
 **Stage 2 — refine the winner (conditional, next wave).** Whatever axis moved the floor in
 Stage 1, push it further and *then* re-introduce option 3 (`lambda_recon_pred = 0.05`) on the
 unsaturated decoder to see if the prediction branch finally bites. If *nothing* moved the
@@ -203,9 +216,9 @@ likely, not more. Per axis:
 
 | Axis | Mode A (collapse) | Mode B (cliff) | Real risk to watch |
 |---|---|---|---|
-| Higher `lambda_recon` (0.1–0.5) | **lower** (anchors `c` to content) | **lower** (more `B`-stabilization) | *Soft:* at 0.5 recon competes with `L_flow` → prediction may degrade (copy ratio ↑). A measured trade-off, not a collapse. Warmup ramp + abort rules cover it. |
+| Higher `lambda_recon` (0.1–0.5, **1.0**) | **lower** (anchors `c` to content) | **lower** (more `B`-stabilization) | *Soft:* at 0.5 recon competes with `L_flow` → prediction may degrade (copy ratio ↑). At the **`1.0` saturation point** recon *equals* `L_flow` and may dominate it — informative (maps the lever's ceiling) but **watch `L_flow` doesn't run away**. A measured trade-off, not a collapse; warmup ramp + abort rules cover it. |
 | Bigger `D` (512×2, 512×4) | none | none | `D` never destabilized (`agc_D`~0.02); bigger = cleaner recon gradient into `B`. No collapse pathway. |
-| **Bigger `n_c` (64, 128)** | **mild ↑** | low | **The one to watch.** More slots = more to keep diverse → slot-collapse risk (inv_003 territory). Also `F_c` runs on a longer token sequence (tuned for 32) — mild retune, not a hard failure. **Watch `c_slot_diversity_rank` and `c_cross_video_cosine`, esp. on `n_c=128`.** |
+| **Bigger `n_c` (64, 128, **256**)** | **mild ↑** | low | **The one to watch.** More slots = more to keep diverse → slot-collapse risk (inv_003 territory). Also `F_c` runs on a longer token sequence (tuned for 32) — mild retune, not a hard failure. Risk scales with slot count, so **`n_c=256` (the saturation extreme) is the highest-watch run: `c_slot_diversity_rank` and `c_cross_video_cosine`.** |
 | Combined #8 | low | low | Stacks low-risk changes; slightly more confounding to interpret, treat as the "best shot at the floor." |
 
 **Safeguards already in place for every run:** the recon warmup ramp (2000 steps), the
@@ -323,9 +336,12 @@ horizon/task). Each completed run gets its own `investigation_007/<wandb-name>/`
 - **Yes, add `n_c`** — it's the variable that decides whether my "it's `c`, not `D`" claim is
   right, and omitting it would leave the sweep unable to answer the core question. Treat it as a
   modest diagnostic probe (32→64→128), use `n_c` not `d_c`.
-- **Values:** λ ∈ {0.1, 0.2, 0.5}; D ∈ {256×2, 512×2, 512×4}; n_c ∈ {32, 64, 128}; `lambda_recon_pred = 0`.
-- **Design:** Stage-1 OFAT wave of 8 (one 8-GPU pass, ~3–4h) to find the binding axis, then
-  Stage 2 to refine + re-test option 3.
+- **Values:** λ ∈ {0.1, 0.2, 0.5, **1.0**}; D ∈ {256×2, 512×2, 512×4}; n_c ∈ {32, 64, 128, **256**};
+  `lambda_recon_pred = 0`. (The `1.0` / `n_c=256` saturation extremes are runs 9–10, added for the
+  5-GPU two-wave; see §3.)
+- **Design:** Stage-1 OFAT wave of 8 (one 8-GPU pass, ~3–4h) — or **10 as 5+5 two waves on a
+  5-GPU pod** (~6–8h, GUIDE §3b) — to find the binding axis, then Stage 2 to refine + re-test
+  option 3.
 - **Code:** add `--decoder-dim`, `--decoder-blocks`, `--n-c`, and (mandatory) `--checkpoint-dir`;
   the λ flags already exist.
 - **Run it** as 8 independent parallel processes pinned via `CUDA_VISIBLE_DEVICES`, per-run
