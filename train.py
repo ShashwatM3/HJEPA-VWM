@@ -248,8 +248,13 @@ def train_step(
         # SIGReg (investigation_008): isotropic-Gaussian regularizer on c_t, the
         # principled replacement for the variance floor's active anti-collapse role.
         # Always computed so L_sigreg is logged on the baseline (for λ calibration);
-        # only added to the loss when active. lambda_sigreg=0.0 => byte-identical.
-        sigreg_l = sigreg_loss(abstract)
+        # only added to the loss when active. A DEDICATED per-step generator keeps
+        # SIGReg's randperm/randn OFF the global RNG (WALK_FIXES F3), so lambda_sigreg=0
+        # stays byte-identical to the pre-SIGReg baseline and eps_c/τ/condition-dropout
+        # don't shift across λ values (clean ablation, reproducible sketch).
+        sigreg_gen = torch.Generator(device=device)
+        sigreg_gen.manual_seed(cfg.seed * 1_000_003 + step)
+        sigreg_l = sigreg_loss(abstract, generator=sigreg_gen)
         loss = flow_loss + cfg.train.lambda_var * var_loss
         if cfg.train.lambda_cov > 0.0:
             loss = loss + cfg.train.lambda_cov * cov_loss

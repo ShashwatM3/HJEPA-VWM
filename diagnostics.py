@@ -262,7 +262,9 @@ def gradient_health(model: nn.Module) -> dict[str, float]:
     Args:
         model: Module or container with trainable parameters.
     Returns:
-        Metrics dict with global grad norm, NaN flag, and grad'd param count.
+        Metrics dict with the POST-CLIP global grad norm (see note), NaN flag, and
+        grad'd param count. For the TRUE gradient magnitude read train_step's
+        pre-clip `grad_norm`, not this.
     """
     _require_torch()
     total_sq = 0.0
@@ -276,7 +278,12 @@ def gradient_health(model: nn.Module) -> dict[str, float]:
         total_sq += float(grad.pow(2).sum().item())
         param_count += 1
     return {
-        "grad_global_norm": total_sq**0.5,
+        # NOTE (WALK_FIXES F1): in the training loop this runs AFTER in-place AGC +
+        # clip_grad_norm_(0.5), so it is the POST-CLIP norm — pinned near the 0.5 clip
+        # whenever clipping fires (≈ every step), NOT the true gradient magnitude.
+        # Read train_step's pre-clip `grad_norm` for that. Renamed so it can't be
+        # misread as the raw norm.
+        "grad_global_norm_postclip": total_sq**0.5,
         "grad_has_nan": float(has_nan),
         "grad_param_count": float(param_count),
     }

@@ -132,7 +132,9 @@ order:
 2. **If rank rose, did `coarse_vs_copy_ratio` fall toward <1?** Rank up *and* copy down =
    utilization was a real prediction lever → build on it. Rank up but copy still >1 =
    disease is temporal → the prediction pivot is unimpeachable (→ investigation_009).
-3. **Health:** `L_flow` not blown up, `c_cross_video_cosine` low (falling, not rising).
+3. **Health:** `L_flow` not blown up, `c_cross_video_cosine` low (falling, not rising),
+   and the gradient in its usual band — read **`grad_norm`** (pre-clip, logged every step),
+   **not** `grad_global_norm_postclip` (pinned near the 0.5 clip; see WALK_FIXES F1).
 
 Cut at the `c_effective_rank` plateau (~8–9k as in Wave 1; let it flatten rather than
 fixing a hard step). Then write the cross-run synthesis into

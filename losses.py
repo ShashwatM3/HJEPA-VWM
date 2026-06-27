@@ -192,24 +192,28 @@ def sigreg_loss(
     n, d = z.shape
     if n < 2:
         return z.new_tensor(0.0)
-    if n > max_rows:  # stochastic row subsample keeps the pairwise term cheap
-        idx = torch.randperm(n, device=z.device, generator=generator)[:max_rows]
-        z = z[idx]
-        n = max_rows
-    z = z - z.mean(dim=0, keepdim=True)  # center: the test reference is N(0, 1)
-    v = torch.randn(d, n_projections, device=z.device, dtype=z.dtype, generator=generator)
-    v = v / v.norm(dim=0, keepdim=True).clamp_min(eps)  # random UNIT directions
-    y = (z @ v).t()  # (P, N) projected samples, one row per direction
-    b2 = beta * beta
-    sq = y * y  # (P, N)
-    # (y_j - y_k)² = y_j² + y_k² - 2 y_j y_k, broadcast to (P, N, N)
-    pair = sq.unsqueeze(2) + sq.unsqueeze(1) - 2.0 * y.unsqueeze(2) * y.unsqueeze(1)
-    term1 = torch.exp(-0.5 * b2 * pair).mean(dim=(1, 2))  # (P,)
-    term2 = (2.0 / math.sqrt(1.0 + b2)) * torch.exp(
-        -0.5 * b2 / (1.0 + b2) * sq
-    ).mean(dim=1)  # (P,)
-    term3 = 1.0 / math.sqrt(1.0 + 2.0 * b2)
-    return (term1 - term2 + term3).clamp_min(0.0).mean()  # avg over directions
+    # Compute the statistic in FP32 regardless of any outer autocast (WALK_FIXES F2):
+    # the BHEP matmul/exp are precision-sensitive, and in inv008 (λ_sigreg>0) this
+    # gradient trains B — bf16 here would silently degrade the regularizer.
+    with torch.autocast(device_type=z.device.type, enabled=False):
+        if n > max_rows:  # stochastic row subsample keeps the pairwise term cheap
+            idx = torch.randperm(n, device=z.device, generator=generator)[:max_rows]
+            z = z[idx]
+            n = max_rows
+        z = z - z.mean(dim=0, keepdim=True)  # center: the test reference is N(0, 1)
+        v = torch.randn(d, n_projections, device=z.device, dtype=z.dtype, generator=generator)
+        v = v / v.norm(dim=0, keepdim=True).clamp_min(eps)  # random UNIT directions
+        y = (z @ v).t()  # (P, N) projected samples, one row per direction
+        b2 = beta * beta
+        sq = y * y  # (P, N)
+        # (y_j - y_k)² = y_j² + y_k² - 2 y_j y_k, broadcast to (P, N, N)
+        pair = sq.unsqueeze(2) + sq.unsqueeze(1) - 2.0 * y.unsqueeze(2) * y.unsqueeze(1)
+        term1 = torch.exp(-0.5 * b2 * pair).mean(dim=(1, 2))  # (P,)
+        term2 = (2.0 / math.sqrt(1.0 + b2)) * torch.exp(
+            -0.5 * b2 / (1.0 + b2) * sq
+        ).mean(dim=1)  # (P,)
+        term3 = 1.0 / math.sqrt(1.0 + 2.0 * b2)
+        return (term1 - term2 + term3).clamp_min(0.0).mean()  # avg over directions
 
 
 def covariance_floor(abstract: Tensor) -> Tensor:
