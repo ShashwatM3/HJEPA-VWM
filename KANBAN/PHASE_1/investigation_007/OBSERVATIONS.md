@@ -30,3 +30,38 @@ failed ⇒ prediction is not reconstruction-bound.
 **Safety prior (full analysis in SWEEP_PLAN §4b):** low risk — recon is protective against both
 collapse modes. Watch `n_c=128` (slot diversity / cross-video cosine) and high-`lambda_recon`
 (`L_flow`).
+
+---
+
+## 2026-06-27 — Wave 1 results (weight × decoder): floor inert on both axes
+
+Cross-wave detail: [`wave_1/OBSERVATIONS.md`](wave_1/OBSERVATIONS.md); narrative + plots:
+[`WAVE1_ANALYSIS_and_WAVE2_PREDICTION.md`](WAVE1_ANALYSIS_and_WAVE2_PREDICTION.md). All numbers from
+W&B. Three findings:
+
+1. **Neither weight nor decoder moves the floor.** `L_recon_present` = **0.585 ± 0.01** across a 5×
+   weight range and a 6× decoder-param range; none reached the 0.55 gate. → **hypotheses #1
+   (weight-bound) and #2 (decoder-bound) are REJECTED.**
+2. **Reconstruction is structurally blind to prediction.** `L_recon_chat − L_recon_cplus` ≈
+   0.006–0.011 while the floor is 0.585 — a perfect vs a predicted future latent reconstruct almost
+   identically. *No reconstruction objective can supervise prediction at this floor* (the mechanistic
+   why of `easy-blaze-19`).
+3. **The floor is a utilization limit, not capacity.** `c_effective_rank` ≈ 13/256 in every run,
+   invariant to weight and decoder. The under-used axis is `d_c` (per-slot dim) — which `n_c` does
+   **not** touch. This pre-weakens hypothesis #3.
+
+## 2026-06-27 — Wave 2 (latent axis): FAILED TO RUN — hypothesis #3 still untested
+
+All 5 latent-axis + saturation runs **died at step 200 (~350 s), synchronized whole-pod death** — no
+usable data (only step-0 init logged). Forensics + re-run prescription:
+[`wave_2/OBSERVATIONS.md`](wave_2/OBSERVATIONS.md), [`END_OF_WAVE_2.md`](END_OF_WAVE_2.md) §1. So
+**hypothesis #3 (capacity-bound) is neither confirmed nor rejected** — it needs a re-run (reduced to
+`n_c=64` + `n_c=256`).
+
+**Current belief.** Two of three binding-constraint candidates are dead, and the blindness finding
+suggests #3 — even if it nudges the floor — almost certainly won't fix prediction (you'd need the
+floor near the ~0.01 prediction-gap scale, unreachable by `n_c`). The deeper reframe (corroborated by
+external literature, [`END_OF_WAVE_2.md`](END_OF_WAVE_2.md) §2.4): `c` is **distinct-per-video but
+nearly static in time** — it encodes *appearance*, not *dynamics* — and reconstruction *reinforces*
+appearance. The "pivot to horizon/task" branch of the pre-run interpretation matrix is now the most
+likely end state. Final call deferred to the Wave-2 re-run.

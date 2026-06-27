@@ -12,6 +12,8 @@ functions reused across coarse/fine/frame stages.
 
 from __future__ import annotations
 
+import math
+
 try:
     import torch
     from torch import Tensor
@@ -142,6 +144,72 @@ def variance_floor(abstract: Tensor, std_target: float = 1.0) -> Tensor:
         return flat.new_tensor(0.0)
     std = flat.std(dim=0, unbiased=False)
     return torch.clamp(std_target - std, min=0.0).mean()
+
+
+def sigreg_loss(
+    abstract: Tensor,
+    n_projections: int = 128,
+    max_rows: int = 512,
+    beta: float = 1.0,
+    eps: float = 1e-6,
+    generator=None,
+) -> Tensor:
+    """SIGReg: push the pooled `c_t` distribution toward an isotropic unit Gaussian.
+
+    The principled replacement for the variance floor's *active* anti-collapse role
+    (LeJEPA, Balestriero & LeCun 2025). The risk-optimal embedding law is `N(0, I)`;
+    isotropy makes every covariance eigenvalue equal, so it maximizes effective rank
+    by construction — a direct attack on the `c_effective_rank ≈ 13/256` utilization
+    ceiling that the one-sided variance floor (which only forbids *constant* dims)
+    cannot move. See KANBAN investigation_008.
+
+    A distribution is `N(0, I)` iff every 1-D projection is `N(0,1)` (Cramér–Wold), so
+    we sketch many RANDOM unit directions of the `D_c` feature space, project, and
+    penalize each projection's deviation from a standard normal with the closed-form
+    BHEP / Epps–Pulley normality statistic. Testing against `N(0,1)` (not a rescaled
+    normal) enforces unit variance + Gaussian shape; random directions enforce
+    isotropy — jointly, in one term.
+
+    Operates on the SAME pooled object `diagnostics.effective_rank` measures
+    (`abstract` reshaped to `(N = B·N_c, D_c)`), so the loss and its target metric are
+    the same distribution. Stochastic each step: rows are subsampled to `max_rows` and
+    directions resampled, keeping the `O(P·S²)` pairwise term cheap.
+
+    `T = mean_jk exp(-β²(y_j-y_k)²/2) - 2/√(1+β²)·mean_j exp(-β² y_j²/(2(1+β²))) + 1/√(1+2β²)`
+
+    Args:
+        abstract: (B, N_c, D_c) online abstract latent `c_t` (NOT the EMA target).
+        n_projections: Number of random 1-D directions (P) sketched per call.
+        max_rows: Cap on pooled rows used for the O(N²) pairwise term (subsampled).
+        beta: BHEP smoothing bandwidth.
+        eps: Numerical floor for direction normalization.
+        generator: Optional `torch.Generator` for reproducible sketching.
+    Returns:
+        Scalar SIGReg loss (>= 0; 0 == pooled `c_t` is standard-normal isotropic).
+    """
+    _require_torch()
+    z = abstract.reshape(-1, abstract.shape[-1]).float()  # (N, D_c)
+    n, d = z.shape
+    if n < 2:
+        return z.new_tensor(0.0)
+    if n > max_rows:  # stochastic row subsample keeps the pairwise term cheap
+        idx = torch.randperm(n, device=z.device, generator=generator)[:max_rows]
+        z = z[idx]
+        n = max_rows
+    z = z - z.mean(dim=0, keepdim=True)  # center: the test reference is N(0, 1)
+    v = torch.randn(d, n_projections, device=z.device, dtype=z.dtype, generator=generator)
+    v = v / v.norm(dim=0, keepdim=True).clamp_min(eps)  # random UNIT directions
+    y = (z @ v).t()  # (P, N) projected samples, one row per direction
+    b2 = beta * beta
+    sq = y * y  # (P, N)
+    # (y_j - y_k)² = y_j² + y_k² - 2 y_j y_k, broadcast to (P, N, N)
+    pair = sq.unsqueeze(2) + sq.unsqueeze(1) - 2.0 * y.unsqueeze(2) * y.unsqueeze(1)
+    term1 = torch.exp(-0.5 * b2 * pair).mean(dim=(1, 2))  # (P,)
+    term2 = (2.0 / math.sqrt(1.0 + b2)) * torch.exp(
+        -0.5 * b2 / (1.0 + b2) * sq
+    ).mean(dim=1)  # (P,)
+    term3 = 1.0 / math.sqrt(1.0 + 2.0 * b2)
+    return (term1 - term2 + term3).clamp_min(0.0).mean()  # avg over directions
 
 
 def covariance_floor(abstract: Tensor) -> Tensor:

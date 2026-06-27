@@ -1,8 +1,16 @@
 # Investigation 007 — What binds the reconstruction capacity floor?
 
-**Status:** OPEN
+**Status:** ACTIVE — Wave 1 complete (weight/decoder ruled out); Wave 2 (latent `n_c` axis) **failed to run** and is now **ON HOLD**, superseded by [investigation_008](../investigation_008/DESCRIPTION.md) (SIGReg attacks the `d_c` utilization ceiling Wave 1 actually identified; `n_c` adds slots, not dims). Pivot to a prediction objective still likely after.
 **Opened:** 2026-06-27 (after `easy-blaze-19` / investigation_006 capacity-floor finding)
 **Closed:** —
+
+> **Structure note (this investigation runs in *waves*).** The OFAT sweep executed as two 5-wide
+> parallel waves on a 5× H100 pod. Run records are grouped under
+> [`wave_1/`](wave_1/DESCRIPTION.md) (weight × decoder — **complete**) and
+> [`wave_2/`](wave_2/DESCRIPTION.md) (latent axis + saturation extremes — **failed at step 200,
+> re-run pending**). Each wave and each run carries its own triad. Narrative writeups:
+> [`WAVE1_ANALYSIS_and_WAVE2_PREDICTION.md`](WAVE1_ANALYSIS_and_WAVE2_PREDICTION.md),
+> [`END_OF_WAVE_2.md`](END_OF_WAVE_2.md).
 
 ## Question
 
@@ -29,7 +37,10 @@ An **8-run, one-factor-at-a-time (OFAT) sweep** over three axes, run 8-wide in p
 
 - **Design + reasoning + interpretation matrix:** [`SWEEP_PLAN_decoder_capacity.md`](SWEEP_PLAN_decoder_capacity.md)
 - **End-to-end execution (pod → parallel launch → monitor):** [`GUIDE.md`](GUIDE.md)
-- **Per-run records:** each completed run gets an `investigation_007/<wandb-name>/` triad here.
+- **Per-run records:** grouped by wave — [`wave_1/<wandb-name>/`](wave_1/DESCRIPTION.md) and
+  [`wave_2/<wandb-name>/`](wave_2/DESCRIPTION.md), each a triad. (The original 8-run plan grew to
+  **10 runs in two 5-wide waves**: Wave 2 added the `lambda_recon=1.0` and `n_c=256` saturation
+  extremes to fill the 5th GPU and close the OFAT blind spot — see `WAVE1_ANALYSIS...` §2.)
 
 ## Parent context
 
@@ -40,6 +51,26 @@ An **8-run, one-factor-at-a-time (OFAT) sweep** over three axes, run 8-wide in p
 
 ## Runs
 
-| Run | Config (λ_recon · decoder · n_c) | Outcome |
+**[Wave 1](wave_1/DESCRIPTION.md) — weight × decoder (COMPLETE, cut ~9k):**
+
+| Run | λ_recon · decoder · n_c | Outcome |
 |---|---|---|
-| _(pending launch — Stage 1 wave of 8)_ | see `SWEEP_PLAN` §3 | — |
+| [toasty-donkey-21](wave_1/toasty-donkey-21/) | 0.1 · 256×2 · 32 | floor 0.596 — weight inert |
+| [jolly-glade-20](wave_1/jolly-glade-20/) | 0.2 · 256×2 · 32 | floor 0.592 — weight inert |
+| [light-universe-24](wave_1/light-universe-24/) | 0.5 · 256×2 · 32 | floor 0.586 — weight inert |
+| [gallant-dew-22](wave_1/gallant-dew-22/) | 0.05 · 512×2 · 32 | floor 0.590 — decoder inert |
+| [eager-plant-22](wave_1/eager-plant-22/) | 0.05 · 512×4 · 32 | floor 0.585 — decoder inert |
+
+**[Wave 2](wave_2/DESCRIPTION.md) — latent axis + extremes (FAILED at step 200 — re-run pending):**
+
+| Run | λ_recon · decoder · n_c | Outcome |
+|---|---|---|
+| [pious-mountain-28](wave_2/pious-mountain-28/) | 0.05 · 256×2 · 64 | ⚠️ died step 200 — **re-run (Tier 0)** |
+| [classic-yogurt-29](wave_2/classic-yogurt-29/) | 0.05 · 256×2 · 128 | ⚠️ died step 200 — re-run optional |
+| [earnest-dragon-25](wave_2/earnest-dragon-25/) | 0.05 · 256×2 · 256 | ⚠️ died step 200 — **re-run (Tier 0)** |
+| [helpful-snow-25](wave_2/helpful-snow-25/) | 1.0 · 256×2 · 32 | ⚠️ died step 200 — re-run low-prio |
+| [quiet-firebrand-25](wave_2/quiet-firebrand-25/) | 0.2 · 512×2 · 64 | ⚠️ died step 200 — re-run low-prio |
+
+**Bottom line so far:** weight and decoder are ruled out (floor pinned at 0.585 ± 0.01);
+reconstruction is structurally blind to prediction; the floor is utilization-limited. The latent
+axis is untested (Wave 2 died). Most likely end state: pivot to a temporal/prediction objective.

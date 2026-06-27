@@ -157,6 +157,14 @@ class TrainConfig:
     ema_schedule_steps: int = 105_000
     lambda_var: float = 0.10  # variance-floor weight (VICReg V)
     var_floor_std_target: float = 1.0  # hinge target in L_var
+    # SIGReg (LeJEPA isotropic-Gaussian regularizer) on c_t — investigation_008.
+    # Pushes the pooled c_t distribution toward N(0, I), the provably risk-optimal
+    # embedding law; isotropy maximizes effective rank by construction, attacking the
+    # c_effective_rank≈13/256 utilization ceiling the one-sided variance floor can't
+    # move. Default 0.0 -> L_sigreg is computed for logging but NOT added to the loss,
+    # so the baseline is byte-identical. The var floor stays on (small λ_var) as a
+    # non-interfering safety net (its hinge is inactive once std≥1, where SIGReg lands).
+    lambda_sigreg: float = 0.0
     # VICReg-C off-diagonal covariance penalty on c_t (Plan Phase 04, anti-collapse).
     # Default 0.0 -> term computed for logging (L_cov) but NOT added to loss, so the
     # v0.2 baseline is reproduced exactly. Nonzero = sweep knob: start small

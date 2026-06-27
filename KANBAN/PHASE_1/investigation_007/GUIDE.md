@@ -157,6 +157,84 @@ for `L_flow` degradation (recon now equals the flow weight), and `...nc256` for 
 (`c_slot_diversity_rank`, `c_cross_video_cosine`) — both flagged in SWEEP_PLAN §4b as the only
 elevated-risk points. All 10 still group live under `inv007_capacity_floor` in W&B.
 
+### 3c. ⭐ LIVE PLAN — 4-GPU Wave-2 re-run (this is what to launch now)
+
+**Context:** the original 5-wide Wave 2 (§3b) **died at step 200** in a synchronized whole-pod
+death — no usable data ([`END_OF_WAVE_2.md`](END_OF_WAVE_2.md) §1). Those 5 failed runs are being
+**deleted from W&B**. This is the hardened re-run on a **4-GPU pod**.
+
+**Why these 4 (and why drop `λ=1.0`):** Wave 1 already killed the weight axis with three clean
+points (λ 0.1→0.2→0.5 → `L_recon_present` 0.596→0.592→0.586, a flat −0.005/doubling line) and
+confirmed live that `L_flow` *didn't even degrade* at λ=0.5 (≈0.42, same as λ=0.1). So the
+`λ=1.0` saturation run (`helpful-snow-25`) is the single most predictable run in the wave — floor
+~0.581, `L_flow` fine, `copy_ratio` flat — **zero expected information**, and it's dropped. The
+4 we keep are: the **full latent ladder `n_c` 64/128/256** (the only axis Wave 2 exists to test —
+read a *trend*, not just bookends) plus the **combined "all bigger"** run as the one
+interaction-effect check. Strategy detail: [`END_OF_WAVE_2.md`](END_OF_WAVE_2.md) §1.4 /
+[`wave_2/NEXT_STEPS.md`](wave_2/NEXT_STEPS.md).
+
+| GPU | λ_recon · decoder · n_c | Role |
+|---|---|---|
+| 0 | 0.05 · 256×2 · **64**  | latent bookend — low ⭐ |
+| 1 | 0.05 · 256×2 · **128** | latent interpolation |
+| 2 | 0.05 · 256×2 · **256** | latent bookend — high ⭐ (highest value; watch OOM + slot collapse) |
+| 3 | 0.2 · 512×2 · **64**   | combined "all bigger" — interaction insurance |
+| ~~—~~ | ~~1.0 · 256×2 · 32~~ | **DROPPED** — predictable closure, no GPU for it |
+
+```bash
+tmux new -s sweep007
+cd /workspace/hierarchal-jepa-flow-world-model
+mkdir -p logs
+export HF_HOME=/workspace/hf_cache             # fresh tmux shell — re-export (see 3a note)
+export WANDB_RUN_GROUP=inv007_capacity_floor   # same group → sits next to Wave 1 in W&B
+
+# columns: lambda_recon  decoder_dim  decoder_blocks  n_c   (lambda_recon_pred = 0 throughout)
+configs=(
+  "0.05 256 2 64"     # n_c=64  — latent bookend (low)
+  "0.05 256 2 128"    # n_c=128 — latent interpolation
+  "0.05 256 2 256"    # n_c=256 — latent bookend (high); most VRAM-hungry (OOM not expected — see §6)
+  "0.2  512 2 64"     # combined "all bigger" — interaction check
+)
+for i in "${!configs[@]}"; do
+  read L DDIM DBLK NC <<< "${configs[$i]}"
+  tag="L${L}_D${DDIM}x${DBLK}_nc${NC}"
+  CUDA_VISIBLE_DEVICES=$i python train.py \
+    --data ssv2 --steps 15000 --horizon-k 12 --lambda-var 0.5 --lr-coarse-flow 1e-4 \
+    --lambda-recon $L --lambda-recon-pred 0 --recon-warmup-steps 2000 \
+    --decoder-dim $DDIM --decoder-blocks $DBLK --n-c $NC \
+    --checkpoint-dir /workspace/ckpt/$tag \
+    --log-every 50 --diag-every 500 \
+    > logs/$tag.log 2>&1 &
+  echo "launched GPU $i -> $tag (pid $!)"
+done
+echo "all 4 launched — DETACH with Ctrl-B then D before closing SSH"
+```
+
+**Hardening (the whole reason the last wave was wasted) — do all three:**
+
+1. **Detach properly.** `Ctrl-B` then `D`, then **verify** the session survived: `tmux ls` should
+   still list `sweep007`. Only *then* close SSH. (The leading suspect for the step-200 death is an
+   SSH close without detach taking the process group down.)
+2. **Step-600 tripwire.** ~15 min after launch, run this once — it flags any run that hasn't yet
+   logged its first diagnostic (step 500), which is exactly the silent-early-death signature:
+   ```bash
+   sleep 900 && for f in logs/L0.05_D256x2_nc64.log logs/L0.05_D256x2_nc128.log \
+                        logs/L0.05_D256x2_nc256.log logs/L0.2_D512x2_nc64.log; do
+     grep -q "step.*500" "$f" && echo "OK   $f" || echo "STALL $f  <-- investigate"
+   done
+   ```
+   Any `STALL` → `tail -n 50` that log immediately (traceback vs bare `Killed`/SIGTERM vs `CUDA out
+   of memory`) and check the RunPod console → Pod → events for a stop/reclaim.
+3. **n_c=256 OOM watch.** It's the only run that grows VRAM, but OOM is **not expected** — the
+   frozen ViT-L dominates memory and n_c only adds a small latent/KV tensor (§6: "VRAM is a
+   non-issue" on A100/H100). There is **no CLI batch flag**; if `logs/...nc256.log` *does* show
+   `CUDA out of memory`, the only knobs are `global_batch` (`cfg.train`, default 64) and
+   `num_workers` (`cfg.data`, default 8) in `config.py` — lower one and relaunch that run alone.
+
+Cut at the `L_recon_present` plateau (~8–9k as in Wave 1), but let the latent runs flatten rather
+than fixing a hard step — more slots may reorganize slightly later. Read each run against the
+triad in §5: **`L_recon_present` ∧ `c_effective_rank` ∧ `coarse_vs_copy_ratio`.**
+
 ## 4. Monitor
 
 ```bash

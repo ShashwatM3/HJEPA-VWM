@@ -42,6 +42,7 @@ from losses import (
     flow_matching_loss,
     interpolate,
     reconstruction_loss,
+    sigreg_loss,
     slot_diversity_loss,
     variance_floor,
     velocity_target,
@@ -244,11 +245,18 @@ def train_step(
         # slot collapse (32 slots reading the same near-uniform attention average).
         # Compute for logging/calibration; only add when lambda_slot is active.
         slot_loss = slot_diversity_loss(abstract)
+        # SIGReg (investigation_008): isotropic-Gaussian regularizer on c_t, the
+        # principled replacement for the variance floor's active anti-collapse role.
+        # Always computed so L_sigreg is logged on the baseline (for λ calibration);
+        # only added to the loss when active. lambda_sigreg=0.0 => byte-identical.
+        sigreg_l = sigreg_loss(abstract)
         loss = flow_loss + cfg.train.lambda_var * var_loss
         if cfg.train.lambda_cov > 0.0:
             loss = loss + cfg.train.lambda_cov * cov_loss
         if cfg.train.lambda_slot > 0.0:
             loss = loss + cfg.train.lambda_slot * slot_loss
+        if cfg.train.lambda_sigreg > 0.0:
+            loss = loss + cfg.train.lambda_sigreg * sigreg_l
         # Reconstruction anchor (option 1): decode the ONLINE c_t back to e_hat and
         # penalize MSE against the frozen e_t. The gradient flows into D and B only
         # (abstract is online; detailed is frozen/no-grad; F_c is untouched because
@@ -326,6 +334,7 @@ def train_step(
         "L_var": float(var_loss.detach().float().item()),
         "L_cov": float(cov_loss.detach().float().item()),
         "L_slot": float(slot_loss.detach().float().item()),
+        "L_sigreg": float(sigreg_l.detach().float().item()),
         "L_recon": recon_loss_val,
         "L_recon_pred": recon_pred_loss_val,
         "recon_scale": recon_scale,
@@ -611,6 +620,15 @@ def parse_args() -> argparse.Namespace:
         "sits well below var_floor_std_target (1.0) and cross_video_cosine climbs.",
     )
     parser.add_argument(
+        "--lambda-sigreg",
+        type=float,
+        default=None,
+        help="SIGReg (isotropic-Gaussian) weight on c_t (cfg.train.lambda_sigreg, "
+        "investigation_008). 0 = baseline (L_sigreg logged at diag cadence only). "
+        "Nonzero drives the pooled c_t toward N(0,I) to break the c_effective_rank "
+        "~13/256 ceiling; sweep geometrically (~0.3-10), calibrate vs L_flow scale.",
+    )
+    parser.add_argument(
         "--lambda-recon",
         type=float,
         default=None,
@@ -730,6 +748,8 @@ def main() -> None:
         cfg.train.horizon_k = args.horizon_k
     if args.lambda_var is not None:
         cfg.train.lambda_var = args.lambda_var
+    if args.lambda_sigreg is not None:
+        cfg.train.lambda_sigreg = args.lambda_sigreg
     if args.lambda_recon is not None:
         cfg.train.lambda_recon = args.lambda_recon
     if args.lambda_recon_pred is not None:

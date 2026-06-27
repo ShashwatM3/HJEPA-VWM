@@ -1,26 +1,38 @@
 # Next steps — investigation 007
 
-## Status
+## Status (updated 2026-06-27)
 
-Code ready (flags added + audited, committed). **Stage-1 wave not yet launched.** Awaiting the
-6–8 GPU pod.
+**Wave 1 complete** — weight and decoder ruled out (floor 0.585 ± 0.01). **Wave 2 failed** — all 5
+latent-axis runs died at step 200 (synchronized whole-pod death), so hypothesis #3 (`n_c`
+capacity-bound) is **untested**. See [`wave_1/`](wave_1/DESCRIPTION.md), [`wave_2/`](wave_2/DESCRIPTION.md),
+[`END_OF_WAVE_2.md`](END_OF_WAVE_2.md).
 
-## Immediate next action — launch the Stage-1 wave
+## Immediate next action — re-run the failed latent wave (Tier 0)
 
-Follow [`GUIDE.md`](GUIDE.md) end-to-end. In brief:
-1. Pod up, network volume mounted, repo at `/workspace/...`; `git pull` the branch.
-2. `python -c "from models import smoke_test_models; smoke_test_models()"` (gradient contracts).
-3. Launch the 8-config wave **8-wide in parallel** (one config per GPU, `CUDA_VISIBLE_DEVICES`,
-   per-run `--checkpoint-dir`, in tmux). Exact script + the 8 configs: GUIDE §3 / SWEEP_PLAN §3.
-4. ~3–4h. Then per-run, read **`L_recon_present`** (floor moved?) and **`coarse_vs_copy_ratio`**
-   against the interpretation matrix (SWEEP_PLAN §4).
+1. **Diagnose the death:** `tail -n 50 logs/*.log` on the pod (traceback vs. bare `Killed`); check
+   RunPod pod events for a stop/reclaim; `dmesg | grep -i oom`.
+2. **Re-launch a reduced wave: `n_c=64` + `n_c=256` only** — the two bookends that decide the
+   latent-capacity question ([wave_2/pious-mountain-28](wave_2/pious-mountain-28/),
+   [wave_2/earnest-dragon-25](wave_2/earnest-dragon-25/)). Commands in those DESCRIPTIONs.
+3. **Harden the launch:** confirm tmux detach before SSH disconnect; add a step-600 tripwire
+   (`grep -L "step.*500" logs/*.log` after ~15 min) so a silent early death can't recur.
+4. Read **`L_recon_present` ∧ `c_effective_rank` ∧ `coarse_vs_copy_ratio`** against SWEEP_PLAN §4.
 
-## After the wave (KANBAN hygiene)
+## Then — the likely pivot (the real next investigation)
 
-- Create `investigation_007/<wandb-name>/` for each run (triad), or one combined results write-up
-  if that's cleaner for a wave — fill `OBSERVATIONS.md` here with the cross-run synthesis:
-  **which axis (if any) moved the floor**, and whether the copy gate followed.
-- Update `DESCRIPTION.md` Runs table + the README run index.
+Per [`END_OF_WAVE_2.md`](END_OF_WAVE_2.md) §2 + external literature ("Prediction over
+Reconstruction", V-JEPA 2-AC): the disease is **temporal under-informativeness** (`c` barely changes
+in time → copy baseline wins), which reconstruction can't fix. Open **investigation_008** on the
+prediction side: larger horizon `k`, inverse-dynamics/transition auxiliary, multi-step rollout loss,
+or an explicit anti-copy term. Decision metric for everything downstream: **`coarse_vs_copy_ratio`
+→ <1**.
+
+## KANBAN hygiene (mostly done)
+
+- ✅ Per-run + per-wave triads created under [`wave_1/`](wave_1/) and [`wave_2/`](wave_2/).
+- ✅ `DESCRIPTION.md` Runs table + `OBSERVATIONS.md` synthesis updated; README row refreshed.
+- ⏳ On the n_c re-run: fill the two run folders' `OBSERVATIONS.md` with real data and set the
+  investigation status to CLOSED, pointing at investigation_008.
 
 ## Stage 2 (conditional on Stage-1 result)
 

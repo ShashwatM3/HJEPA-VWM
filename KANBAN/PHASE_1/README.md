@@ -22,20 +22,25 @@ horizon.
 | [004](investigation_004/) | Is VICReg-C needed beyond `lambda_var=0.5`? | **PAUSED** | 1 (Run A) |
 | [005](investigation_005/) | Can we finish the 15k acceptance run? | **ACTIVE** | 3 |
 | [006](investigation_006/) | Does a reconstruction anchor break the rank ceiling? | **ACTIVE** | 2 (`fanciful-lake-18`, `easy-blaze-19`) |
-| [007](investigation_007/) | What binds the ~0.60 reconstruction capacity floor? | **OPEN** | 0 (8-run sweep, pending launch) |
+| [007](investigation_007/) | What binds the ~0.60 reconstruction capacity floor? | **ACTIVE** | 10, in 2 waves ([wave_1](investigation_007/wave_1/) ✅ · [wave_2](investigation_007/wave_2/) ⏸️ on hold) |
+| [008](investigation_008/) | Does SIGReg break the `d_c` utilization ceiling (rank 13/256)? | **OPEN** | 0 (sweep designed, code pending) |
 
 **Winning config:** full SSv2, `horizon_k=12`, `lambda_var=0.5`, no slot loss.
 
-**Active work:** [`investigation_006`](investigation_006/) — reconstruction anchor. Run 1
-(`fanciful-lake-18`, option 1) **removed the Mode-B cliff** but did not break the rank ceiling
-(~13.3) or fix the copy gate. Run 2 (`easy-blaze-19`, option 3, predicted-latent anchor through
-`F_c`) is a **negative result**: no prediction gain + mild representation harm, because the
-reconstruction channel is **capacity-saturated at ~0.60** (`c` rebuilds only ~40% of `e` at
-128:1) and so is blind to prediction quality. This spawned **[`investigation_007`](investigation_007/)** —
-an 8-run, 8-GPU-parallel OFAT sweep over `lambda_recon` × decoder size × `n_c` to find what
-**binds** that floor (weight-, decoder-, or capacity-bound). Design:
-[`investigation_007/SWEEP_PLAN`](investigation_007/SWEEP_PLAN_decoder_capacity.md); execution:
-[`investigation_007/GUIDE`](investigation_007/GUIDE.md). CLI flags implemented; pending launch.
+**Active work:** [`investigation_007`](investigation_007/) — the capacity-floor OFAT sweep, run as two
+5-wide waves on a 5× H100 pod. **[Wave 1](investigation_007/wave_1/)** (weight × decoder, 5 runs,
+COMPLETE) ruled out both axes: `L_recon_present` pinned at **0.585 ± 0.01**, and the deeper findings
+are that *reconstruction is structurally blind to prediction* (`chat − cplus` ≈ 0.01 ≪ floor) and the
+floor is a **utilization** limit (`c_effective_rank` ~13/256, invariant) on `d_c`.
+**[Wave 2](investigation_007/wave_2/)** (latent axis `n_c` + saturation extremes, 5 runs) **failed to
+run** — all died at step 200 in a synchronized whole-pod death, so the `n_c` hypothesis is still
+untested and needs a reduced re-run (`n_c=64` + `n_c=256`). Reframe + external lit + next steps:
+[`investigation_007/END_OF_WAVE_2.md`](investigation_007/END_OF_WAVE_2.md). **Next chosen step:**
+Wave 2 is **on hold**; [`investigation_008`](investigation_008/) sweeps **SIGReg** (isotropic-Gaussian
+regularizer) to attack the `d_c` utilization ceiling (rank 13/256) Wave 1 identified — the axis
+`n_c` doesn't touch. If SIGReg lifts rank but prediction still loses to copy, the temporal/prediction
+pivot (a probable **investigation_009**) becomes unimpeachable. Predecessor:
+[`investigation_006`](investigation_006/) (`easy-blaze-19` capacity-floor finding).
 
 ---
 
