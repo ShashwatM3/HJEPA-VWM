@@ -76,6 +76,32 @@ def velocity_target(z_target: Tensor, eps: Tensor) -> Tensor:
     return z_target - eps
 
 
+def residual_target(
+    target_future: Tensor, target_present: Tensor, eps: float = 1e-6
+) -> tuple[Tensor, Tensor]:
+    """Temporal residual Δ = c_{t+k} - c_t and a noise-scale scalar (investigation_009).
+
+    For residual flow matching, F_c predicts the temporal *change* Δ rather than the full
+    future latent. Both inputs are EMA / stop-gradient bottleneck outputs (B_EMA on the
+    future clip and on the present clip), so Δ is a PURELY temporal difference, not
+    contaminated by the online-vs-EMA gap. The returned σ scales the flow noise so the
+    rectified-flow velocity target (Δ - eps) is not dominated by unit-scale noise
+    (‖Δ‖/‖c‖ ≈ 0.38): scaling eps to σ keeps the signal at ~50% of the target variance and
+    leaves coarse_vs_copy_ratio identical to (and at the same scale as) the full-latent run.
+
+    Args:
+        target_future: (B, N_c, D_c) detached future latent c_{t+k} (B_EMA on e_{t+k}).
+        target_present: (B, N_c, D_c) detached present latent c_t (B_EMA on e_t).
+        eps: Numerical floor for the std scalar.
+    Returns:
+        (delta, sigma): the residual target (detached) and a 0-dim std for noise scaling.
+    """
+    _require_torch()
+    delta = as_target(target_future) - as_target(target_present)
+    sigma = delta.float().std().clamp_min(eps)
+    return delta, sigma
+
+
 def flow_matching_loss(u_hat: Tensor, u_target: Tensor) -> Tensor:
     """Mean-squared error for coarse, fine, and frame flow matching.
 

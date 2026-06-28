@@ -503,6 +503,7 @@ def smoke_test_models() -> None:
         flow_matching_loss,
         interpolate,
         reconstruction_loss,
+        residual_target,
         slot_diversity_loss,
         variance_floor,
         velocity_target,
@@ -571,6 +572,27 @@ def smoke_test_models() -> None:
     recon_pred.backward()
     assert any(p.grad is not None for p in decoder.parameters())
     assert any(p.grad is not None for p in coarse_flow.parameters())  # inverse of option 1
+    assert any(p.grad is not None for p in bottleneck.parameters())
+    assert all(p.grad is None for p in target_bottleneck.parameters())
+    # Residual prediction (investigation_009) gradient contract: predicting the temporal
+    # residual Δ and decoding ĉ = c_t + Δ̂ must reach D, F_c, AND B (via the add-back and the
+    # F_c conditioning), never the EMA bottleneck. Exercises the residual flow path end to
+    # end so a launch can't first discover a crash on the pod.
+    bottleneck.zero_grad(set_to_none=True)
+    coarse_flow.zero_grad(set_to_none=True)
+    decoder.zero_grad(set_to_none=True)
+    target_present = target_bottleneck(detailed)
+    delta, sigma = residual_target(target_abstract, target_present)
+    eps_r = sigma.to(delta.dtype) * torch.randn_like(delta)
+    z_r = interpolate(delta, eps_r, tau)
+    u_r = velocity_target(delta, eps_r)
+    abstract_r = bottleneck(detailed)
+    u_r_hat = coarse_flow(z_r, tau, abstract_r)
+    c_hat_r = abstract_r + z_r + (1.0 - tau.reshape(-1, 1, 1)) * u_r_hat
+    loss_r = flow_matching_loss(u_r_hat, u_r) + reconstruction_loss(decoder(c_hat_r), target_detailed)
+    loss_r.backward()
+    assert any(p.grad is not None for p in decoder.parameters())
+    assert any(p.grad is not None for p in coarse_flow.parameters())
     assert any(p.grad is not None for p in bottleneck.parameters())
     assert all(p.grad is None for p in target_bottleneck.parameters())
     from diagnostics import attention_entropy, slot_diversity_rank

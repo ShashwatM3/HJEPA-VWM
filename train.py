@@ -42,6 +42,7 @@ from losses import (
     flow_matching_loss,
     interpolate,
     reconstruction_loss,
+    residual_target,
     sigreg_loss,
     slot_diversity_loss,
     variance_floor,
@@ -230,10 +231,20 @@ def train_step(
         abstract, target_abstract, detailed, target_detailed = _coarse_forward(
             encoder, bottleneck, target_bottleneck, context_clip, target_clip
         )
-        eps_c = torch.randn_like(target_abstract)
+        if cfg.train.predict_residual:
+            # investigation_009: predict the temporal residual Δ = c_{t+k} - c_t (both from
+            # B_EMA -> purely temporal, fully detached) instead of the full future latent.
+            # Scale the flow noise to Δ so the velocity target isn't noise-dominated; the
+            # option-3 recon add-back below becomes ĉ = c_t + Δ̂.
+            target_present = target_bottleneck(detailed)  # B_EMA(e_t), detached
+            flow_target, residual_sigma = residual_target(target_abstract, target_present)
+            eps_c = residual_sigma.to(flow_target.dtype) * torch.randn_like(flow_target)
+        else:
+            flow_target = target_abstract
+            eps_c = torch.randn_like(target_abstract)
         tau_c = torch.rand(target_abstract.shape[0], device=device)
-        z_c = interpolate(target_abstract, eps_c, tau_c)
-        u_c = velocity_target(target_abstract, eps_c)
+        z_c = interpolate(flow_target, eps_c, tau_c)
+        u_c = velocity_target(flow_target, eps_c)
         u_c_hat = coarse_flow(z_c, tau_c, abstract)
         flow_loss = flow_matching_loss(u_c_hat, u_c)
         var_loss = variance_floor(abstract, cfg.train.var_floor_std_target)
@@ -289,7 +300,10 @@ def train_step(
         # off => not run, so the option-1 baseline stays byte-identical. With this on, the
         # diag readout L_recon_chat should drop (the gradient now acts on it).
         if cfg.train.lambda_recon_pred > 0.0:
-            c_hat = z_c + (1.0 - tau_c.reshape(-1, 1, 1)) * u_c_hat
+            endpoint = z_c + (1.0 - tau_c.reshape(-1, 1, 1)) * u_c_hat
+            # Residual mode reconstructs the future from ĉ = c_t + Δ̂ (online c_t, so the
+            # recon gradient still reaches B via the add-back and the F_c conditioning).
+            c_hat = (abstract + endpoint) if cfg.train.predict_residual else endpoint
             recon_pred_loss = reconstruction_loss(decoder(c_hat), target_detailed)
             loss = loss + cfg.train.lambda_recon_pred * recon_scale * recon_pred_loss
             recon_pred_loss_val = float(recon_pred_loss.detach().float().item())
@@ -463,18 +477,30 @@ def run_diagnostics(
         abstract, target_abstract, detailed, target_detailed = _coarse_forward(
             encoder, bottleneck, target_bottleneck, context_clip, target_clip
         )
-        eps_c = torch.randn_like(target_abstract)
+        if cfg.train.predict_residual:
+            target_present = target_bottleneck(detailed)
+            flow_target, residual_sigma = residual_target(target_abstract, target_present)
+            eps_c = residual_sigma.to(flow_target.dtype) * torch.randn_like(flow_target)
+        else:
+            flow_target = target_abstract
+            eps_c = torch.randn_like(target_abstract)
         tau_c = torch.rand(target_abstract.shape[0], device=device)
-        z_c = interpolate(target_abstract, eps_c, tau_c)
+        z_c = interpolate(flow_target, eps_c, tau_c)
     metrics: dict[str, float] = {}
     metrics.update(variance_stats(abstract))
     metrics.update(cross_video_cosine(abstract))
     metrics.update(effective_rank(abstract))
     metrics.update(slot_diversity_rank(abstract))
-    metrics.update(coarse_baselines(coarse_flow, z_c, tau_c, abstract, target_abstract, eps_c))
+    metrics.update(
+        coarse_baselines(
+            coarse_flow, z_c, tau_c, abstract, flow_target, eps_c,
+            predict_residual=cfg.train.predict_residual,
+        )
+    )
     metrics.update(gradient_health(nn.ModuleList([bottleneck, coarse_flow, decoder])))
     metrics.update(reconstruction_readouts(decoder, coarse_flow, abstract, target_abstract,
-                                           detailed, target_detailed, z_c, tau_c))
+                                           detailed, target_detailed, z_c, tau_c,
+                                           predict_residual=cfg.train.predict_residual))
     # Reuse the detailed tensor from `_coarse_forward` (no second encoder forward).
     metrics.update(attention_entropy(bottleneck, detailed))
     return metrics
@@ -489,6 +515,7 @@ def reconstruction_readouts(
     target_detailed: Tensor,
     z_c: Tensor,
     tau_c: Tensor,
+    predict_residual: bool = False,
 ) -> dict[str, float]:
     """Log-only reconstruction readouts that also SCOPE the option-3 decision.
 
@@ -507,7 +534,10 @@ def reconstruction_readouts(
     _require_torch()
     with torch.no_grad():
         u_c_hat = coarse_flow(z_c, tau_c, abstract, condition_drop=_no_drop(abstract))
-        c_hat = z_c + (1.0 - tau_c.reshape(-1, 1, 1)) * u_c_hat
+        endpoint = z_c + (1.0 - tau_c.reshape(-1, 1, 1)) * u_c_hat
+        # Residual mode: the predicted future latent is ĉ = c_t + Δ̂ (target_abstract stays
+        # the true c_plus for the L_recon_cplus readout below).
+        c_hat = (abstract + endpoint) if predict_residual else endpoint
         return {
             "L_recon_present": float(reconstruction_loss(decoder(abstract), detailed).item()),
             "L_recon_cplus": float(
@@ -653,6 +683,14 @@ def parse_args() -> argparse.Namespace:
         "and coarse_vs_copy_ratio fall below 1.",
     )
     parser.add_argument(
+        "--predict-residual",
+        action="store_true",
+        help="investigation_009: predict the temporal residual Δ = c_{t+k} - c_t (EMA both "
+        "ends) instead of the full future latent. The option-3 recon decodes ĉ = c_t + Δ̂, "
+        "the copy baseline becomes the zero residual (ratio stays comparable), and the flow "
+        "noise is scaled to Δ. Default off = full-latent prediction (byte-identical).",
+    )
+    parser.add_argument(
         "--recon-warmup-steps",
         type=int,
         default=None,
@@ -759,6 +797,8 @@ def main() -> None:
         cfg.train.lambda_recon = args.lambda_recon
     if args.lambda_recon_pred is not None:
         cfg.train.lambda_recon_pred = args.lambda_recon_pred
+    if args.predict_residual:
+        cfg.train.predict_residual = True
     if args.recon_warmup_steps is not None:
         cfg.train.recon_warmup_steps = args.recon_warmup_steps
     if args.lr_bottleneck is not None:

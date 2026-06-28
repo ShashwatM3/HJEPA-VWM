@@ -294,29 +294,36 @@ def coarse_baselines(
     z_c: Tensor,
     tau_c: Tensor,
     current_abstract: Tensor,
-    target_abstract: Tensor,
+    flow_target: Tensor,
     eps_c: Tensor,
+    predict_residual: bool = False,
 ) -> dict[str, float]:
     """Compare F_c velocity loss against copy and batch-mean baselines (§9.3).
 
     Args:
         coarse_flow: F_c module producing (B, 32, 256) velocity predictions.
-        z_c: (B, 32, 256) noised target abstract latent.
+        z_c: (B, 32, 256) noised flow target (c_plus, or the residual Δ in residual mode).
         tau_c: (B,) flow times.
-        current_abstract: (B, 32, 256) current c_t.
-        target_abstract: (B, 32, 256) target c_plus, detached.
-        eps_c: (B, 32, 256) Gaussian noise used to build z_c.
+        current_abstract: (B, 32, 256) current c_t (the conditioning).
+        flow_target: (B, 32, 256) the regression target — c_plus normally, or the temporal
+            residual Δ = c_{t+k} - c_t when ``predict_residual`` (both detached).
+        eps_c: (B, 32, 256) Gaussian noise used to build z_c (scaled to Δ in residual mode).
+        predict_residual: investigation_009. When True the copy baseline is "predict ZERO
+            residual" (Δ̂=0); otherwise it is "copy c_t forward". Both reduce copy_loss to
+            ‖c_t - c_plus‖² = ‖Δ‖², so coarse_vs_copy_ratio stays comparable across runs.
     Returns:
         Metrics dict with model/copy/batch-mean losses and ratios.
     """
     _require_torch()
     with torch.no_grad():
-        u_target = velocity_target(target_abstract, eps_c)
+        u_target = velocity_target(flow_target, eps_c)
         u_hat = coarse_flow(z_c, tau_c, current_abstract, condition_drop=_no_drop(current_abstract))
         model_loss = flow_matching_loss(u_hat, u_target)
-        copy_velocity = current_abstract - eps_c
+        # "Predict no change": zero residual (velocity -eps) in residual mode, else copy c_t
+        # forward. Both give copy_loss = ‖c_t - c_plus‖² = ‖Δ‖² because the eps term cancels.
+        copy_velocity = -eps_c if predict_residual else current_abstract - eps_c
         copy_loss = flow_matching_loss(copy_velocity, u_target)
-        batch_mean = target_abstract.mean(dim=0, keepdim=True).expand_as(target_abstract)
+        batch_mean = flow_target.mean(dim=0, keepdim=True).expand_as(flow_target)
         mean_velocity = batch_mean - eps_c
         mean_loss = flow_matching_loss(mean_velocity, u_target)
     return {

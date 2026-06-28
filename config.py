@@ -202,6 +202,14 @@ class TrainConfig:
     # (byte-identical to the option-1 baseline); with it on, the diag readout
     # L_recon_chat should DROP. See KANBAN investigation_006/fanciful-lake-18/NEXT_STEPS.
     lambda_recon_pred: float = 0.0
+    # Residual prediction (investigation_009). When True, F_c predicts the TEMPORAL
+    # residual Δ = c_{t+k} - c_t (both from B_EMA -> a purely temporal target) instead of
+    # the full future latent c_{t+k}, and the option-3 recon add-back becomes ĉ = c_t + Δ̂.
+    # The flow noise eps_c is scaled to Δ's std so the rectified-flow velocity target
+    # (Δ - eps) isn't noise-dominated (‖Δ‖/‖c‖ ≈ 0.38). The copy baseline becomes "predict
+    # zero residual" (copy_loss = ‖Δ‖²), so coarse_vs_copy_ratio stays directly comparable
+    # to the full-latent runs. Default False -> full-latent prediction, byte-identical.
+    predict_residual: bool = False
     horizon_k: int = 4  # single fixed horizon for Phases 1-3 (Phase 4: multi-horizon)
     frame_stride: int = 2
     precision: str = "bf16"
