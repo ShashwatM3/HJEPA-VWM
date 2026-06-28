@@ -34,6 +34,7 @@ from diagnostics import (
     cross_video_cosine,
     effective_rank,
     gradient_health,
+    partition_decay_params,
     slot_diversity_rank,
     variance_stats,
 )
@@ -99,6 +100,60 @@ def lr_scale(step: int, warmup_steps: int, max_steps: int) -> float:
     return 0.5 * (1.0 + math.cos(math.pi * min(progress, 1.0)))
 
 
+def linear_ramp_scale(step: int, warmup_steps: int) -> float:
+    """Return a 0->1 linear ramp, with non-positive warmup meaning full strength."""
+    if warmup_steps <= 0:
+        return 1.0
+    return min(1.0, max(0.0, step / warmup_steps))
+
+
+def _trainable_param_groups(
+    bottleneck: nn.Module, coarse_flow: nn.Module, decoder: nn.Module, cfg: Config
+) -> list[dict]:
+    """Build the AdamW param-group spec: a decay and a no-decay group per module.
+
+    Issue 9: weight decay is applied ONLY to the genuine Linear/Conv weight matrices.
+    Biases, LayerNorm scale/shift, the learned query/null/type/slot embeddings, and
+    the zero-init adaLN gates go in a parallel ``weight_decay=0`` group (the split
+    comes from :func:`diagnostics.partition_decay_params`, which shares its predicate
+    with AGC so the two exclusion sets cannot drift). Decaying learned query slots and
+    normalization scales fights c's representation geometry — exactly the surface
+    SIGReg is trying to shape.
+
+    Groups are emitted in a fixed order — for each of (B, F_c, D), its decay group
+    then its no-decay group — so :func:`peak_base_lrs` (which rebuilds from the same
+    spec) stays index-aligned with ``optimizer.param_groups`` for the LR schedule.
+    """
+    _require_torch()
+    spec = [
+        ("B", bottleneck, cfg.train.lr_bottleneck),
+        ("F_c", coarse_flow, cfg.train.lr_coarse_flow),
+        ("D", decoder, cfg.train.lr_decoder),
+    ]
+    groups: list[dict] = []
+    for tag, module, lr in spec:
+        decay, no_decay = partition_decay_params(module)
+        if decay:
+            groups.append(
+                {
+                    "params": decay,
+                    "lr": lr,
+                    "weight_decay": cfg.train.weight_decay,
+                    "name": f"{tag}/decay",
+                }
+            )
+        if no_decay:
+            groups.append(
+                {
+                    "params": no_decay,
+                    "lr": lr,
+                    "weight_decay": 0.0,
+                    "name": f"{tag}/no_decay",
+                }
+            )
+    return groups
+
+
 def make_optimizer(
     bottleneck: nn.Module, coarse_flow: nn.Module, decoder: nn.Module, cfg: Config
 ) -> torch.optim.Optimizer:
@@ -106,7 +161,14 @@ def make_optimizer(
 
     The decoder D is always in the optimizer so it trains/saves/loads consistently;
     when lambda_recon=0 it simply receives no gradient (AdamW skips ``None`` grads),
-    so its parameters never move on the baseline.
+    so its parameters never move on the baseline. Each module contributes a decay and
+    a no-decay group (Issue 9 — see :func:`_trainable_param_groups`).
+
+    NOTE: the decay/no-decay split changes the optimizer's param-group COUNT, so an
+    optimizer state_dict saved before this change (3 groups) cannot be loaded into the
+    new optimizer (up to 6 groups). Resume across this change with a fresh optimizer
+    (do not rely on ``--resume`` carrying optimizer state) — consistent with the
+    existing "do not --resume across architecture knobs" guidance.
 
     Args:
         bottleneck: Trainable bottleneck B.
@@ -118,11 +180,7 @@ def make_optimizer(
     """
     _require_torch()
     return torch.optim.AdamW(
-        [
-            {"params": bottleneck.parameters(), "lr": cfg.train.lr_bottleneck, "name": "B"},
-            {"params": coarse_flow.parameters(), "lr": cfg.train.lr_coarse_flow, "name": "F_c"},
-            {"params": decoder.parameters(), "lr": cfg.train.lr_decoder, "name": "D"},
-        ],
+        _trainable_param_groups(bottleneck, coarse_flow, decoder, cfg),
         betas=cfg.train.adam_betas,
         weight_decay=cfg.train.weight_decay,
     )
@@ -138,9 +196,20 @@ def apply_lr_schedule(
     return scale
 
 
-def peak_base_lrs(cfg: Config) -> list[float]:
-    """Peak (pre-schedule) LRs for B, F_c, and D — order matches make_optimizer groups."""
-    return [cfg.train.lr_bottleneck, cfg.train.lr_coarse_flow, cfg.train.lr_decoder]
+def peak_base_lrs(
+    bottleneck: nn.Module, coarse_flow: nn.Module, decoder: nn.Module, cfg: Config
+) -> list[float]:
+    """Peak (pre-schedule) LR per optimizer group, index-aligned with make_optimizer.
+
+    Rebuilds the group spec from the same modules/config so the order and COUNT match
+    ``optimizer.param_groups`` exactly (decay then no-decay, per module). Derived from
+    config — NOT from a resumed checkpoint's ``param_group["lr"]`` (which stores the
+    SCHEDULED lr at save time and would double-apply cosine decay on resume).
+    """
+    return [
+        group["lr"]
+        for group in _trainable_param_groups(bottleneck, coarse_flow, decoder, cfg)
+    ]
 
 
 def device_for_training() -> torch.device:
@@ -271,8 +340,15 @@ def train_step(
             loss = loss + cfg.train.lambda_cov * cov_loss
         if cfg.train.lambda_slot > 0.0:
             loss = loss + cfg.train.lambda_slot * slot_loss
+        # SIGReg warmup (Issue 7): ramp the weight linearly over sigreg_warmup_steps so a
+        # strong λ_sigreg doesn't move the ONLINE bottleneck's coordinate system faster than
+        # the EMA target (the flow target c_plus) can follow — which would give F_c a moving
+        # input/output geometry and the rank-up / flow-plateau pattern. Same ramp shape as
+        # the recon anchors. sigreg_scale stays 0 when the term is off (logged for clarity).
+        sigreg_scale = 0.0
         if cfg.train.lambda_sigreg > 0.0:
-            loss = loss + cfg.train.lambda_sigreg * sigreg_l
+            sigreg_scale = linear_ramp_scale(step, cfg.train.sigreg_warmup_steps)
+            loss = loss + cfg.train.lambda_sigreg * sigreg_scale * sigreg_l
         # Reconstruction anchor (option 1): decode the ONLINE c_t back to e_hat and
         # penalize MSE against the frozen e_t. The gradient flows into D and B only
         # (abstract is online; detailed is frozen/no-grad; F_c is untouched because
@@ -284,7 +360,7 @@ def train_step(
         recon_pred_loss_val = 0.0
         recon_scale = 0.0
         if cfg.train.lambda_recon > 0.0 or cfg.train.lambda_recon_pred > 0.0:
-            recon_scale = min(1.0, step / max(1, cfg.train.recon_warmup_steps))
+            recon_scale = linear_ramp_scale(step, cfg.train.recon_warmup_steps)
         if cfg.train.lambda_recon > 0.0:
             recon_loss = reconstruction_loss(decoder(abstract), detailed)
             loss = loss + cfg.train.lambda_recon * recon_scale * recon_loss
@@ -354,6 +430,7 @@ def train_step(
         "L_cov": float(cov_loss.detach().float().item()),
         "L_slot": float(slot_loss.detach().float().item()),
         "L_sigreg": float(sigreg_l.detach().float().item()),
+        "sigreg_scale": sigreg_scale,
         "L_recon": recon_loss_val,
         "L_recon_pred": recon_pred_loss_val,
         "recon_scale": recon_scale,
@@ -413,7 +490,12 @@ def load_checkpoint(
     if "decoder" in ckpt:
         decoder.load_state_dict(ckpt["decoder"])
     if optimizer is not None and "optimizer" in ckpt:
-        optimizer.load_state_dict(ckpt["optimizer"])
+        try:
+            optimizer.load_state_dict(ckpt["optimizer"])
+        except ValueError as exc:
+            # Optimizer group count changed when Issue 9 split decay/no-decay groups.
+            # Keep the model resume usable and continue with a fresh optimizer state.
+            print(f"WARN: skipped incompatible optimizer state from {path}: {exc}")
     return int(ckpt.get("global_step", 0))
 
 
@@ -491,16 +573,39 @@ def run_diagnostics(
     metrics.update(cross_video_cosine(abstract))
     metrics.update(effective_rank(abstract))
     metrics.update(slot_diversity_rank(abstract))
+    # Issue 7: log effective rank / std for the EMA TARGET c_plus alongside the online
+    # c_t (above). SIGReg shapes the online bottleneck; if the EMA target lags, the
+    # online rank can look healthy while F_c's actual regression target still has a
+    # collapsed/low-rank geometry. Surfacing both makes that lag visible.
+    _tgt_var = variance_stats(target_abstract)
+    metrics["c_plus_std_mean"] = _tgt_var["c_std_mean"]
+    metrics["c_plus_std_median"] = _tgt_var["c_std_median"]
+    metrics["c_plus_effective_rank"] = effective_rank(target_abstract)["c_effective_rank"]
     metrics.update(
         coarse_baselines(
-            coarse_flow, z_c, tau_c, abstract, flow_target, eps_c,
+            coarse_flow,
+            z_c,
+            tau_c,
+            abstract,
+            flow_target,
+            eps_c,
             predict_residual=cfg.train.predict_residual,
         )
     )
     metrics.update(gradient_health(nn.ModuleList([bottleneck, coarse_flow, decoder])))
-    metrics.update(reconstruction_readouts(decoder, coarse_flow, abstract, target_abstract,
-                                           detailed, target_detailed, z_c, tau_c,
-                                           predict_residual=cfg.train.predict_residual))
+    metrics.update(
+        reconstruction_readouts(
+            decoder,
+            coarse_flow,
+            abstract,
+            target_abstract,
+            detailed,
+            target_detailed,
+            z_c,
+            tau_c,
+            predict_residual=cfg.train.predict_residual,
+        )
+    )
     # Reuse the detailed tensor from `_coarse_forward` (no second encoder forward).
     metrics.update(attention_entropy(bottleneck, detailed))
     return metrics
@@ -560,10 +665,11 @@ def run_training(cfg: Config, steps: int, resume: str | None = None) -> None:
     start_step = load_checkpoint(resume, modules, optimizer) if resume else 0
     # Peak LRs always come from config/CLI — not checkpoint param_group["lr"], which
     # stores the *scheduled* LR at save time and would double-apply cosine decay on resume.
-    base_lrs = peak_base_lrs(cfg)
+    base_lrs = peak_base_lrs(bottleneck, coarse_flow, decoder, cfg)
     if resume:
         print(
-            f"Resumed step {start_step}; peak base LRs B={base_lrs[0]:.2e}, F_c={base_lrs[1]:.2e}"
+            f"Resumed step {start_step}; peak base LRs "
+            f"B={cfg.train.lr_bottleneck:.2e}, F_c={cfg.train.lr_coarse_flow:.2e}"
         )
     train_loader = build_dataloader(cfg, "train")
     val_loader = build_dataloader(cfg, "validation", batch_size=min(16, cfg.train.global_batch))
@@ -662,6 +768,14 @@ def parse_args() -> argparse.Namespace:
         "investigation_008). 0 = baseline (L_sigreg logged at diag cadence only). "
         "Nonzero drives the pooled c_t toward N(0,I) to break the c_effective_rank "
         "~13/256 ceiling; sweep geometrically (~0.3-10), calibrate vs L_flow scale.",
+    )
+    parser.add_argument(
+        "--sigreg-warmup-steps",
+        type=int,
+        default=None,
+        help="Linear ramp length for lambda_sigreg (cfg.train.sigreg_warmup_steps, "
+        "default 2000, Issue 7). Ramps SIGReg in gradually so a strong weight doesn't "
+        "outrun the EMA target's coordinate system. Ignored when lambda_sigreg=0.",
     )
     parser.add_argument(
         "--lambda-recon",
@@ -793,6 +907,8 @@ def main() -> None:
         cfg.train.lambda_var = args.lambda_var
     if args.lambda_sigreg is not None:
         cfg.train.lambda_sigreg = args.lambda_sigreg
+    if args.sigreg_warmup_steps is not None:
+        cfg.train.sigreg_warmup_steps = args.sigreg_warmup_steps
     if args.lambda_recon is not None:
         cfg.train.lambda_recon = args.lambda_recon
     if args.lambda_recon_pred is not None:

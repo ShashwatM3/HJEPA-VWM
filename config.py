@@ -165,6 +165,16 @@ class TrainConfig:
     # so the baseline is byte-identical. The var floor stays on (small λ_var) as a
     # non-interfering safety net (its hinge is inactive once std≥1, where SIGReg lands).
     lambda_sigreg: float = 0.0
+    # SIGReg warmup (investigation_010, Issue 7). SIGReg hits the ONLINE bottleneck
+    # immediately, so a strong λ_sigreg can move c_t's coordinate system faster than
+    # the EMA target B_EMA (and hence the flow target c_plus) can follow — giving F_c a
+    # moving input/output geometry (online condition vs. lagged EMA target) and the
+    # rank-improves-but-flow-plateaus pattern. Ramp the SIGReg weight linearly over
+    # this many steps (same idea as recon_warmup_steps) so the embedding law is shaped
+    # gradually and the EMA keeps up. Only active when lambda_sigreg > 0; the diag
+    # readout logs effective rank/std for BOTH online c_t and EMA target c_plus so a
+    # lagging target can't masquerade as a healthy online rank.
+    sigreg_warmup_steps: int = 2_000
     # VICReg-C off-diagonal covariance penalty on c_t (Plan Phase 04, anti-collapse).
     # Default 0.0 -> term computed for logging (L_cov) but NOT added to loss, so the
     # v0.2 baseline is reproduced exactly. Nonzero = sweep knob: start small

@@ -166,6 +166,11 @@ class Bottleneck(nn.Module):
         # destabilized by random residual contributions.
         nn.init.zeros_(self.out_mlp[-1].weight)
         nn.init.zeros_(self.out_mlp[-1].bias)
+        # Issue 1/9: flag this zero-init residual-output projection so it is held out
+        # of AGC and weight decay (diagnostics.is_geometry_or_gate_param). While ||w||≈0
+        # its AGC bound collapses to ~clip_factor·eps, which would throttle the gradients
+        # that must open the residual branch; decaying it just re-pins identity.
+        self.out_mlp[-1].is_zero_init = True
         self.norm = nn.LayerNorm(cfg.d_c)
 
     def forward(self, detailed: Tensor, *, return_attn: bool = False):
@@ -284,6 +289,11 @@ class AdaLNBlock(nn.Module):
         self.mod = nn.Sequential(nn.SiLU(), nn.Linear(dim, 6 * dim))
         nn.init.zeros_(self.mod[-1].weight)
         nn.init.zeros_(self.mod[-1].bias)
+        # Issue 1/9: flag the zero-init adaLN-Zero modulation projection so it is held
+        # out of AGC and weight decay (diagnostics.is_geometry_or_gate_param). These are
+        # the gates that must "wake up" from identity; clipping/decaying them at ||w||≈0
+        # is exactly what slows the flow predictor.
+        self.mod[-1].is_zero_init = True
 
     def forward(self, x: Tensor, time_emb: Tensor) -> Tensor:
         """Apply one adaLN-Zero self-attention/MLP block.
@@ -345,6 +355,24 @@ class CoarseFlow(nn.Module):
         super().__init__()
         self.cfg = cfg
         self.null_condition = nn.Parameter(torch.zeros(cfg.n_c, cfg.d_c))
+        # Issue 2: explicit token-role and slot-identity embeddings. The flow
+        # transformer otherwise sees 2*N_c undifferentiated tokens and must infer
+        # from content alone which N_c are the noised future and which N_c are the
+        # c_t conditioning, and which slot index is which. Because the bottleneck
+        # slots are LEARNED query slots, slot index carries meaning, so we hand the
+        # flow that meaning explicitly:
+        #   * slot_pos — a SHARED per-slot code added to both streams, so slot i of
+        #     z_c binds to slot i of the conditioning (small-random: identity from
+        #     the start, like the bottleneck queries);
+        #   * z_type / cond_type — segment codes marking the noised-future vs.
+        #     conditioning streams (zero-init: no effect at step 0, an identity start
+        #     consistent with the adaLN-Zero gates).
+        # All three are learned coordinate systems, so they are held out of weight
+        # decay and AGC via _GEOMETRY_LEAF_NAMES (Issues 1 & 9). A horizon embedding
+        # would slot in here for the Phase 4 multi-horizon extension.
+        self.slot_pos = nn.Parameter(torch.randn(cfg.n_c, cfg.d_c) * 0.02)
+        self.z_type = nn.Parameter(torch.zeros(1, 1, cfg.d_c))
+        self.cond_type = nn.Parameter(torch.zeros(1, 1, cfg.d_c))
         self.time_mlp = nn.Sequential(
             nn.Linear(cfg.d_c, cfg.d_c * 4), nn.SiLU(), nn.Linear(cfg.d_c * 4, cfg.d_c)
         )
@@ -377,6 +405,13 @@ class CoarseFlow(nn.Module):
                 )
             null = self.null_condition[None].expand_as(abstract)
             abstract = torch.where(condition_drop[:, None, None], null, abstract)
+        # Issue 2: stamp slot identity (shared across both streams) and token-type
+        # before fusing the two N_c-token streams. Done on FUNCTION-LOCAL copies — the
+        # caller's z_c is untouched, so train_step's rectified-flow endpoint
+        # (z_c + (1-tau)*u_c_hat) still uses the raw noised latent. Condition dropout
+        # ran first, so a dropped condition still carries its slot/type code.
+        z_c = z_c + self.slot_pos[None] + self.z_type
+        abstract = abstract + self.slot_pos[None] + self.cond_type
         x = torch.cat([z_c, abstract], dim=1)
         time_emb = self.time_mlp(_timestep_embedding(tau_c, self.cfg.d_c).to(dtype=x.dtype))
         for block in self.blocks:

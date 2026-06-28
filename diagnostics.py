@@ -171,6 +171,84 @@ def attention_entropy(bottleneck: nn.Module, detailed: Tensor) -> dict[str, floa
     }
 
 
+# Parameters held out of BOTH weight decay (Issue 9) and adaptive gradient
+# clipping (Issue 1). Decaying or per-tensor-clipping these fights representation
+# geometry instead of stabilizing optimization:
+#   * every 1-D tensor — biases and LayerNorm scale/shift (ndim < 2);
+#   * learned coordinate systems — bottleneck/decoder query slots, the F_c null
+#     condition, and the F_c token-type / slot-position embeddings (by leaf name);
+#   * the zero-init adaLN-Zero gate (AdaLNBlock.mod[-1]) and residual-output
+#     projection (Bottleneck.out_mlp[-1]), flagged ``is_zero_init`` at construction.
+#     Both are 2-D weights, so neither the ndim nor the name rule catches them — the
+#     marker does. While ||w||≈0 their AGC bound collapses to ~clip_factor·eps, which
+#     would clamp the very gradients that must "wake up" the residual branches; weight
+#     decay on them just re-pins the branch at identity. (Note: AGC scales .grad
+#     uniformly per tensor and AdamW then divides by the per-coordinate grad RMS, so
+#     a uniform scale largely cancels in the update — but excluding these is the
+#     correct NFNet rule regardless of how much it changes any single step.)
+_GEOMETRY_LEAF_NAMES = frozenset(
+    {"queries", "null_condition", "slot_pos", "z_type", "cond_type"}
+)
+
+
+def _zero_init_param_ids(module: nn.Module) -> set[int]:
+    """Ids of params owned by submodules flagged ``is_zero_init`` at construction.
+
+    Module attributes survive ``.to(device)`` (the Module object is not recreated),
+    so the marker is a robust, refactor-proof signal for the zero-init gate/output
+    projections — no brittle ``out_mlp.3.weight`` index strings.
+    """
+    _require_torch()
+    ids: set[int] = set()
+    for sub in module.modules():
+        if getattr(sub, "is_zero_init", False):
+            for param in sub.parameters(recurse=False):
+                ids.add(id(param))
+    return ids
+
+
+def is_geometry_or_gate_param(name: str, param: Tensor, zero_init_ids: set[int]) -> bool:
+    """True when a parameter must be held out of weight decay and AGC.
+
+    See ``_GEOMETRY_LEAF_NAMES`` for the rationale. One shared predicate keeps the
+    Issue-1 (AGC) and Issue-9 (weight-decay) exclusion sets identical by construction.
+    """
+    if param.ndim < 2:
+        return True
+    if name.rsplit(".", 1)[-1] in _GEOMETRY_LEAF_NAMES:
+        return True
+    return id(param) in zero_init_ids
+
+
+def partition_decay_params(module: nn.Module) -> tuple[list, list]:
+    """Split a module's trainable params into ``(weight_decay, no_decay)`` lists.
+
+    Consumed by ``train.make_optimizer`` to build per-module decay/no-decay AdamW
+    groups (Issue 9). Uses the same predicate as AGC so the two exclusion sets can
+    never drift apart.
+
+    Args:
+        module: A trainable module (B, F_c, or D).
+    Returns:
+        ``(decay, no_decay)`` parameter lists; together they cover every
+        ``requires_grad`` parameter exactly once.
+    """
+    _require_torch()
+    zero_init_ids = _zero_init_param_ids(module)
+    decay: list = []
+    no_decay: list = []
+    for name, param in module.named_parameters():
+        if not param.requires_grad:
+            continue
+        target = (
+            no_decay
+            if is_geometry_or_gate_param(name, param, zero_init_ids)
+            else decay
+        )
+        target.append(param)
+    return decay, no_decay
+
+
 def adaptive_gradient_clip(
     module: nn.Module,
     clip_factor: float,
@@ -184,6 +262,12 @@ def adaptive_gradient_clip(
     spikes (elated step-8450 class) instead of freezing training on the first
     global norm above 50.
 
+    Biases, LayerNorm params, learned query/null/type/slot embeddings, and the
+    zero-init gate/output projections are EXCLUDED (Issue 1 — see
+    ``is_geometry_or_gate_param``): NFNet never clips the final layer, and clipping
+    a ~zero-norm tensor to ~clip_factor·eps would keep the zero-init residual gates
+    from opening. The genuine Linear/Conv weight matrices are still clipped.
+
     Args:
         module: Trainable module with optional `.grad` on its parameters.
         clip_factor: λ — maximum allowed gradient-to-weight norm ratio.
@@ -192,10 +276,13 @@ def adaptive_gradient_clip(
         Metrics dict with clipped tensor count and max pre-clip ratio seen.
     """
     _require_torch()
+    zero_init_ids = _zero_init_param_ids(module)
     clipped_tensors = 0
     max_ratio = 0.0
-    for param in module.parameters():
+    for name, param in module.named_parameters():
         if param.grad is None:
+            continue
+        if is_geometry_or_gate_param(name, param, zero_init_ids):
             continue
         grad = param.grad.detach()
         weight_norm = param.detach().float().norm()
