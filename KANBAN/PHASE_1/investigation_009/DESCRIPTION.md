@@ -1,7 +1,8 @@
 # Investigation 009 — Does predicting the temporal residual (Δ) beat the copy baseline?
 
-**Status:** OPEN — code implemented (`--predict-residual`, `losses.residual_target`, var-floor
-kept; **uncommitted in the working tree**); no runs launched.
+**Status:** OPEN — **both runs complete** (committed `bc77db6`); analysis written
+([`RESULTS_ANALYSIS.md`](RESULTS_ANALYSIS.md)). Awaiting the Tier-2 decision (anti-collapse on `Δ̂`
+/ govern ρ — almost certainly → investigation_010).
 **Opened:** 2026-06-28 (spun out of [investigation_008](../investigation_008/DESCRIPTION.md))
 **Closed:** —
 
@@ -73,10 +74,17 @@ partner and the leading Tier-1 follow-up ([END_OF_WAVE_2 §2.6](../investigation
 
 **One wave, 2-wide on a 2× A100 pod. Control for both = inv008 history (full-latent, on W&B).**
 
-| GPU | Run | λ_sigreg · λ_var · recon · task | Role | W&B id |
+| GPU | Run | λ_sigreg · λ_var · recon · task | Role | W&B name (id) |
 |---|---|---|---|---|
-| 0 | **Run 1** | 6.0 · 0.5 · off · full-latent | SIGReg-only substrate | TBD |
-| 1 | **Run 2** | 5.0 · 0.5 · 0.05 + 0.05 · **residual** | residual prediction + recon | TBD |
+| 0 | **Run 1** | 6.0 · 0.5 · off · full-latent | SIGReg-only substrate | `fine-meadow-34` (`xz3nabr9`) |
+| 1 | **Run 2** | 5.0 · 0.5 · 0.05 + 0.05 · **residual** | residual prediction + recon | `graceful-river-35` (`jsh6uo7p`) |
+
+**Result (2026-06-28):** Run 2 (residual) reversed the static-`c` disease — `c` became temporally
+dynamic (ρ(c_t,c_{t+k}) ~0.9→0.23), reached the richest healthy `c` yet (rank 57.9, cosine 0.17,
+std 1.0), and dropped `coarse_vs_copy_ratio` ~6× (6.06 → 1.08, min 0.915@3500) — **but** `F_c`
+ties copy by predicting `Δ̂≈0` (ratio not decisively < 1). Run 1 confirmed SIGReg pumps rank (→50)
+while freezing `c` (ρ→0.92) and worsening prediction (ratio→6). Bottleneck relocated: "`c` static"
+→ "`c`'s motion unpredictable." Full analysis: [`RESULTS_ANALYSIS.md`](RESULTS_ANALYSIS.md).
 
 **Bottom line (pre-data):** decisive on two fronts — (1) does residual prediction move
 `coarse_vs_copy_ratio` below the full-latent baseline (and toward <1)? (2) is SIGReg-only a clean
