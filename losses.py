@@ -114,19 +114,29 @@ def flow_matching_loss(u_hat: Tensor, u_target: Tensor) -> Tensor:
     return (u_hat - u_target).pow(2).mean()
 
 
-def reconstruction_loss(pred_detailed: Tensor, target_detailed: Tensor) -> Tensor:
-    """Scale-free (relative) MSE reconstruction of the frozen detailed features.
+def reconstruction_loss(
+    pred_detailed: Tensor,
+    target_detailed: Tensor,
+    mode: str = "cosine",
+    eps: float = 1e-6,
+) -> Tensor:
+    """Reconstruction anchor loss for frozen detailed features.
 
     The reconstruction anchor: a small decoder `D` maps the abstract latent back to
     the frozen-encoder detailed features, forcing the bottleneck to keep `c`
     information-rich — directly attacking the ~13 effective-rank ceiling and the
     identical-`c` representational collapse the variance floor alone cannot stop.
 
-    NORMALIZED by the target variance so the value is scale-free (~1.0 == as bad as
-    predicting the target mean, 0.0 == perfect), independent of the V-JEPA feature
-    magnitude. This removes the per-run lambda calibration step: `lambda_recon`
-    weights a quantity whose baseline is always ~1, so the term's share of the loss
-    is predictable across runs.
+    `mode="cosine"` is the current objective: each tubelet vector is L2-normalized
+    along `D_e` before comparison, then scored as `mean(1 - cos(e_hat, e))`.
+    Equivalently, this is one half of the squared distance between unit-normalized
+    tubelets. There is intentionally NO `Var(e)` denominator: the objective removes
+    magnitude as an escape route and leaves only angular alignment with the frozen
+    target features.
+
+    `mode="relative_mse"` is the legacy objective used in investigations 006-010:
+    raw MSE divided by the frozen target variance. It is kept as an explicit
+    ablation switch, not as the default.
 
     The target is the FROZEN encoder output, so it is detached via `as_target`: the
     anchor pins `c` to real per-video content but never lets reconstruction rewrite
@@ -137,14 +147,23 @@ def reconstruction_loss(pred_detailed: Tensor, target_detailed: Tensor) -> Tenso
     Args:
         pred_detailed: (B, N, D_e) decoder output `e_hat`.
         target_detailed: (B, N, D_e) frozen encoder features (context or future clip).
+        mode: `"cosine"` for per-tubelet cosine distance, or `"relative_mse"` for
+            the legacy variance-normalized MSE.
+        eps: Numerical floor for per-tubelet L2 normalization.
     Returns:
-        Scalar relative-MSE reconstruction loss (numerator / target variance).
+        Scalar reconstruction loss averaged over batch and tubelets/features.
     """
     _require_torch()
     target = as_target(target_detailed)
-    mse = (pred_detailed - target).pow(2).mean()
-    denom = target.float().var(unbiased=False).clamp_min(1e-8)
-    return mse / denom
+    if mode == "cosine":
+        pred_unit = torch.nn.functional.normalize(pred_detailed.float(), p=2.0, dim=-1, eps=eps)
+        target_unit = torch.nn.functional.normalize(target.float(), p=2.0, dim=-1, eps=eps)
+        return (1.0 - (pred_unit * target_unit).sum(dim=-1)).mean()
+    if mode == "relative_mse":
+        mse = (pred_detailed - target).pow(2).mean()
+        denom = target.float().var(unbiased=False).clamp_min(1e-8)
+        return mse / denom
+    raise ValueError(f"Unknown reconstruction loss mode: {mode!r}")
 
 
 def variance_floor(abstract: Tensor, std_target: float = 1.0) -> Tensor:
@@ -235,9 +254,9 @@ def sigreg_loss(
         # (y_j - y_k)² = y_j² + y_k² - 2 y_j y_k, broadcast to (P, N, N)
         pair = sq.unsqueeze(2) + sq.unsqueeze(1) - 2.0 * y.unsqueeze(2) * y.unsqueeze(1)
         term1 = torch.exp(-0.5 * b2 * pair).mean(dim=(1, 2))  # (P,)
-        term2 = (2.0 / math.sqrt(1.0 + b2)) * torch.exp(
-            -0.5 * b2 / (1.0 + b2) * sq
-        ).mean(dim=1)  # (P,)
+        term2 = (2.0 / math.sqrt(1.0 + b2)) * torch.exp(-0.5 * b2 / (1.0 + b2) * sq).mean(
+            dim=1
+        )  # (P,)
         term3 = 1.0 / math.sqrt(1.0 + 2.0 * b2)
         return (term1 - term2 + term3).clamp_min(0.0).mean()  # avg over directions
 

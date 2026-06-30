@@ -24,6 +24,8 @@ def test_config_exposes_locked_phase1_constants(monkeypatch):
     assert cfg.train.total_latent_steps == 105_000
     assert cfg.train.lambda_var == 0.10
     assert cfg.train.sigreg_warmup_steps == 2_000
+    assert cfg.train.recon_loss_mode == "cosine"
+    assert cfg.train.present_recon_only is False
     assert cfg.train.var_floor_std_target == 1.0
     assert cfg.data.data_root == "/tmp/jepa-data"
     assert cfg.data.full_root == "/tmp/jepa-data/ssv2"

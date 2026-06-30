@@ -105,6 +105,40 @@ python train.py --data ssv2 --steps 30000
 
 Expected runtime: about 4–5 hours for 30k steps on an A100 80GB with `ssv2_tiny`; measure and update after the first real RunPod run.
 
+### Training flags
+
+| Flag | Values | Use |
+|---|---|---|
+| `--data` | `ssv2`, `ssv2_tiny` | Selects the dataset split root. |
+| `--steps` | integer | Sets max training steps for this launch. |
+| `--resume` | checkpoint path | Loads model and optimizer state from a checkpoint. |
+| `--seed` | integer | Sets Python/Torch RNG seed. |
+| `--stage0-only` | boolean flag | Runs one synthetic sanity step instead of training. |
+| `--log-every` | integer | Overrides console/W&B train metric frequency. |
+| `--diag-every` | integer | Overrides validation diagnostic frequency. |
+| `--checkpoint-dir` | path | Writes checkpoints to this directory. |
+| `--horizon-k` | integer frames | Sets future offset in original video frames. |
+| `--predict-residual` | boolean flag | Predicts `c_{t+k}-c_t` instead of full `c_{t+k}`. |
+| `--present-recon-only` | boolean flag | Trains only `D(B(e_t))->e_t` and skips prediction losses. |
+| `--recon-loss-mode` | `cosine`, `relative_mse` | Chooses new unit-normalized cosine recon or legacy `MSE/Var(e)`. |
+| `--lambda-recon` | float >= 0 | Weights present reconstruction `D(c_t)->e_t`. |
+| `--lambda-recon-pred` | float >= 0 | Weights predicted-future reconstruction `D(c_hat)->e_{t+k}`. |
+| `--recon-warmup-steps` | integer | Linearly ramps reconstruction losses over this many steps. |
+| `--lambda-var` | float >= 0 | Weights the `c_t` variance floor. |
+| `--lambda-sigreg` | float >= 0 | Weights SIGReg isotropic-Gaussian regularization on `c_t`. |
+| `--sigreg-warmup-steps` | integer | Linearly ramps SIGReg over this many steps. |
+| `--lambda-cov` | float >= 0 | Weights optional VICReg-C covariance penalty. |
+| `--lambda-slot` | float >= 0 | Weights optional slot-diversity penalty. |
+| `--lr-bottleneck` | float | Sets peak LR for bottleneck `B`. |
+| `--lr-coarse-flow` | float | Sets peak LR for coarse flow `F_c`. |
+| `--no-agc` | boolean flag | Disables adaptive gradient clipping. |
+| `--agc-lambda-bottleneck` | float > 0 | Sets AGC clip factor for `B`. |
+| `--agc-lambda-coarse-flow` | float > 0 | Sets AGC clip factor for `F_c`. |
+| `--grad-skip-threshold` | float | Skips optimizer steps above this post-AGC global norm. |
+| `--decoder-dim` | integer | Sets reconstruction decoder width. |
+| `--decoder-blocks` | integer | Sets reconstruction decoder depth. |
+| `--n-c` | integer | Sets abstract latent slot count. |
+
 ## Verification
 
 Local lightweight tests (no encoder download — `smoke_test_models` synthesizes `e_t`):

@@ -185,27 +185,35 @@ class TrainConfig:
     # Nonzero is the primary knob after Run A showed c_slot_diversity_rank≈1.6/32.
     lambda_slot: float = 0.0
     # Reconstruction anchor (option 1: gradient through B only, NOT through F_c).
-    # Decode c_t back to the frozen detailed features e_t and penalize MSE, forcing
-    # c_t to stay information-rich (attacks the ~13 effective-rank ceiling and the
-    # identical-c representational collapse). Default 0.0 -> the decoder is NOT run
-    # in the train step (avoids the heavy N_ctx x D_e forward) so the baseline is
-    # byte-identical; L_recon_* readouts are still logged at diag cadence. The loss
-    # is a SCALE-FREE relative MSE (~1.0 baseline), so lambda_recon needs no per-run
-    # calibration: 0.05 is the recommended first nonzero value. Nonzero ramps
-    # linearly over recon_warmup_steps because early training is the fragile phase
+    # Decode c_t back to the frozen detailed features e_t and penalize per-tubelet
+    # cosine distance, forcing c_t to stay information-rich without letting D game
+    # the feature norm. Default 0.0 -> the decoder is NOT run in the train step
+    # (avoids the heavy N_ctx x D_e forward) so the baseline is byte-identical;
+    # L_recon_* readouts are still logged at diag cadence. Nonzero ramps linearly
+    # over recon_warmup_steps because early training is the fragile phase
     # (royal-cherry-17 8600 cliff). The through-F_c future anchor (option 3) is
     # intentionally NOT wired; the split diag readouts (present / c_plus / c_hat)
     # scope whether it is warranted.
     lambda_recon: float = 0.0
+    # Reconstruction loss formula switch. "cosine" is the current norm-invariant
+    # per-tubelet objective; "relative_mse" restores the legacy MSE / Var(e)
+    # objective used before the norm-cheating fix.
+    recon_loss_mode: str = "cosine"
+    # Present-only reconstruction bottleneck test. When True, Stage 1 trains
+    # D(B(e_t)) -> e_t and skips F_c / future prediction losses entirely. Optional
+    # non-prediction regularizers (variance, SIGReg, cov, slot) still follow their
+    # weights, so a pure reconstruction run should set those weights explicitly.
+    present_recon_only: bool = False
     recon_warmup_steps: int = 2_000
     lr_decoder: float = 1e-4  # peak LR for the reconstruction decoder D
     agc_lambda_decoder: float = 0.20  # AGC λ for D (mirrors the bottleneck)
     # Prediction-side reconstruction anchor (option 3, the VITA-style joint objective).
     # Decode the PREDICTED future latent c_hat back to the future detailed features
-    # e_{t+k} and penalize MSE, with the gradient flowing THROUGH F_c — and into B via
-    # the F_c conditioning on c_t (not detached) — so the objective rewards a c that is
-    # PREDICTABLE, not merely reconstructable. Runs ALONGSIDE the present anchor
-    # (lambda_recon), reusing the same decoder D and the same recon_warmup ramp.
+    # e_{t+k} and penalize per-tubelet cosine distance, with the gradient flowing
+    # THROUGH F_c — and into B via the F_c conditioning on c_t (not detached) — so
+    # the objective rewards a c that is PREDICTABLE, not merely reconstructable.
+    # Runs ALONGSIDE the present anchor (lambda_recon), reusing the same decoder D
+    # and the same recon_warmup ramp.
     # fanciful-lake-18 motivated this: option 1 removed the cliff but left the copy gate
     # failing (F_c loses to copy) while L_recon_chat ≈ L_recon_cplus showed present-anchor
     # recon is blind to prediction error. Default 0.0 => prediction branch not run

@@ -206,10 +206,7 @@ def peak_base_lrs(
     config — NOT from a resumed checkpoint's ``param_group["lr"]`` (which stores the
     SCHEDULED lr at save time and would double-apply cosine decay on resume).
     """
-    return [
-        group["lr"]
-        for group in _trainable_param_groups(bottleneck, coarse_flow, decoder, cfg)
-    ]
+    return [group["lr"] for group in _trainable_param_groups(bottleneck, coarse_flow, decoder, cfg)]
 
 
 def device_for_training() -> torch.device:
@@ -273,6 +270,29 @@ def _coarse_forward(
     return abstract, target_abstract, detailed, target_detailed
 
 
+def _present_forward(
+    encoder: nn.Module,
+    bottleneck: nn.Module,
+    context_clip: Tensor,
+) -> tuple[Tensor, Tensor]:
+    """Compute only the present detailed and abstract latents for recon-only runs.
+
+    Present-only reconstruction intentionally removes the future branch and F_c
+    prediction path, so it should not encode the target clip or construct c_plus.
+
+    Args:
+        encoder: Frozen V-JEPA 2 encoder E.
+        bottleneck: Trainable bottleneck B.
+        context_clip: (B, 8, 3, 256, 256) encoder-normalized context window.
+    Returns:
+        (abstract, detailed): c_t (grad) and frozen e_t (no-grad).
+    """
+    with torch.no_grad():
+        detailed = encoder(context_clip)
+    abstract = bottleneck(detailed)
+    return abstract, detailed
+
+
 def train_step(
     batch: tuple[Tensor, Tensor],
     modules: tuple[nn.Module, nn.Module, nn.Module, nn.Module, nn.Module],
@@ -294,28 +314,34 @@ def train_step(
         Scalar metrics for logging.
     """
     encoder, bottleneck, target_bottleneck, coarse_flow, decoder = modules
-    context_clip, target_clip = (x.to(device, non_blocking=True) for x in batch)
+    context_clip = batch[0].to(device, non_blocking=True)
+    target_clip = None if cfg.train.present_recon_only else batch[1].to(device, non_blocking=True)
     optimizer.zero_grad(set_to_none=True)
     with autocast_context(device, cfg):
-        abstract, target_abstract, detailed, target_detailed = _coarse_forward(
-            encoder, bottleneck, target_bottleneck, context_clip, target_clip
-        )
-        if cfg.train.predict_residual:
-            # investigation_009: predict the temporal residual Δ = c_{t+k} - c_t (both from
-            # B_EMA -> purely temporal, fully detached) instead of the full future latent.
-            # Scale the flow noise to Δ so the velocity target isn't noise-dominated; the
-            # option-3 recon add-back below becomes ĉ = c_t + Δ̂.
-            target_present = target_bottleneck(detailed)  # B_EMA(e_t), detached
-            flow_target, residual_sigma = residual_target(target_abstract, target_present)
-            eps_c = residual_sigma.to(flow_target.dtype) * torch.randn_like(flow_target)
+        if cfg.train.present_recon_only:
+            abstract, detailed = _present_forward(encoder, bottleneck, context_clip)
+            flow_loss = abstract.new_zeros(())
         else:
-            flow_target = target_abstract
-            eps_c = torch.randn_like(target_abstract)
-        tau_c = torch.rand(target_abstract.shape[0], device=device)
-        z_c = interpolate(flow_target, eps_c, tau_c)
-        u_c = velocity_target(flow_target, eps_c)
-        u_c_hat = coarse_flow(z_c, tau_c, abstract)
-        flow_loss = flow_matching_loss(u_c_hat, u_c)
+            assert target_clip is not None
+            abstract, target_abstract, detailed, target_detailed = _coarse_forward(
+                encoder, bottleneck, target_bottleneck, context_clip, target_clip
+            )
+            if cfg.train.predict_residual:
+                # investigation_009: predict the temporal residual Δ = c_{t+k} - c_t
+                # (both from B_EMA -> purely temporal, fully detached) instead of the full
+                # future latent. Scale the flow noise to Δ so the velocity target isn't
+                # noise-dominated; the option-3 recon add-back below becomes ĉ = c_t + Δ̂.
+                target_present = target_bottleneck(detailed)  # B_EMA(e_t), detached
+                flow_target, residual_sigma = residual_target(target_abstract, target_present)
+                eps_c = residual_sigma.to(flow_target.dtype) * torch.randn_like(flow_target)
+            else:
+                flow_target = target_abstract
+                eps_c = torch.randn_like(target_abstract)
+            tau_c = torch.rand(target_abstract.shape[0], device=device)
+            z_c = interpolate(flow_target, eps_c, tau_c)
+            u_c = velocity_target(flow_target, eps_c)
+            u_c_hat = coarse_flow(z_c, tau_c, abstract)
+            flow_loss = flow_matching_loss(u_c_hat, u_c)
         var_loss = variance_floor(abstract, cfg.train.var_floor_std_target)
         # VICReg-C (Plan Phase 04): always computed so L_cov is logged even on the
         # baseline (Run A) to calibrate lambda_cov; only added to the loss — and
@@ -335,7 +361,11 @@ def train_step(
         sigreg_gen = torch.Generator(device=device)
         sigreg_gen.manual_seed(cfg.seed * 1_000_003 + step)
         sigreg_l = sigreg_loss(abstract, generator=sigreg_gen)
-        loss = flow_loss + cfg.train.lambda_var * var_loss
+        if cfg.train.present_recon_only:
+            loss = abstract.sum() * 0.0
+        else:
+            loss = flow_loss
+        loss = loss + cfg.train.lambda_var * var_loss
         if cfg.train.lambda_cov > 0.0:
             loss = loss + cfg.train.lambda_cov * cov_loss
         if cfg.train.lambda_slot > 0.0:
@@ -350,37 +380,48 @@ def train_step(
             sigreg_scale = linear_ramp_scale(step, cfg.train.sigreg_warmup_steps)
             loss = loss + cfg.train.lambda_sigreg * sigreg_scale * sigreg_l
         # Reconstruction anchor (option 1): decode the ONLINE c_t back to e_hat and
-        # penalize MSE against the frozen e_t. The gradient flows into D and B only
-        # (abstract is online; detailed is frozen/no-grad; F_c is untouched because
-        # we decode c_t, not c_hat). Ramp linearly over recon_warmup_steps to protect
-        # the fragile early phase. Default off => decoder is NOT run here (skips the
-        # heavy N_ctx x D_e forward), so the baseline stays byte-identical; L_recon_*
-        # is logged from run_diagnostics instead.
+        # penalize per-tubelet cosine distance against the frozen e_t. The gradient
+        # flows into D and B only (abstract is online; detailed is frozen/no-grad;
+        # F_c is untouched because we decode c_t, not c_hat). Ramp linearly over
+        # recon_warmup_steps to protect the fragile early phase. Default off =>
+        # decoder is NOT run here (skips the heavy N_ctx x D_e forward), so the
+        # baseline stays byte-identical; L_recon_* is logged from run_diagnostics.
         recon_loss_val = 0.0
         recon_pred_loss_val = 0.0
         recon_scale = 0.0
-        if cfg.train.lambda_recon > 0.0 or cfg.train.lambda_recon_pred > 0.0:
+        if cfg.train.lambda_recon > 0.0 or (
+            not cfg.train.present_recon_only and cfg.train.lambda_recon_pred > 0.0
+        ):
             recon_scale = linear_ramp_scale(step, cfg.train.recon_warmup_steps)
         if cfg.train.lambda_recon > 0.0:
-            recon_loss = reconstruction_loss(decoder(abstract), detailed)
+            recon_loss = reconstruction_loss(
+                decoder(abstract),
+                detailed,
+                mode=cfg.train.recon_loss_mode,
+            )
             loss = loss + cfg.train.lambda_recon * recon_scale * recon_loss
             recon_loss_val = float(recon_loss.detach().float().item())
         # Reconstruction anchor (option 3): decode the PREDICTED future latent c_hat and
-        # penalize MSE against the frozen future features e_{t+k} (target_detailed). c_hat
-        # is the rectified-flow one-step endpoint estimate built from the SAME u_c_hat
-        # already computed for flow_loss (no extra F_c forward), so the gradient flows
-        # through F_c AND — via the F_c conditioning on c_t — into B. The conditioning
-        # path is intentionally NOT detached (VITA-style joint training: c is shaped to be
-        # predictable, not merely reconstructable). target_detailed is frozen (detached
-        # inside reconstruction_loss). Reuses the present anchor's warmup ramp. Default
-        # off => not run, so the option-1 baseline stays byte-identical. With this on, the
-        # diag readout L_recon_chat should drop (the gradient now acts on it).
-        if cfg.train.lambda_recon_pred > 0.0:
+        # penalize per-tubelet cosine distance against the frozen future features
+        # e_{t+k} (target_detailed). c_hat is the rectified-flow one-step endpoint
+        # estimate built from the SAME u_c_hat already computed for flow_loss (no extra
+        # F_c forward), so the gradient flows through F_c AND — via the F_c conditioning
+        # on c_t — into B. The conditioning path is intentionally NOT detached
+        # (VITA-style joint training: c is shaped to be predictable, not merely
+        # reconstructable). target_detailed is frozen (detached inside
+        # reconstruction_loss). Reuses the present anchor's warmup ramp. Default off =>
+        # not run, so the option-1 baseline stays byte-identical. With this on, the diag
+        # readout L_recon_chat should drop (the gradient now acts on it).
+        if not cfg.train.present_recon_only and cfg.train.lambda_recon_pred > 0.0:
             endpoint = z_c + (1.0 - tau_c.reshape(-1, 1, 1)) * u_c_hat
             # Residual mode reconstructs the future from ĉ = c_t + Δ̂ (online c_t, so the
             # recon gradient still reaches B via the add-back and the F_c conditioning).
             c_hat = (abstract + endpoint) if cfg.train.predict_residual else endpoint
-            recon_pred_loss = reconstruction_loss(decoder(c_hat), target_detailed)
+            recon_pred_loss = reconstruction_loss(
+                decoder(c_hat),
+                target_detailed,
+                mode=cfg.train.recon_loss_mode,
+            )
             loss = loss + cfg.train.lambda_recon_pred * recon_scale * recon_pred_loss
             recon_pred_loss_val = float(recon_pred_loss.detach().float().item())
     loss.backward()
@@ -395,9 +436,7 @@ def train_step(
         eps=cfg.train.agc_eps,
     )
     trainable = (
-        list(bottleneck.parameters())
-        + list(coarse_flow.parameters())
-        + list(decoder.parameters())
+        list(bottleneck.parameters()) + list(coarse_flow.parameters()) + list(decoder.parameters())
     )
     grad_norm = torch.nn.utils.clip_grad_norm_(trainable, cfg.train.grad_clip)
     # Survivability guard (POSTMORTEM_RUN1.md; retuned after elated-snowflake-15).
@@ -406,10 +445,7 @@ def train_step(
     # Skip only tail catastrophes — not the 30–100 band that elated showed at
     # L_flow≈1.9 (step 8450 grad≈65).
     grad_norm_f = float(grad_norm)
-    grad_skipped = (
-        not math.isfinite(grad_norm_f)
-        or grad_norm_f > cfg.train.grad_skip_threshold
-    )
+    grad_skipped = not math.isfinite(grad_norm_f) or grad_norm_f > cfg.train.grad_skip_threshold
     instability_warn = (
         grad_norm_f > cfg.train.instability_warn_grad_norm
         and float(flow_loss.detach().float().item()) > cfg.train.instability_warn_l_flow
@@ -434,6 +470,8 @@ def train_step(
         "L_recon": recon_loss_val,
         "L_recon_pred": recon_pred_loss_val,
         "recon_scale": recon_scale,
+        "present_recon_only": float(cfg.train.present_recon_only),
+        "prediction_active": float(not cfg.train.present_recon_only),
         "grad_norm": grad_norm_f,
         "grad_skipped": float(grad_skipped),
         "instability_warn": float(instability_warn),
@@ -542,7 +580,8 @@ def run_stage0(cfg: Config) -> None:
     ema_after = next(target_bottleneck.parameters()).detach().clone()
     assert math.isfinite(metrics["loss"]), metrics
     assert torch.equal(enc_before, enc_after), "Frozen encoder params changed"
-    assert not torch.equal(ema_before, ema_after), "B_EMA did not update"
+    if metrics["grad_norm"] > 0.0 and metrics["grad_skipped"] == 0.0:
+        assert not torch.equal(ema_before, ema_after), "B_EMA did not update"
     print(f"Stage 0 sanity passed: {metrics}")
 
 
@@ -554,7 +593,28 @@ def run_diagnostics(
 ) -> dict[str, float]:
     """Run Phase 1 diagnostics on a fixed validation batch."""
     encoder, bottleneck, target_bottleneck, coarse_flow, decoder = modules
-    context_clip, target_clip = (x.to(device, non_blocking=True) for x in batch)
+    context_clip = batch[0].to(device, non_blocking=True)
+    if cfg.train.present_recon_only:
+        with torch.no_grad():
+            abstract, detailed = _present_forward(encoder, bottleneck, context_clip)
+        metrics: dict[str, float] = {}
+        metrics.update(variance_stats(abstract))
+        metrics.update(cross_video_cosine(abstract))
+        metrics.update(effective_rank(abstract))
+        metrics.update(slot_diversity_rank(abstract))
+        metrics.update(gradient_health(nn.ModuleList([bottleneck, coarse_flow, decoder])))
+        metrics["L_recon_present"] = float(
+            reconstruction_loss(
+                decoder(abstract),
+                detailed,
+                mode=cfg.train.recon_loss_mode,
+            ).item()
+        )
+        metrics["present_recon_only"] = 1.0
+        metrics["prediction_active"] = 0.0
+        metrics.update(attention_entropy(bottleneck, detailed))
+        return metrics
+    target_clip = batch[1].to(device, non_blocking=True)
     with torch.no_grad():
         abstract, target_abstract, detailed, target_detailed = _coarse_forward(
             encoder, bottleneck, target_bottleneck, context_clip, target_clip
@@ -569,6 +629,8 @@ def run_diagnostics(
         tau_c = torch.rand(target_abstract.shape[0], device=device)
         z_c = interpolate(flow_target, eps_c, tau_c)
     metrics: dict[str, float] = {}
+    metrics["present_recon_only"] = 0.0
+    metrics["prediction_active"] = 1.0
     metrics.update(variance_stats(abstract))
     metrics.update(cross_video_cosine(abstract))
     metrics.update(effective_rank(abstract))
@@ -604,6 +666,7 @@ def run_diagnostics(
             z_c,
             tau_c,
             predict_residual=cfg.train.predict_residual,
+            recon_loss_mode=cfg.train.recon_loss_mode,
         )
     )
     # Reuse the detailed tensor from `_coarse_forward` (no second encoder forward).
@@ -621,6 +684,7 @@ def reconstruction_readouts(
     z_c: Tensor,
     tau_c: Tensor,
     predict_residual: bool = False,
+    recon_loss_mode: str = "cosine",
 ) -> dict[str, float]:
     """Log-only reconstruction readouts that also SCOPE the option-3 decision.
 
@@ -644,12 +708,26 @@ def reconstruction_readouts(
         # the true c_plus for the L_recon_cplus readout below).
         c_hat = (abstract + endpoint) if predict_residual else endpoint
         return {
-            "L_recon_present": float(reconstruction_loss(decoder(abstract), detailed).item()),
+            "L_recon_present": float(
+                reconstruction_loss(
+                    decoder(abstract),
+                    detailed,
+                    mode=recon_loss_mode,
+                ).item()
+            ),
             "L_recon_cplus": float(
-                reconstruction_loss(decoder(target_abstract), target_detailed).item()
+                reconstruction_loss(
+                    decoder(target_abstract),
+                    target_detailed,
+                    mode=recon_loss_mode,
+                ).item()
             ),
             "L_recon_chat": float(
-                reconstruction_loss(decoder(c_hat), target_detailed).item()
+                reconstruction_loss(
+                    decoder(c_hat),
+                    target_detailed,
+                    mode=recon_loss_mode,
+                ).item()
             ),
         }
 
@@ -782,9 +860,9 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=None,
         help="Reconstruction-anchor weight (option 1: decode c_t -> e_t, grad into "
-        "B only, NOT F_c). 0 = baseline (decoder runs at diag cadence for "
-        "L_recon_present calibration only). Nonzero ramps in over --recon-warmup-steps; "
-        "calibrate against the logged baseline L_recon_present magnitude.",
+        "B only, NOT F_c). Uses per-tubelet cosine distance after unit-normalizing "
+        "e_hat and e. 0 = baseline (decoder runs at diag cadence for "
+        "L_recon_present calibration only). Nonzero ramps in over --recon-warmup-steps.",
     )
     parser.add_argument(
         "--lambda-recon-pred",
@@ -795,6 +873,19 @@ def parse_args() -> argparse.Namespace:
         "0 = option-1 baseline (prediction branch not run). Runs alongside --lambda-recon, "
         "reusing the same decoder and --recon-warmup-steps ramp. Watch L_recon_chat drop "
         "and coarse_vs_copy_ratio fall below 1.",
+    )
+    parser.add_argument(
+        "--recon-loss-mode",
+        choices=["cosine", "relative_mse"],
+        default=None,
+        help="Reconstruction loss formula. cosine = per-tubelet unit-normalized "
+        "mean(1 - cos), current default. relative_mse = legacy MSE / Var(e).",
+    )
+    parser.add_argument(
+        "--present-recon-only",
+        action="store_true",
+        help="Train only the present reconstruction path D(B(e_t))->e_t: skips F_c loss, "
+        "future prediction, residual prediction, and lambda_recon_pred.",
     )
     parser.add_argument(
         "--predict-residual",
@@ -886,6 +977,24 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def finalize_training_config(cfg: Config) -> None:
+    """Validate and normalize experiment-mode switches before modules are built."""
+    if cfg.train.recon_loss_mode not in {"cosine", "relative_mse"}:
+        raise ValueError(
+            "cfg.train.recon_loss_mode must be 'cosine' or 'relative_mse'; "
+            f"got {cfg.train.recon_loss_mode!r}"
+        )
+    if cfg.train.present_recon_only:
+        if cfg.train.lambda_recon <= 0.0:
+            raise ValueError("--present-recon-only requires --lambda-recon > 0")
+        if cfg.train.lambda_recon_pred > 0.0:
+            print("--present-recon-only ignores lambda_recon_pred; setting it to 0.0")
+            cfg.train.lambda_recon_pred = 0.0
+        if cfg.train.predict_residual:
+            print("--present-recon-only ignores --predict-residual; disabling residual mode")
+            cfg.train.predict_residual = False
+
+
 def main() -> None:
     """Run the requested Phase 1 command (Stage 0 sanity or Stage 1 training)."""
     args = parse_args()
@@ -913,6 +1022,10 @@ def main() -> None:
         cfg.train.lambda_recon = args.lambda_recon
     if args.lambda_recon_pred is not None:
         cfg.train.lambda_recon_pred = args.lambda_recon_pred
+    if args.recon_loss_mode is not None:
+        cfg.train.recon_loss_mode = args.recon_loss_mode
+    if args.present_recon_only:
+        cfg.train.present_recon_only = True
     if args.predict_residual:
         cfg.train.predict_residual = True
     if args.recon_warmup_steps is not None:
@@ -938,6 +1051,7 @@ def main() -> None:
         cfg.model.n_c = args.n_c
     if args.checkpoint_dir is not None:
         cfg.checkpoint_dir = args.checkpoint_dir
+    finalize_training_config(cfg)
     if args.stage0_only:
         run_stage0(cfg)
     else:
