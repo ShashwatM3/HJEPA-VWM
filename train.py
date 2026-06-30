@@ -525,8 +525,18 @@ def load_checkpoint(
     coarse_flow.load_state_dict(ckpt["coarse_flow"])
     # Backward-compat: pre-reconstruction checkpoints have no "decoder"; leave D at
     # its fresh init (it is only meaningful once lambda_recon > 0 has trained it).
+    # Checkpoints from the learned-query decoder era are intentionally incompatible:
+    # those stored a trainable per-output-token content table (`queries`), while the
+    # fixed-position decoder must start from a non-trainable `fixed_pos` buffer.
     if "decoder" in ckpt:
-        decoder.load_state_dict(ckpt["decoder"])
+        decoder_state = ckpt["decoder"]
+        if "queries" in decoder_state or "fixed_pos" not in decoder_state:
+            raise RuntimeError(
+                "Checkpoint uses the old learned-query reconstruction decoder. "
+                "Start a fresh run, or load a checkpoint without decoder state, when using "
+                "the fixed-position decoder architecture."
+            )
+        decoder.load_state_dict(decoder_state)
     if optimizer is not None and "optimizer" in ckpt:
         try:
             optimizer.load_state_dict(ckpt["optimizer"])

@@ -38,7 +38,7 @@ Phase 1 implements:
 - `config.py` — locked constants and path defaults (frozen encoder repo, `D_e=1024`)
 - `make_subset.py` — symlink-only SSv2-tiny creation
 - `data.py` — SSv2 clips: 8 context frames + 8-frame future clip (horizon `k`) at 256×256, encoder-normalized
-- `models.py` — frozen encoder `E` (V-JEPA 2 ViT-L/16), bottleneck `B`, EMA bottleneck `B_EMA`, coarse flow `F_c`
+- `models.py` — frozen encoder `E` (V-JEPA 2 ViT-L/16), bottleneck `B`, EMA bottleneck `B_EMA`, coarse flow `F_c`, fixed-position reconstruction decoder `D`
 - `losses.py` — rectified-flow matching and the variance floor on `c_t`
 - `diagnostics.py` — the three required `c_t` monitors (variance, cross-video cosine, effective rank), F_c baselines, gradient health
 - `train.py` — Stage 0 synthetic sanity and Stage 1 training loop

@@ -419,14 +419,74 @@ class CoarseFlow(nn.Module):
         return self.norm(x[:, : self.cfg.n_c])
 
 
-class DecoderBlock(nn.Module):
-    """One cross-attention + MLP block for the reconstruction decoder.
+def _axis_sincos_position_code(position: Tensor, dim: int) -> Tensor:
+    """Encode one tubelet-coordinate axis with deterministic sin/cos features.
 
     Args:
-        queries: (B, N_ctx, dim) output-token queries.
-        memory: (B, N_c, dim) projected abstract latent (keys/values).
+        position: (N_ctx,) tubelet coordinates for one axis.
+        dim: Number of decoder channels assigned to this axis.
     Returns:
-        queries: (B, N_ctx, dim) updated output-token representations.
+        code: (N_ctx, dim) non-trainable positional features.
+    """
+    if dim <= 0:
+        return position.new_zeros(position.shape[0], 0)
+    half = max(1, math.ceil(dim / 2))
+    freqs = torch.exp(
+        -math.log(10000)
+        * torch.arange(half, dtype=position.dtype, device=position.device)
+        / max(1, half)
+    )
+    phase = position[:, None] * freqs[None]
+    code = torch.cat([phase.sin(), phase.cos()], dim=-1)
+    return code[:, :dim]
+
+
+def _fixed_tubelet_position_codes(cfg: ModelConfig, dim: int) -> Tensor:
+    """Build fixed 3D codes for V-JEPA's temporal-major tubelet grid.
+
+    The decoder may know *where* each detailed token lives, but the position code
+    must not become a learned content template. The returned tensor is registered
+    as a buffer by `Decoder`, never as an `nn.Parameter`.
+
+    Args:
+        cfg: Model configuration defining `(T/2, H/16, W/16)` geometry.
+        dim: Decoder hidden width.
+    Returns:
+        fixed_pos: (N_ctx, dim) deterministic tubelet position codes.
+    """
+    temporal = torch.arange(cfg.n_temporal_tokens, dtype=torch.float32)
+    row = torch.arange(cfg.grid_spatial, dtype=torch.float32)
+    col = torch.arange(cfg.grid_spatial, dtype=torch.float32)
+    tt, yy, xx = torch.meshgrid(temporal, row, col, indexing="ij")
+    t_pos = tt.reshape(-1)
+    y_pos = yy.reshape(-1)
+    x_pos = xx.reshape(-1)
+
+    t_dim = dim // 3
+    y_dim = (dim - t_dim) // 2
+    x_dim = dim - t_dim - y_dim
+    fixed_pos = torch.cat(
+        [
+            _axis_sincos_position_code(t_pos, t_dim),
+            _axis_sincos_position_code(y_pos, y_dim),
+            _axis_sincos_position_code(x_pos, x_dim),
+        ],
+        dim=-1,
+    )
+    if fixed_pos.shape != (cfg.n_ctx, dim):
+        raise RuntimeError(f"Bad decoder position-code shape: {tuple(fixed_pos.shape)}")
+    return fixed_pos
+
+
+class DecoderBlock(nn.Module):
+    """One fixed-position cross-attention + MLP block for the reconstruction decoder.
+
+    Args:
+        hidden: (B, N_ctx, dim) output-token content derived from `c`.
+        memory: (B, N_c, dim) projected abstract latent (keys/values).
+        fixed_pos: (N_ctx, dim) non-trainable tubelet position codes.
+    Returns:
+        hidden: (B, N_ctx, dim) updated c-derived output-token content.
     """
 
     def __init__(self, dim: int, heads: int, mlp_ratio: int = 4):
@@ -440,21 +500,30 @@ class DecoderBlock(nn.Module):
             nn.Linear(dim, dim * mlp_ratio), nn.GELU(), nn.Linear(dim * mlp_ratio, dim)
         )
 
-    def forward(self, queries: Tensor, memory: Tensor) -> Tensor:
-        """Cross-attend output queries into the abstract latent, then MLP-mix."""
-        attn, _ = self.cross_attn(self.norm_q(queries), memory, memory, need_weights=False)
-        queries = queries + attn
-        return queries + self.mlp(self.norm_mlp(queries))
+    def forward(self, hidden: Tensor, memory: Tensor, fixed_pos: Tensor) -> Tensor:
+        """Read from `c` using position-aware queries without adding position as content.
+
+        Args:
+            hidden: (B, N_ctx, dim) current output-token content, already derived from `c`.
+            memory: (B, N_c, dim) projected abstract latent used as keys/values.
+            fixed_pos: (N_ctx, dim) non-trainable tubelet position codes.
+        Returns:
+            hidden: (B, N_ctx, dim) updated output-token content.
+        """
+        position_query = self.norm_q(hidden) + fixed_pos[None].to(dtype=hidden.dtype)
+        attn, _ = self.cross_attn(position_query, memory, memory, need_weights=False)
+        hidden = hidden + attn
+        return hidden + self.mlp(self.norm_mlp(hidden))
 
 
 class Decoder(nn.Module):
     """Reconstruct frozen detailed features from the abstract latent (richness anchor).
 
-    A deliberately small cross-attention expander: `N_ctx` learned output-token
-    queries cross-attend into the `N_c` abstract slots and project to `D_e`, giving
-    `e_hat` (B, N_ctx, D_e). The reconstruction MSE against the frozen detailed
-    features forces `c` to stay information-rich, attacking the ~13 effective-rank
-    ceiling and the identical-`c` representational collapse.
+    A deliberately small cross-attention expander: fixed 3D tubelet-position codes
+    query the `N_c` abstract slots and project the resulting c-derived content to
+    `D_e`, giving `e_hat` (B, N_ctx, D_e). Position tells the decoder where to
+    write; the abstract latent `c` tells it what to write. There is no learned
+    per-output-token content table.
 
     GENERIC BY DESIGN: `forward` takes any (B, N_c, D_c) latent. Option 1 feeds the
     online `c_t`, so the gradient flows into `D` and `B` only (`F_c` is untouched
@@ -470,16 +539,15 @@ class Decoder(nn.Module):
     """
 
     def __init__(self, cfg: ModelConfig):
-        """Initialize the latent projection, output queries, blocks, and head."""
+        """Initialize the latent projection, fixed position buffer, blocks, and head."""
         _require_torch()
         super().__init__()
         self.cfg = cfg
         dim = cfg.decoder_dim
         self.kv_proj = nn.Linear(cfg.d_c, dim)
-        # Orthogonal output-token queries: decorrelated start (mirrors Bottleneck).
-        q = torch.empty(cfg.n_ctx, dim)
-        nn.init.orthogonal_(q)
-        self.queries = nn.Parameter(q)
+        self.initial_pos_norm = nn.LayerNorm(dim, elementwise_affine=False)
+        self.initial_cross_attn = nn.MultiheadAttention(dim, cfg.decoder_heads, batch_first=True)
+        self.register_buffer("fixed_pos", _fixed_tubelet_position_codes(cfg, dim))
         self.blocks = nn.ModuleList(
             [DecoderBlock(dim, cfg.decoder_heads) for _ in range(cfg.decoder_blocks)]
         )
@@ -496,10 +564,14 @@ class Decoder(nn.Module):
         """
         b = latent.shape[0]
         memory = self.kv_proj(latent)
-        queries = self.queries[None].expand(b, -1, -1)
+        fixed_pos = self.fixed_pos.to(device=memory.device, dtype=memory.dtype)
+        # First read: hidden is a weighted sum of c-derived values. The fixed
+        # position code controls attention weights only; it is not residual content.
+        initial_query = self.initial_pos_norm(fixed_pos)[None].expand(b, -1, -1)
+        hidden, _ = self.initial_cross_attn(initial_query, memory, memory, need_weights=False)
         for block in self.blocks:
-            queries = block(queries, memory)
-        return self.out_proj(self.out_norm(queries))
+            hidden = block(hidden, memory, fixed_pos)
+        return self.out_proj(self.out_norm(hidden))
 
 
 def build_phase1_modules(

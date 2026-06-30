@@ -61,7 +61,6 @@ def test_make_optimizer_keeps_geometry_and_zero_init_out_of_weight_decay():
         coarse_flow.cond_type,
         coarse_flow.blocks[0].mod[-1].weight,
         coarse_flow.blocks[0].mod[-1].bias,
-        decoder.queries,
     )
     for param in no_decay_params:
         assert weight_decay_by_id[id(param)] == 0.0
@@ -137,3 +136,31 @@ def test_load_checkpoint_skips_incompatible_optimizer_state(tmp_path):
     )
 
     assert train.load_checkpoint(path, modules, optimizer) == 123
+
+
+def test_load_checkpoint_rejects_learned_query_decoder_state(tmp_path):
+    """Old decoder checkpoints fail clearly instead of loading per-position templates."""
+    models = importlib.import_module("models")
+    train = importlib.import_module("train")
+    cfg = _small_cfg()
+    modules = models.build_phase1_modules(cfg, load_encoder=False)
+    _, bottleneck, target_bottleneck, coarse_flow, decoder = modules
+
+    old_decoder_state = decoder.state_dict()
+    old_decoder_state.pop("fixed_pos")
+    old_decoder_state["queries"] = torch.randn(cfg.model.n_ctx, cfg.model.decoder_dim)
+
+    path = tmp_path / "old_decoder.pt"
+    torch.save(
+        {
+            "global_step": 123,
+            "bottleneck": bottleneck.state_dict(),
+            "target_bottleneck": target_bottleneck.state_dict(),
+            "coarse_flow": coarse_flow.state_dict(),
+            "decoder": old_decoder_state,
+        },
+        path,
+    )
+
+    with pytest.raises(RuntimeError, match="old learned-query reconstruction decoder"):
+        train.load_checkpoint(path, modules)

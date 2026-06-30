@@ -71,11 +71,13 @@ class ModelConfig:
     condition_dropout: float = 0.10
 
     # Reconstruction decoder D (reconstruction anchor, option 1). A deliberately
-    # small cross-attention expander: c_t (N_c x D_c) -> e_hat (N_ctx x D_e). It
-    # exists only to supply an information-richness gradient to B, NOT as a
-    # showpiece generator (that is the separate Phase 3 frame generator on pixels).
-    # Generic by design so the through-F_c "future anchor" (option 3) is a caller
-    # change, not a rewrite. See KANBAN reconstruction-anchor investigation.
+    # small fixed-position cross-attention expander: c_t (N_c x D_c) -> e_hat
+    # (N_ctx x D_e). Fixed tubelet position codes tell D where to write; c-derived
+    # values tell it what to write. There is no trainable per-output-token content
+    # query table. It exists only to supply an information-richness gradient to B,
+    # NOT as a showpiece generator (that is the separate Phase 3 frame generator on
+    # pixels). Generic by design so the through-F_c "future anchor" (option 3) is a
+    # caller change, not a rewrite. See KANBAN investigation_011.
     decoder_dim: int = 256
     decoder_blocks: int = 2
     decoder_heads: int = 8
