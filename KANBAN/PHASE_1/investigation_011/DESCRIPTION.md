@@ -18,15 +18,16 @@ This investigation tests two separate reconstruction questions:
   decoder `512x4`, `n_c=32`, `k=12`) and switch only the reconstruction formula to
   `--recon-loss-mode cosine`.
 - **Run B — present-only reconstruction bottleneck test.** Disable prediction with
-  `--present-recon-only` and train only `D(B(e_t)) -> e_t` with the cosine reconstruction loss;
-  no `F_c` loss, no residual target, no future `c_hat`, no `D(c_hat) -> e_{t+k}` branch.
+  `--present-recon-only` and train only `D(B(e_t)) -> e_t` with the original
+  `--recon-loss-mode relative_mse` objective; no `F_c` loss, no residual target, no future
+  `c_hat`, no `D(c_hat) -> e_{t+k}` branch.
 
 ## Runs
 
 | Run | Config | Role | Main readout |
 |---|---|---|---|
 | A | full residual + SIGReg + `--recon-loss-mode cosine` | Does the new recon geometry help the current best recipe? | `coarse_vs_copy_ratio`, rank, `L_recon_chat - L_recon_cplus` |
-| B | `--present-recon-only`, `λ_var=0`, `λ_sigreg=0`, `λ_recon=0.05` | Can reconstruction alone make `c_t` rich enough to decode `e_t`? | `L_recon_present`, `c_effective_rank`, `c_cross_video_cosine` |
+| B | `--present-recon-only`, `--recon-loss-mode relative_mse`, `λ_var=0`, `λ_sigreg=0`, `λ_recon=0.05` | Can original-loss reconstruction alone make `c_t` rich enough to decode `e_t`? | `L_recon_present`, `c_effective_rank`, `c_cross_video_cosine` |
 
 ## Interpretation
 

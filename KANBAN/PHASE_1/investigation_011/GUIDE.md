@@ -7,7 +7,8 @@ Execution walkthrough for the two reconstruction-objective runs. This assumes th
 ```
 
 Run A keeps the full inv010 residual/SIGReg recipe and switches only reconstruction to cosine.
-Run B disables prediction and trains only the present reconstruction bottleneck path.
+Run B disables prediction and trains only the present reconstruction bottleneck path with the
+original `relative_mse` reconstruction loss.
 
 ## 0. Verify pod state
 
@@ -80,7 +81,7 @@ python train.py \
   --lambda-var 0.0 \
   --lambda-sigreg 0.0 \
   --lambda-recon 0.05 \
-  --recon-loss-mode cosine \
+  --recon-loss-mode relative_mse \
   --recon-warmup-steps 2000 \
   --present-recon-only \
   --decoder-dim 512 \
@@ -141,7 +142,7 @@ CUDA_VISIBLE_DEVICES=1 python train.py \
   --lambda-var 0.0 \
   --lambda-sigreg 0.0 \
   --lambda-recon 0.05 \
-  --recon-loss-mode cosine \
+  --recon-loss-mode relative_mse \
   --recon-warmup-steps 2000 \
   --present-recon-only \
   --decoder-dim 512 \
@@ -182,6 +183,7 @@ Run B should show:
 - `L_flow=0.0`
 - `L_recon_pred=0.0`
 - finite `L_recon`
+- `recon_loss_mode='relative_mse'` in W&B config
 
 Step-500 check:
 
