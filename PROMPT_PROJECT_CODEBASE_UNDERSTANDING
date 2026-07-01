@@ -1,0 +1,10 @@
+› › Go through the codebase and understand thoroughly what we are building end to end and then
+    explain to yourself step by step what the entire pipeline is, the training schedule, the loss
+    metrics and how they're calcualted. Everything temporally step by step. Then I want you to read
+    through AGENT_FILES/KANBAN to understand what experiments we have tried so far and what results
+    have we gotten back from them, and you should also use your wandb mcp server and the wandb skills that you
+  have configured into you to see the actual data for yourself apart from just relying on the text content of
+  the files inside the KANABAN. Only once you perform a holistic understanding of this entire codebase and the
+  research project and the experiments we have tried and what stage we're at right now, only then should you
+  come back to me. Take as much time as you want and do as much work as you want, provided that you're going to
+  get a complete end to end no-missing-gaps no-inconsistencies understanding thoroughly in detail.

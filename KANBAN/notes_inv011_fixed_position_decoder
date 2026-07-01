@@ -1,0 +1,51 @@
+<notes>
+Q1
+
+- nothing wrong
+
+Q2
+
+- c std mean is healthy
+- dead dim frac = 0
+- yeah. cross video cosine is below 0.5
+
+So basically the latents are unique per video
+
+Q3
+
+- effective rank = 50
+- cplus rank is also = 50
+- c std mean is healthy
+
+So basically, our dimensions **are being used** but only at **19% of it’s true potential.** And our EMA is working properly without a doubt since cplus rank isn’t falling too far behind effective rank
+
+Q4
+
+- coarse copy loss is rising over time
+- coarse vs copy ratio is hovering around 1 with the deviation being within the 0.03-0.04s
+
+So it’s not the same deadly trap that our c is static, because our coarse copy loss is actually rising over time, which means our abstract latent is drifting away from dumb baseline. But for some reason, our ratio isn’t going below 1. **Which means our MODEL LOSS isn’t doing well right? because the formula is = coarse copy loss / model loss**
+
+Q5
+
+- coarse model loss isn’t too below the coarse copy ratio
+- coarse model loss is thrashing about and way too staggery
+
+**coarse model loss** brings to picture why we got the ratio ~1
+
+Q6
+
+- batch mean ratio **is NOT AT ALL below 0.5,** in fact it’s around 0.9-1.1s
+
+so my guess (which may be wrong relative to other metrics as well) is that —> F_c is about as good as ignoring each video and predicting the **same average future for every clip in the batch**. It is not using c_t in a way that beats that lazy baseline in any meaningful way. **But the problem is our cross video cosine** 
+
+So basically, we — **(1) aren’t able to beat DUMB BASELINE, (2) aren’t able to beat BATCH-MEAN FUTURE**
+
+Q7
+
+- Yeah I mean right off the bat, when you said that the failure mode was that all are sitting equally while copy ratio is still bad, I checked the graphs and yeah sure enough that’s exactly what’s happening.
+
+!image.png
+
+- Since our curves are nearly equal, **our decoder can not tell PREDICTED from TRUE FUTURE latents,** and as mentioned ——> reconstruction pressure will not fix a bad copy ratio
+</notes>
