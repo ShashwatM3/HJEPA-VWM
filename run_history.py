@@ -52,6 +52,7 @@ DIAG_METRICS = (
     "c_cross_video_cosine",
     "c_effective_rank",
     "c_slot_diversity_rank",
+    "c_slot_diversity_rank_centered",
     "coarse_model_loss",
     "coarse_copy_loss",
     "coarse_batch_mean_loss",
@@ -133,9 +134,11 @@ def run_metadata(run: Any, run_path: str) -> dict[str, Any]:
         "url": url,
         "created_at": str(getattr(run, "created_at", "")),
         "heartbeat_at": str(getattr(run, "heartbeat_at", "")),
-        "runtime_seconds": _safe_float(summary.get("_wandb", {}).get("runtime"))
-        if isinstance(summary.get("_wandb"), dict)
-        else _safe_float(summary.get("_runtime")),
+        "runtime_seconds": (
+            _safe_float(summary.get("_wandb", {}).get("runtime"))
+            if isinstance(summary.get("_wandb"), dict)
+            else _safe_float(summary.get("_runtime"))
+        ),
         "config": _json_default(config),
         "summary": _json_default(summary),
     }
@@ -287,7 +290,9 @@ def phase1_report(meta: dict[str, Any], rows: list[dict[str, Any]]) -> str:
 
     post_10k = [r for r in diag_rows if (r.get("step") or 0) >= 10_000]
     if post_10k:
-        copy_ratios = [r["coarse_vs_copy_ratio"] for r in post_10k if r.get("coarse_vs_copy_ratio") is not None]
+        copy_ratios = [
+            r["coarse_vs_copy_ratio"] for r in post_10k if r.get("coarse_vs_copy_ratio") is not None
+        ]
         batch_ratios = [
             r["coarse_vs_batch_mean_ratio"]
             for r in post_10k
@@ -336,7 +341,9 @@ def main(argv: list[str] | None = None) -> int:
         help=f"Run id or entity/project/run_id (default: {DEFAULT_RUN_ID})",
     )
     parser.add_argument("--entity", default=DEFAULT_ENTITY, help="W&B entity when --run is an id")
-    parser.add_argument("--project", default=DEFAULT_PROJECT, help="W&B project when --run is an id")
+    parser.add_argument(
+        "--project", default=DEFAULT_PROJECT, help="W&B project when --run is an id"
+    )
     parser.add_argument(
         "-o",
         "--output",
@@ -370,7 +377,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--page-size", type=int, default=500, help="scan_history page_size")
     parser.add_argument("--min-step", type=int, default=0, help="scan_history min_step (inclusive)")
-    parser.add_argument("--max-step", type=int, default=None, help="scan_history max_step (exclusive)")
+    parser.add_argument(
+        "--max-step", type=int, default=None, help="scan_history max_step (exclusive)"
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -395,8 +404,7 @@ def main(argv: list[str] | None = None) -> int:
         run = fetch_run(api, run_path)
     except (wandb.errors.CommError, wandb.errors.UsageError) as exc:  # type: ignore[attr-defined]
         print(
-            "error: W&B API request failed. Run `wandb login` or set WANDB_API_KEY.\n"
-            f"  {exc}",
+            "error: W&B API request failed. Run `wandb login` or set WANDB_API_KEY.\n" f"  {exc}",
             file=sys.stderr,
         )
         return 1
@@ -438,7 +446,9 @@ def main(argv: list[str] | None = None) -> int:
         print(serialized, end="" if serialized.endswith("\n") else "\n")
     else:
         args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(serialized if serialized.endswith("\n") else serialized + "\n", encoding="utf-8")
+        args.output.write_text(
+            serialized if serialized.endswith("\n") else serialized + "\n", encoding="utf-8"
+        )
         if out_format == "json":
             hist = payload.get("history", {})
             print(

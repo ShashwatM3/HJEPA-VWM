@@ -100,40 +100,53 @@ def effective_rank(abstract: Tensor, eps: float = 1e-8) -> dict[str, float]:
     return {"c_effective_rank": float(torch.exp(entropy).item())}
 
 
-def slot_diversity_rank(abstract: Tensor) -> dict[str, float]:
-    """Within-video effective rank of the 32 query-slot vectors.
-
-    `effective_rank` pools all slots and videos together, so a low value
-    conflates two failures: redundant query slots (all reading similar content)
-    vs. correlated feature dimensions. This probe isolates the first: per video,
-    it measures how many independent directions the `N_c` slot outputs span
-    (max `N_c`), then averages over the batch. A low value points at attention
-    saturation (the Fix-1 target); a healthy slot-rank with a low cross-video
-    `effective_rank` instead points at feature correlation (the Fix-2 target).
-    See KANBAN/04-FIX-DIMENSIONAL-COLLAPSE/DETAILED_UNDERSTAND.md §4.3.
+def _mean_slot_effective_rank(x: Tensor, *, center_slots: bool) -> float:
+    """Return mean per-video effective rank across the slot axis.
 
     Args:
-        abstract: (B, N_c, D_c) online abstract latent `c_t`.
+        x: (B, N_c, D_c) abstract latent `c_t`.
+        center_slots: Whether to subtract each video's mean slot vector first.
     Returns:
-        Metrics dict with the mean within-video slot effective rank, or NaN if
-        a covariance is non-finite.
+        Mean effective rank over the batch, or NaN if a Gram matrix is non-finite.
     """
-    _require_torch()
-    x = abstract.float()
-    if x.shape[0] < 1 or x.shape[1] < 2:
-        return {"c_slot_diversity_rank": float("nan")}
     ranks: list[float] = []
     for b in range(x.shape[0]):
         slots = x[b]  # (N_c, D_c)
-        slots = slots - slots.mean(dim=0, keepdim=True)
+        if center_slots:
+            slots = slots - slots.mean(dim=0, keepdim=True)
         gram = slots @ slots.t() / max(1, slots.shape[1])  # (N_c, N_c)
         if not torch.isfinite(gram).all():
-            return {"c_slot_diversity_rank": float("nan")}
+            return float("nan")
         eig = torch.linalg.eigvalsh(gram).clamp_min(0)
         probs = eig / eig.sum().clamp_min(1e-8)
         entropy = -(probs * (probs + 1e-8).log()).sum()
         ranks.append(float(torch.exp(entropy).item()))
-    return {"c_slot_diversity_rank": float(sum(ranks) / len(ranks))}
+    return float(sum(ranks) / len(ranks))
+
+
+def slot_diversity_rank(abstract: Tensor) -> dict[str, float]:
+    """Within-video effective rank of the 32 query-slot vectors.
+
+    The raw value keeps the historical dashboard key but is now expected to jump
+    mechanically because fixed slot identities survive into the bottleneck output.
+    The centered value subtracts each video's mean slot vector before ranking and
+    is the cleaner readout for whether slots carry different information.
+
+    Args:
+        abstract: (B, N_c, D_c) online abstract latent `c_t`.
+    Returns:
+        Metrics dict with raw and centered mean within-video slot effective rank,
+        or NaN values if a covariance is non-finite.
+    """
+    _require_torch()
+    x = abstract.float()
+    if x.shape[0] < 1 or x.shape[1] < 2:
+        nan = float("nan")
+        return {"c_slot_diversity_rank": nan, "c_slot_diversity_rank_centered": nan}
+    return {
+        "c_slot_diversity_rank": _mean_slot_effective_rank(x, center_slots=False),
+        "c_slot_diversity_rank_centered": _mean_slot_effective_rank(x, center_slots=True),
+    }
 
 
 def attention_entropy(bottleneck: nn.Module, detailed: Tensor) -> dict[str, float]:
@@ -175,8 +188,9 @@ def attention_entropy(bottleneck: nn.Module, detailed: Tensor) -> dict[str, floa
 # clipping (Issue 1). Decaying or per-tensor-clipping these fights representation
 # geometry instead of stabilizing optimization:
 #   * every 1-D tensor — biases and LayerNorm scale/shift (ndim < 2);
-#   * learned coordinate systems — bottleneck/decoder query slots, the F_c null
-#     condition, and the F_c token-type / slot-position embeddings (by leaf name);
+#   * learned coordinate systems — bottleneck/decoder query slots, bottleneck memory
+#     position embeddings, the F_c null condition, and the F_c token-type /
+#     slot-position embeddings (by leaf name);
 #   * the zero-init adaLN-Zero gate (AdaLNBlock.mod[-1]) and residual-output
 #     projection (Bottleneck.out_mlp[-1]), flagged ``is_zero_init`` at construction.
 #     Both are 2-D weights, so neither the ndim nor the name rule catches them — the
@@ -187,7 +201,7 @@ def attention_entropy(bottleneck: nn.Module, detailed: Tensor) -> dict[str, floa
 #     a uniform scale largely cancels in the update — but excluding these is the
 #     correct NFNet rule regardless of how much it changes any single step.)
 _GEOMETRY_LEAF_NAMES = frozenset(
-    {"queries", "null_condition", "slot_pos", "z_type", "cond_type"}
+    {"queries", "pos_emb", "null_condition", "slot_pos", "z_type", "cond_type"}
 )
 
 
@@ -240,11 +254,7 @@ def partition_decay_params(module: nn.Module) -> tuple[list, list]:
     for name, param in module.named_parameters():
         if not param.requires_grad:
             continue
-        target = (
-            no_decay
-            if is_geometry_or_gate_param(name, param, zero_init_ids)
-            else decay
-        )
+        target = no_decay if is_geometry_or_gate_param(name, param, zero_init_ids) else decay
         target.append(param)
     return decay, no_decay
 

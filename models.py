@@ -20,10 +20,12 @@ from copy import deepcopy
 try:
     import torch
     from torch import Tensor, nn
+    from torch.nn import functional as F
 except ModuleNotFoundError:  # pragma: no cover - local docs-only environments.
     torch = None  # type: ignore[assignment]
     Tensor = object  # type: ignore[misc,assignment]
     nn = None  # type: ignore[assignment]
+    F = None  # type: ignore[assignment]
 
 from config import Config, ModelConfig
 from losses import as_target
@@ -123,15 +125,76 @@ class ConvNeXtBlock(nn.Module):
         return residual + x.permute(0, 3, 1, 2)
 
 
+class SharpCrossAttention(nn.Module):
+    """Cosine cross-attention with a learned sharpness temperature.
+
+    Normalizing queries and memory keys makes slot-token matching directional
+    rather than norm-driven. The learned logit scale starts at CLIP-like
+    temperature 1/0.07, high enough that each slot can select among the 1024
+    memory tokens instead of averaging them uniformly.
+
+    Args:
+        q: (B, N_q, D) query slots.
+        kv: (B, N_kv, D) memory tokens.
+    Returns:
+        Tuple `(out, attn)`, where `out` is (B, N_q, D) and `attn` is either
+        (B, num_heads, N_q, N_kv) when requested or `None`.
+    """
+
+    def __init__(self, dim: int, num_heads: int):
+        """Initialize projections and the learned cosine-attention temperature."""
+        _require_torch()
+        super().__init__()
+        if dim % num_heads != 0:
+            raise ValueError(f"dim={dim} must be divisible by num_heads={num_heads}")
+        self.h = num_heads
+        self.q_proj = nn.Linear(dim, dim)
+        self.k_proj = nn.Linear(dim, dim)
+        self.v_proj = nn.Linear(dim, dim)
+        self.o_proj = nn.Linear(dim, dim)
+        self.logit_scale = nn.Parameter(torch.tensor(math.log(1 / 0.07)))
+        # The attention branch begins as an exact no-op, so Bottleneck starts as
+        # normalized learned slot identities and input-dependent evidence grows in.
+        nn.init.zeros_(self.o_proj.weight)
+        nn.init.zeros_(self.o_proj.bias)
+        self.o_proj.is_zero_init = True
+
+    def forward(self, q: Tensor, kv: Tensor, need_weights: bool = False):
+        """Attend from query slots to memory tokens with per-head cosine logits.
+
+        Args:
+            q: (B, N_q, D) query slots.
+            kv: (B, N_kv, D) memory tokens used for both keys and values.
+            need_weights: When True, return per-head attention maps for diagnostics.
+        Returns:
+            `(out, attn)` where `out` is (B, N_q, D) and `attn` is
+            (B, num_heads, N_q, N_kv) if requested, else `None`.
+        """
+        b, nq, d = q.shape
+        head_dim = d // self.h
+        q = self.q_proj(q).reshape(b, nq, self.h, head_dim).transpose(1, 2)
+        k = self.k_proj(kv).reshape(b, kv.shape[1], self.h, head_dim).transpose(1, 2)
+        v = self.v_proj(kv).reshape(b, kv.shape[1], self.h, head_dim).transpose(1, 2)
+        q = F.normalize(q, dim=-1)
+        k = F.normalize(k, dim=-1)
+        scale = self.logit_scale.exp().clamp(max=100.0)
+        attn = (q @ k.transpose(-2, -1) * scale).softmax(dim=-1)
+        out = (attn @ v).transpose(1, 2).reshape(b, nq, d)
+        return self.o_proj(out), (attn if need_weights else None)
+
+
 class Bottleneck(nn.Module):
     """Compress detailed tokens into the low-bandwidth abstract latent `c_t`.
 
     Projects the frozen `e_t` from `D_e` to the mixer width, mixes each of the 4
-    temporal-slot 16x16 grids with shared ConvNeXt blocks, then cross-attends from
-    32 learned query slots into the mixed tokens. The same module (and its EMA copy)
-    is applied identically to `e_t` (-> `c_t`) and `e_plus` (-> `c_plus`); both
-    clips share the encoder's `N_ctx=1024` temporal-major geometry, so there is no
-    separate target path and no kept-mask in v0.2.
+    temporal-slot 16x16 grids with shared ConvNeXt blocks, adds learned memory
+    position tags, then uses sharpened cosine cross-attention from 32 orthogonal
+    slot identities into the mixed tokens. The attention/refinement branches are
+    residual updates to those slot identities, so slot identity survives into
+    `c_t`. The same module (and its EMA copy) is applied identically to `e_t`
+    (-> `c_t`) and `e_plus` (-> `c_plus`); both clips share the encoder's
+    `N_ctx=1024` temporal-major geometry, so there is no separate target path and
+    no kept-mask in v0.2.
     """
 
     def __init__(self, cfg: ModelConfig):
@@ -144,6 +207,8 @@ class Bottleneck(nn.Module):
         self.mixers = nn.Sequential(
             *[ConvNeXtBlock(mix) for _ in range(cfg.bottleneck_convnext_blocks)]
         )
+        self.pos_emb = nn.Parameter(torch.empty(1, cfg.n_ctx, mix))
+        nn.init.trunc_normal_(self.pos_emb, std=0.5)
         self.to_kv = nn.Linear(mix, cfg.d_c)
         # Fix 1 (Plan Phase 04): orthogonal queries (unit-norm rows). The old
         # v0.2 `randn * 0.02` made the q.k logits tiny, so softmax was near-
@@ -152,9 +217,8 @@ class Bottleneck(nn.Module):
         q = torch.empty(cfg.n_c, cfg.d_c)
         nn.init.orthogonal_(q)
         self.queries = nn.Parameter(q)
-        self.cross_attn = nn.MultiheadAttention(
-            cfg.d_c, cfg.bottleneck_cross_attn_heads, batch_first=True
-        )
+        self.q_norm = nn.LayerNorm(mix)
+        self.cross_attn = SharpCrossAttention(cfg.d_c, cfg.bottleneck_cross_attn_heads)
         self.out_mlp = nn.Sequential(
             nn.LayerNorm(cfg.d_c),
             nn.Linear(cfg.d_c, cfg.d_c * 4),
@@ -199,16 +263,13 @@ class Bottleneck(nn.Module):
         # Temporal-major token order from the encoder: index = t*(g*g) + h*g + w.
         grid = tokens.reshape(b * t, g, g, mix).permute(0, 3, 1, 2)
         mixed = self.mixers(grid).permute(0, 2, 3, 1).reshape(b, t * g * g, mix)
+        mixed = mixed + self.pos_emb
         memory = self.to_kv(mixed)
-        queries = self.queries[None].expand(b, -1, -1)
-        attended, attn = self.cross_attn(
-            queries,
-            memory,
-            memory,
-            need_weights=return_attn,
-            average_attn_weights=False,
-        )
-        abstract = self.norm(attended + self.out_mlp(attended))
+        slots = self.queries[None].expand(b, -1, -1)
+        attended, attn = self.cross_attn(self.q_norm(slots), memory, need_weights=return_attn)
+        slots = slots + attended
+        slots = slots + self.out_mlp(slots)
+        abstract = self.norm(slots)
         if return_attn:
             return abstract, attn
         return abstract
@@ -575,8 +636,8 @@ class Decoder(nn.Module):
 
 
 def build_phase1_modules(
-      cfg: Config, *, load_encoder: bool = True
-  ) -> tuple[nn.Module | None, Bottleneck, TargetBottleneck, CoarseFlow, Decoder]:
+    cfg: Config, *, load_encoder: bool = True
+) -> tuple[nn.Module | None, Bottleneck, TargetBottleneck, CoarseFlow, Decoder]:
     """Construct all Phase 1 modules in data-path order.
 
     Keeping construction in one place gives Stage 0 a single canonical module
@@ -696,7 +757,9 @@ def smoke_test_models() -> None:
     abstract_r = bottleneck(detailed)
     u_r_hat = coarse_flow(z_r, tau, abstract_r)
     c_hat_r = abstract_r + z_r + (1.0 - tau.reshape(-1, 1, 1)) * u_r_hat
-    loss_r = flow_matching_loss(u_r_hat, u_r) + reconstruction_loss(decoder(c_hat_r), target_detailed)
+    loss_r = flow_matching_loss(u_r_hat, u_r) + reconstruction_loss(
+        decoder(c_hat_r), target_detailed
+    )
     loss_r.backward()
     assert any(p.grad is not None for p in decoder.parameters())
     assert any(p.grad is not None for p in coarse_flow.parameters())

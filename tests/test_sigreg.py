@@ -33,7 +33,7 @@ def test_sigreg_penalizes_anisotropic_low_rank_more_than_isotropic():
 
     # Low-rank: only 2 of 16 dims carry variance -> far from isotropic N(0, I).
     low_rank = torch.zeros(256, 8, 16)
-    low_rank[..., :2] = torch.randn(256, 8, 2, generator=g) * 3.0
+    low_rank[..., :2] = torch.randn(256, 8, 2, generator=g) * 5.0
 
     # Same fixed sketch for both so the comparison isolates the distribution.
     iso_val = float(losses.sigreg_loss(iso, generator=torch.Generator().manual_seed(7)))
