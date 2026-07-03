@@ -635,6 +635,77 @@ class Decoder(nn.Module):
         return self.out_proj(self.out_norm(hidden))
 
 
+class FeatureMeanTracker(nn.Module):
+    """EMA per-tubelet-position mean of the frozen detailed features (no parameters).
+
+    Supports the residual reconstruction target (cfg.train.recon_residual_target,
+    the run-052 fix): the reconstruction anchor trains `D` against `e - mean`
+    instead of the absolute `e`, so the video-independent "template" component of
+    the V-JEPA features earns zero loss and all reconstruction pressure must route
+    video-specific information through `c_t`.
+
+    Contracts:
+
+    - Buffers only, NO trainable parameters — it can never enter the optimizer,
+      AGC, weight decay, or the EMA schedule.
+    - `mean` is kept in fp32 regardless of autocast so the running estimate does
+      not drift in bf16.
+    - `update` is called from the TRAIN step only (never from the diagnostic
+      validation batch, which must not leak into the mean), and only while the
+      residual target mode is active.
+    - The first `update` copies the batch mean directly (no zero-initialized
+      cold start); later updates apply `mean <- m * mean + (1 - m) * batch_mean`.
+
+    Args:
+        n_ctx: Number of tubelet positions (1024 at full resolution).
+        d_e: Frozen encoder feature dimension (1024 for ViT-L).
+        momentum: EMA momentum `m` for the running mean.
+    """
+
+    def __init__(self, n_ctx: int, d_e: int, momentum: float):
+        """Register the fp32 mean buffer and the initialized flag."""
+        _require_torch()
+        super().__init__()
+        if not 0.0 < momentum < 1.0:
+            raise ValueError(f"recon_mean_momentum must be in (0, 1); got {momentum}")
+        self.momentum = momentum
+        self.register_buffer("mean", torch.zeros(n_ctx, d_e, dtype=torch.float32))
+        self.register_buffer("initialized", torch.zeros((), dtype=torch.bool))
+
+    @torch.no_grad()
+    def update(self, features: Tensor) -> None:
+        """Fold one training batch of frozen features into the running mean.
+
+        Args:
+            features: (B, N_ctx, D_e) frozen encoder output for the context clip
+                (already no-grad; converted to fp32 for the running estimate).
+        """
+        if features.ndim != 3 or features.shape[1:] != self.mean.shape:
+            raise ValueError(
+                f"Expected (B, {self.mean.shape[0]}, {self.mean.shape[1]}) features; "
+                f"got {tuple(features.shape)}"
+            )
+        batch_mean = features.detach().float().mean(dim=0)
+        if bool(self.initialized):
+            self.mean.lerp_(batch_mean, 1.0 - self.momentum)
+        else:
+            self.mean.copy_(batch_mean)
+            self.initialized.fill_(True)
+
+    def subtract(self, features: Tensor) -> Tensor:
+        """Return the per-position residual `features - mean` in the input dtype.
+
+        Used on TARGET tensors only (the frozen `e_t` / `e_{t+k}`), which are
+        already detached; the mean is a buffer, so no new gradient path exists.
+
+        Args:
+            features: (B, N_ctx, D_e) frozen detailed features.
+        Returns:
+            residual: (B, N_ctx, D_e) features minus the running per-position mean.
+        """
+        return features - self.mean.to(device=features.device, dtype=features.dtype)
+
+
 def build_phase1_modules(
     cfg: Config, *, load_encoder: bool = True
 ) -> tuple[nn.Module | None, Bottleneck, TargetBottleneck, CoarseFlow, Decoder]:
@@ -764,6 +835,24 @@ def smoke_test_models() -> None:
     assert any(p.grad is not None for p in decoder.parameters())
     assert any(p.grad is not None for p in coarse_flow.parameters())
     assert any(p.grad is not None for p in bottleneck.parameters())
+    assert all(p.grad is None for p in target_bottleneck.parameters())
+    # Residual reconstruction target (investigation_013) gradient contract: subtracting
+    # the tracked per-position mean from the frozen target must leave the gradient
+    # routing identical to option 1 (D and B train; F_c and the EMA bottleneck never
+    # do), and the tracker itself must stay parameter-free so it cannot be optimized.
+    tracker = FeatureMeanTracker(cfg.model.n_ctx, cfg.model.d_e, cfg.train.recon_mean_momentum)
+    assert sum(1 for _ in tracker.parameters()) == 0
+    tracker.update(detailed)
+    assert bool(tracker.initialized)
+    bottleneck.zero_grad(set_to_none=True)
+    coarse_flow.zero_grad(set_to_none=True)
+    decoder.zero_grad(set_to_none=True)
+    residual_recon = reconstruction_loss(decoder(bottleneck(detailed)), tracker.subtract(detailed))
+    assert residual_recon.requires_grad and torch.isfinite(residual_recon), residual_recon
+    residual_recon.backward()
+    assert any(p.grad is not None for p in decoder.parameters())
+    assert any(p.grad is not None for p in bottleneck.parameters())
+    assert all(p.grad is None for p in coarse_flow.parameters())
     assert all(p.grad is None for p in target_bottleneck.parameters())
     from diagnostics import attention_entropy, slot_diversity_rank
 

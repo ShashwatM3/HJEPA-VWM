@@ -1,3 +1,29 @@
+# Observations - investigation_001
+
+<!-- AUTO-GENERATED-WANDB-KANBAN -->
+
+## Cross-Run Synthesis
+
+The long baseline was not a success signal. It exposed late instability and weak prediction, which made optimizer hardening, restart discipline, and clearer acceptance metrics necessary before interpreting longer runs.
+
+## Run-by-Run Evidence
+
+| # | Run | ID | State | Mode | Key config | Verdict | Last key metrics |
+|---:|---|---|---|---|---|---|---|
+| 5 | [`peachy-terrain-5`](run_005_peachy-terrain-5/) | `1chv2608` | `failed` | full-prediction | dataset=ssv2_tiny; steps=30000; k=4; var=0.1; cov=0; slot=0; sigreg=0; recon=0/0; residual=false; present_only=false; n_c=32; D=n/a | Low-rank rep | c_effective_rank=4.8975; c_cross_video_cosine=0.2681; c_std_mean=0.8615; coarse_vs_copy_ratio=7.9408; coarse_vs_batch_mean_ratio=1.2729 |
+
+## Pattern Across The Branch
+
+Best copy ratio in this branch was run 005 at 7.9408; best batch-mean ratio was run 005 at 1.2729. None should be read as a full Phase 1 pass unless both gates pass together.
+
+Verdict distribution: Low-rank rep=1.
+
+## What Changed The Research Direction
+
+The project moved from one-off long-run optimism into deliberate smoke, diagnostic, and collapse-control runs.
+
+## Original Notes Preserved
+
 # Observations — Investigation 001 (training stability)
 
 ## Initial belief
@@ -32,7 +58,7 @@ training on `ssv2_tiny`, extrapolating to full SSv2.
 Landed in commit `611f2cd` (and related): `lr_bottleneck=1e-4`, `lr_coarse_flow=2e-4`,
 `warmup_steps=1500`, `stage1_steps=15000`, `grad_clip=0.5`, skip guard in
 `train.py`. Documented in
-[`AGENT_FILES/KANBAN/02-LAUNCH-FULL-PHASE-1-RUN/POSTMORTEM_RUN1.md`](../../AGENT_FILES/KANBAN/02-LAUNCH-FULL-PHASE-1-RUN/POSTMORTEM_RUN1.md).
+[`AGENT_FILES/KANBAN/02-LAUNCH-FULL-PHASE-1-RUN/POSTMORTEM_RUN1.md`](../../../AGENT_FILES/KANBAN/02-LAUNCH-FULL-PHASE-1-RUN/POSTMORTEM_RUN1.md).
 
 ## Conclusion
 
@@ -42,5 +68,5 @@ requires monitoring `grad_skipped` (should be ~never).
 
 ## Cross-investigation notes
 
-- Same run exposed `c_effective_rank ~5` → opened [investigation_003](investigation_003/).
-- Throughput was poor (~1.66 s/step) → [investigation_002](investigation_002/) ran in parallel.
+- Same run exposed `c_effective_rank ~5` → opened [investigation_003](../investigation_003/).
+- Throughput was poor (~1.66 s/step) → [investigation_002](../investigation_002/) ran in parallel.

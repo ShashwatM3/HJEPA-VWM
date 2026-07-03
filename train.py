@@ -54,6 +54,10 @@ from models import build_phase1_modules
 # Module bundle order throughout: (encoder E, bottleneck B, target_bottleneck B_EMA,
 # coarse_flow F_c, decoder D). D is the reconstruction-anchor decoder (option 1);
 # it is built/saved/loaded always but only trained when lambda_recon > 0.
+# A parameter-free models.FeatureMeanTracker travels OUTSIDE the bundle (optional
+# kwarg + "recon_feature_mean" checkpoint key): it holds the EMA per-position
+# feature mean for the residual reconstruction target (recon_residual_target) and
+# is only updated/used when that flag is on.
 
 
 def _require_torch() -> None:
@@ -300,6 +304,7 @@ def train_step(
     step: int,
     cfg: Config,
     device: torch.device,
+    mean_tracker: nn.Module | None = None,
 ) -> dict[str, float]:
     """Run one Stage 1 coarse-dynamics training step.
 
@@ -310,10 +315,25 @@ def train_step(
         step: Global Stage 1 step.
         cfg: Training config.
         device: CUDA or CPU device.
+        mean_tracker: `models.FeatureMeanTracker` for the residual reconstruction
+            target. Required when `cfg.train.recon_residual_target` is True; unused
+            (may be None) otherwise.
     Returns:
         Scalar metrics for logging.
     """
     encoder, bottleneck, target_bottleneck, coarse_flow, decoder = modules
+    # Residual reconstruction target (investigation_013): active only when the flag is
+    # set AND a reconstruction anchor actually trains (finalize_training_config enforces
+    # this pairing, so the check here is a belt-and-braces guard for direct callers).
+    residual_recon_active = cfg.train.recon_residual_target and (
+        cfg.train.lambda_recon > 0.0
+        or (not cfg.train.present_recon_only and cfg.train.lambda_recon_pred > 0.0)
+    )
+    if residual_recon_active and mean_tracker is None:
+        raise RuntimeError(
+            "cfg.train.recon_residual_target is True but no mean_tracker was passed to "
+            "train_step; construct a models.FeatureMeanTracker and pass it explicitly."
+        )
     context_clip = batch[0].to(device, non_blocking=True)
     target_clip = None if cfg.train.present_recon_only else batch[1].to(device, non_blocking=True)
     optimizer.zero_grad(set_to_none=True)
@@ -342,6 +362,13 @@ def train_step(
             u_c = velocity_target(flow_target, eps_c)
             u_c_hat = coarse_flow(z_c, tau_c, abstract)
             flow_loss = flow_matching_loss(u_c_hat, u_c)
+        if residual_recon_active:
+            # Residual reconstruction target: fold this batch's frozen context features
+            # into the per-position mean BEFORE the loss uses it, so step 0 subtracts a
+            # real batch mean instead of zeros. Train-step only — the fixed diagnostic
+            # validation batch must never leak into the mean. No RNG is involved, so
+            # eps_c / tau / condition dropout are unaffected across the flag values.
+            mean_tracker.update(detailed)
         var_loss = variance_floor(abstract, cfg.train.var_floor_std_target)
         # VICReg-C (Plan Phase 04): always computed so L_cov is logged even on the
         # baseline (Run A) to calibrate lambda_cov; only added to the loss — and
@@ -394,9 +421,14 @@ def train_step(
         ):
             recon_scale = linear_ramp_scale(step, cfg.train.recon_warmup_steps)
         if cfg.train.lambda_recon > 0.0:
+            # Residual mode (investigation_013): the target becomes e_t - mean, so the
+            # video-independent template component earns zero and every unit of loss
+            # reduction must route video-specific content through c_t. The decoder's
+            # output is then interpreted as the residual (e_hat_full = D(c) + mean).
+            present_target = mean_tracker.subtract(detailed) if residual_recon_active else detailed
             recon_loss = reconstruction_loss(
                 decoder(abstract),
-                detailed,
+                present_target,
                 mode=cfg.train.recon_loss_mode,
             )
             loss = loss + cfg.train.lambda_recon * recon_scale * recon_loss
@@ -417,9 +449,14 @@ def train_step(
             # Residual mode reconstructs the future from ĉ = c_t + Δ̂ (online c_t, so the
             # recon gradient still reaches B via the add-back and the F_c conditioning).
             c_hat = (abstract + endpoint) if cfg.train.predict_residual else endpoint
+            # Residual mode uses the SAME tracker for the future target e_{t+k} - mean:
+            # context and future clips share the frozen encoder feature distribution.
+            future_target = (
+                mean_tracker.subtract(target_detailed) if residual_recon_active else target_detailed
+            )
             recon_pred_loss = reconstruction_loss(
                 decoder(c_hat),
-                target_detailed,
+                future_target,
                 mode=cfg.train.recon_loss_mode,
             )
             loss = loss + cfg.train.lambda_recon_pred * recon_scale * recon_pred_loss
@@ -470,6 +507,10 @@ def train_step(
         "L_recon": recon_loss_val,
         "L_recon_pred": recon_pred_loss_val,
         "recon_scale": recon_scale,
+        "recon_target_residual": float(residual_recon_active),
+        "recon_mean_norm": (
+            float(mean_tracker.mean.norm().item()) if residual_recon_active else 0.0
+        ),
         "present_recon_only": float(cfg.train.present_recon_only),
         "prediction_active": float(not cfg.train.present_recon_only),
         "grad_norm": grad_norm_f,
@@ -486,6 +527,7 @@ def save_checkpoint(
     modules: tuple[nn.Module, nn.Module, nn.Module, nn.Module, nn.Module],
     optimizer: torch.optim.Optimizer,
     cfg: Config,
+    mean_tracker: nn.Module | None = None,
 ) -> None:
     """Save a Phase 1 checkpoint (encoder excluded — reloaded from HF).
 
@@ -495,29 +537,38 @@ def save_checkpoint(
         modules: Phase 1 modules.
         optimizer: AdamW state.
         cfg: Config serialized as nested dicts.
+        mean_tracker: Optional `models.FeatureMeanTracker`; its buffers are saved
+            under "recon_feature_mean" so a residual-target run resumes with the
+            same per-position mean instead of re-warming it.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     _, bottleneck, target_bottleneck, coarse_flow, decoder = modules
-    torch.save(
-        {
-            "global_step": step,
-            "bottleneck": bottleneck.state_dict(),
-            "target_bottleneck": target_bottleneck.state_dict(),
-            "coarse_flow": coarse_flow.state_dict(),
-            "decoder": decoder.state_dict(),
-            "optimizer": optimizer.state_dict(),
-            "config": json.loads(json.dumps(cfg, default=lambda o: getattr(o, "__dict__", str(o)))),
-        },
-        path,
-    )
+    payload = {
+        "global_step": step,
+        "bottleneck": bottleneck.state_dict(),
+        "target_bottleneck": target_bottleneck.state_dict(),
+        "coarse_flow": coarse_flow.state_dict(),
+        "decoder": decoder.state_dict(),
+        "optimizer": optimizer.state_dict(),
+        "config": json.loads(json.dumps(cfg, default=lambda o: getattr(o, "__dict__", str(o)))),
+    }
+    if mean_tracker is not None:
+        payload["recon_feature_mean"] = mean_tracker.state_dict()
+    torch.save(payload, path)
 
 
 def load_checkpoint(
     path: str | Path,
     modules: tuple[nn.Module, nn.Module, nn.Module, nn.Module, nn.Module],
     optimizer: torch.optim.Optimizer | None = None,
+    mean_tracker: nn.Module | None = None,
 ) -> int:
-    """Load a Phase 1 checkpoint and return its global step (encoder untouched)."""
+    """Load a Phase 1 checkpoint and return its global step (encoder untouched).
+
+    Checkpoints saved before the residual reconstruction target have no
+    "recon_feature_mean" entry; the tracker is then left fresh and re-warms from
+    live batches (~1/(1-momentum) steps), which `run_training` reports on resume.
+    """
     ckpt = torch.load(path, map_location="cpu")
     _, bottleneck, target_bottleneck, coarse_flow, decoder = modules
     bottleneck.load_state_dict(ckpt["bottleneck"])
@@ -537,6 +588,8 @@ def load_checkpoint(
                 "the fixed-position decoder architecture."
             )
         decoder.load_state_dict(decoder_state)
+    if mean_tracker is not None and "recon_feature_mean" in ckpt:
+        mean_tracker.load_state_dict(ckpt["recon_feature_mean"])
     if optimizer is not None and "optimizer" in ckpt:
         try:
             optimizer.load_state_dict(ckpt["optimizer"])
@@ -570,6 +623,20 @@ def _build_and_init(cfg: Config, device: torch.device, load_encoder: bool = True
     return encoder, bottleneck, target_bottleneck, coarse_flow, decoder
 
 
+def _build_mean_tracker(cfg: Config, device: torch.device) -> nn.Module:
+    """Construct the per-position feature-mean tracker on the training device.
+
+    Always built (4 MB of fp32 buffers) so checkpoints and call signatures have one
+    shape; it is only UPDATED and USED when `cfg.train.recon_residual_target` is on,
+    which keeps the default path byte-identical to the pre-tracker baseline.
+    """
+    from models import FeatureMeanTracker
+
+    return FeatureMeanTracker(cfg.model.n_ctx, cfg.model.d_e, cfg.train.recon_mean_momentum).to(
+        device
+    )
+
+
 def run_stage0(cfg: Config) -> None:
     """Run synthetic Stage 0 sanity: load+freeze E, forward, backward, EMA update."""
     _require_torch()
@@ -579,13 +646,14 @@ def run_stage0(cfg: Config) -> None:
     encoder, bottleneck, target_bottleneck, coarse_flow, decoder = modules
     assert sum(p.numel() for p in encoder.parameters() if p.requires_grad) == 0, "E not frozen"
     optimizer = make_optimizer(bottleneck, coarse_flow, decoder, cfg)
+    mean_tracker = _build_mean_tracker(cfg, device)
     batch = (
         torch.randn(2, cfg.model.t_ctx, 3, cfg.model.h, cfg.model.w, device=device),
         torch.randn(2, cfg.model.t_ctx, 3, cfg.model.h, cfg.model.w, device=device),
     )
     enc_before = next(encoder.parameters()).detach().clone()
     ema_before = next(target_bottleneck.parameters()).detach().clone()
-    metrics = train_step(batch, modules, optimizer, 0, cfg, device)
+    metrics = train_step(batch, modules, optimizer, 0, cfg, device, mean_tracker=mean_tracker)
     enc_after = next(encoder.parameters()).detach().clone()
     ema_after = next(target_bottleneck.parameters()).detach().clone()
     assert math.isfinite(metrics["loss"]), metrics
@@ -600,9 +668,23 @@ def run_diagnostics(
     modules: tuple[nn.Module, nn.Module, nn.Module, nn.Module, nn.Module],
     cfg: Config,
     device: torch.device,
+    mean_tracker: nn.Module | None = None,
 ) -> dict[str, float]:
-    """Run Phase 1 diagnostics on a fixed validation batch."""
+    """Run Phase 1 diagnostics on a fixed validation batch.
+
+    The tracker is READ here (residual reconstruction targets) but never updated:
+    the fixed validation batch must not leak into the per-position feature mean.
+    """
     encoder, bottleneck, target_bottleneck, coarse_flow, decoder = modules
+    residual_recon_active = cfg.train.recon_residual_target and (
+        cfg.train.lambda_recon > 0.0
+        or (not cfg.train.present_recon_only and cfg.train.lambda_recon_pred > 0.0)
+    )
+    if residual_recon_active and mean_tracker is None:
+        raise RuntimeError(
+            "cfg.train.recon_residual_target is True but no mean_tracker was passed to "
+            "run_diagnostics; the readouts would silently score the wrong target."
+        )
     context_clip = batch[0].to(device, non_blocking=True)
     if cfg.train.present_recon_only:
         with torch.no_grad():
@@ -613,13 +695,30 @@ def run_diagnostics(
         metrics.update(effective_rank(abstract))
         metrics.update(slot_diversity_rank(abstract))
         metrics.update(gradient_health(nn.ModuleList([bottleneck, coarse_flow, decoder])))
-        metrics["L_recon_present"] = float(
-            reconstruction_loss(
-                decoder(abstract),
-                detailed,
-                mode=cfg.train.recon_loss_mode,
-            ).item()
-        )
+        with torch.no_grad():
+            present_target = mean_tracker.subtract(detailed) if residual_recon_active else detailed
+            metrics["L_recon_present"] = float(
+                reconstruction_loss(
+                    decoder(abstract),
+                    present_target,
+                    mode=cfg.train.recon_loss_mode,
+                ).item()
+            )
+            # Honesty probe (run-052 lesson): decode ANOTHER video's c_t against this
+            # video's target. A gap near zero means the decoder output barely depends
+            # on which video's latent it received — the template-collapse signature.
+            # torch.roll is deterministic and RNG-free, so diagnostics stay reproducible.
+            shuffled_abstract = torch.roll(abstract, shifts=1, dims=0)
+            metrics["L_recon_shuffled_c"] = float(
+                reconstruction_loss(
+                    decoder(shuffled_abstract),
+                    present_target,
+                    mode=cfg.train.recon_loss_mode,
+                ).item()
+            )
+            metrics["L_recon_video_gap"] = (
+                metrics["L_recon_shuffled_c"] - metrics["L_recon_present"]
+            )
         metrics["present_recon_only"] = 1.0
         metrics["prediction_active"] = 0.0
         metrics.update(attention_entropy(bottleneck, detailed))
@@ -677,6 +776,8 @@ def run_diagnostics(
             tau_c,
             predict_residual=cfg.train.predict_residual,
             recon_loss_mode=cfg.train.recon_loss_mode,
+            mean_tracker=mean_tracker,
+            residual_target=residual_recon_active,
         )
     )
     # Reuse the detailed tensor from `_coarse_forward` (no second encoder forward).
@@ -695,6 +796,8 @@ def reconstruction_readouts(
     tau_c: Tensor,
     predict_residual: bool = False,
     recon_loss_mode: str = "cosine",
+    mean_tracker: nn.Module | None = None,
+    residual_target: bool = False,
 ) -> dict[str, float]:
     """Log-only reconstruction readouts that also SCOPE the option-3 decision.
 
@@ -707,38 +810,64 @@ def reconstruction_readouts(
     where the representation reconstructs poorly. `c_hat` is the rectified-flow
     one-step endpoint estimate; condition dropout is disabled for a clean readout.
 
+    When `residual_target` (investigation_013), every readout scores against the
+    per-position residual `e - mean` — the same target the train step optimizes —
+    so the logged values stay comparable with `L_recon` from training. The shuffled
+    readout decodes a ROTATED batch of latents against the unrotated targets; the
+    gap to `L_recon_present` measures how video-specific the decode actually is
+    (near zero == template collapse, the run-052 failure).
+
     Returns:
-        Metrics dict: `L_recon_present`, `L_recon_cplus`, `L_recon_chat`.
+        Metrics dict: `L_recon_present`, `L_recon_cplus`, `L_recon_chat`,
+        `L_recon_shuffled_c`, `L_recon_video_gap`.
     """
     _require_torch()
+    if residual_target and mean_tracker is None:
+        raise RuntimeError("residual_target readouts require a mean_tracker.")
     with torch.no_grad():
         u_c_hat = coarse_flow(z_c, tau_c, abstract, condition_drop=_no_drop(abstract))
         endpoint = z_c + (1.0 - tau_c.reshape(-1, 1, 1)) * u_c_hat
         # Residual mode: the predicted future latent is ĉ = c_t + Δ̂ (target_abstract stays
         # the true c_plus for the L_recon_cplus readout below).
         c_hat = (abstract + endpoint) if predict_residual else endpoint
+        present_target = mean_tracker.subtract(detailed) if residual_target else detailed
+        future_target = (
+            mean_tracker.subtract(target_detailed) if residual_target else target_detailed
+        )
+        recon_present = float(
+            reconstruction_loss(
+                decoder(abstract),
+                present_target,
+                mode=recon_loss_mode,
+            ).item()
+        )
+        # Honesty probe (run-052 lesson): torch.roll pairs each video's target with
+        # ANOTHER video's latent, deterministically and without touching the RNG.
+        recon_shuffled = float(
+            reconstruction_loss(
+                decoder(torch.roll(abstract, shifts=1, dims=0)),
+                present_target,
+                mode=recon_loss_mode,
+            ).item()
+        )
         return {
-            "L_recon_present": float(
-                reconstruction_loss(
-                    decoder(abstract),
-                    detailed,
-                    mode=recon_loss_mode,
-                ).item()
-            ),
+            "L_recon_present": recon_present,
             "L_recon_cplus": float(
                 reconstruction_loss(
                     decoder(target_abstract),
-                    target_detailed,
+                    future_target,
                     mode=recon_loss_mode,
                 ).item()
             ),
             "L_recon_chat": float(
                 reconstruction_loss(
                     decoder(c_hat),
-                    target_detailed,
+                    future_target,
                     mode=recon_loss_mode,
                 ).item()
             ),
+            "L_recon_shuffled_c": recon_shuffled,
+            "L_recon_video_gap": recon_shuffled - recon_present,
         }
 
 
@@ -750,7 +879,10 @@ def run_training(cfg: Config, steps: int, resume: str | None = None) -> None:
     modules = _build_and_init(cfg, device, load_encoder=True)
     _, bottleneck, target_bottleneck, coarse_flow, decoder = modules
     optimizer = make_optimizer(bottleneck, coarse_flow, decoder, cfg)
-    start_step = load_checkpoint(resume, modules, optimizer) if resume else 0
+    mean_tracker = _build_mean_tracker(cfg, device)
+    start_step = (
+        load_checkpoint(resume, modules, optimizer, mean_tracker=mean_tracker) if resume else 0
+    )
     # Peak LRs always come from config/CLI — not checkpoint param_group["lr"], which
     # stores the *scheduled* LR at save time and would double-apply cosine decay on resume.
     base_lrs = peak_base_lrs(bottleneck, coarse_flow, decoder, cfg)
@@ -759,6 +891,11 @@ def run_training(cfg: Config, steps: int, resume: str | None = None) -> None:
             f"Resumed step {start_step}; peak base LRs "
             f"B={cfg.train.lr_bottleneck:.2e}, F_c={cfg.train.lr_coarse_flow:.2e}"
         )
+        if cfg.train.recon_residual_target and not bool(mean_tracker.initialized):
+            print(
+                "WARN: residual reconstruction target is on but the checkpoint has no "
+                "recon_feature_mean state; the per-position mean re-warms from live batches."
+            )
     train_loader = build_dataloader(cfg, "train")
     val_loader = build_dataloader(cfg, "validation", batch_size=min(16, cfg.train.global_batch))
     val_batch = next(iter(val_loader))
@@ -779,20 +916,36 @@ def run_training(cfg: Config, steps: int, resume: str | None = None) -> None:
             if step >= steps:
                 break
             lr_mult = apply_lr_schedule(optimizer, base_lrs, step, cfg)
-            metrics = train_step(batch, modules, optimizer, step, cfg, device)
+            metrics = train_step(
+                batch, modules, optimizer, step, cfg, device, mean_tracker=mean_tracker
+            )
             metrics["lr_mult"] = lr_mult
             if step % cfg.train.diag_every == 0:
-                metrics.update(run_diagnostics(val_batch, modules, cfg, device))
+                metrics.update(
+                    run_diagnostics(val_batch, modules, cfg, device, mean_tracker=mean_tracker)
+                )
             if step % cfg.train.log_every == 0:
                 print(f"step={step} {metrics}")
                 if wandb is not None:
                     wandb.log(metrics, step=step)
             if step > 0 and step % cfg.train.checkpoint_every == 0:
                 save_checkpoint(
-                    checkpoint_dir / f"phase1_step{step}.pt", step, modules, optimizer, cfg
+                    checkpoint_dir / f"phase1_step{step}.pt",
+                    step,
+                    modules,
+                    optimizer,
+                    cfg,
+                    mean_tracker=mean_tracker,
                 )
             step += 1
-    save_checkpoint(checkpoint_dir / f"phase1_step{steps}.pt", steps, modules, optimizer, cfg)
+    save_checkpoint(
+        checkpoint_dir / f"phase1_step{steps}.pt",
+        steps,
+        modules,
+        optimizer,
+        cfg,
+        mean_tracker=mean_tracker,
+    )
 
 
 def parse_args() -> argparse.Namespace:
@@ -890,6 +1043,25 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Reconstruction loss formula. cosine = per-tubelet unit-normalized "
         "mean(1 - cos), current default. relative_mse = legacy MSE / Var(e).",
+    )
+    parser.add_argument(
+        "--recon-residual-target",
+        action="store_true",
+        help="investigation_013 (run-052 fix): reconstruct the per-position residual "
+        "e - mean instead of the absolute frozen features, where mean is an EMA "
+        "per-tubelet-position feature mean tracked over training batches. The shared "
+        "template earns zero loss, so all reconstruction pressure must route "
+        "video-specific content through c_t. Requires an active recon anchor "
+        "(--lambda-recon or --lambda-recon-pred > 0). Watch L_recon_video_gap: near "
+        "zero means template collapse.",
+    )
+    parser.add_argument(
+        "--recon-mean-momentum",
+        type=float,
+        default=None,
+        help="EMA momentum for the per-position feature mean "
+        "(cfg.train.recon_mean_momentum, default 0.99; must be in (0, 1)). Only "
+        "meaningful with --recon-residual-target.",
     )
     parser.add_argument(
         "--present-recon-only",
@@ -1003,6 +1175,18 @@ def finalize_training_config(cfg: Config) -> None:
         if cfg.train.predict_residual:
             print("--present-recon-only ignores --predict-residual; disabling residual mode")
             cfg.train.predict_residual = False
+    if cfg.train.recon_residual_target:
+        if cfg.train.lambda_recon <= 0.0 and cfg.train.lambda_recon_pred <= 0.0:
+            raise ValueError(
+                "--recon-residual-target requires an active reconstruction anchor "
+                "(--lambda-recon > 0 or --lambda-recon-pred > 0); without one the "
+                "residual target would silently train nothing."
+            )
+        if not 0.0 < cfg.train.recon_mean_momentum < 1.0:
+            raise ValueError(
+                "cfg.train.recon_mean_momentum must be in (0, 1); "
+                f"got {cfg.train.recon_mean_momentum}"
+            )
 
 
 def main() -> None:
@@ -1034,6 +1218,10 @@ def main() -> None:
         cfg.train.lambda_recon_pred = args.lambda_recon_pred
     if args.recon_loss_mode is not None:
         cfg.train.recon_loss_mode = args.recon_loss_mode
+    if args.recon_residual_target:
+        cfg.train.recon_residual_target = True
+    if args.recon_mean_momentum is not None:
+        cfg.train.recon_mean_momentum = args.recon_mean_momentum
     if args.present_recon_only:
         cfg.train.present_recon_only = True
     if args.predict_residual:

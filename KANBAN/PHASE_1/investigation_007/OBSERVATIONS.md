@@ -1,3 +1,38 @@
+# Observations - investigation_007
+
+<!-- AUTO-GENERATED-WANDB-KANBAN -->
+
+## Cross-Run Synthesis
+
+Decoder width/depth and reconstruction weight did not explain the floor. The important finding was a utilization ceiling: c_effective_rank stayed near the historical low-rank band unless a geometry regularizer directly attacked d_c usage.
+
+## Run-by-Run Evidence
+
+| # | Run | ID | State | Mode | Key config | Verdict | Last key metrics |
+|---:|---|---|---|---|---|---|---|
+| 20 | [`jolly-glade-20`](wave_1/run_020_jolly-glade-20/) | `5x7aoxnn` | `crashed` | full-prediction | dataset=ssv2; steps=15000; k=12; var=0.5; cov=0; slot=0; sigreg=0; recon=0.2/0; residual=false; present_only=false; n_c=32; D=256x2 | Low-rank rep | c_effective_rank=12.9849; c_cross_video_cosine=0.2506; c_std_mean=1.0427; coarse_vs_copy_ratio=1.5638; coarse_vs_batch_mean_ratio=0.3383; L_recon_present=0.5915 |
+| 21 | [`eager-plant-22`](wave_1/run_021_eager-plant-22/) | `591mt31k` | `crashed` | full-prediction | dataset=ssv2; steps=15000; k=12; var=0.5; cov=0; slot=0; sigreg=0; recon=0.05/0; residual=false; present_only=false; n_c=32; D=512x4 | Low-rank rep | c_effective_rank=12.9484; c_cross_video_cosine=0.2468; c_std_mean=1.037; coarse_vs_copy_ratio=1.5278; coarse_vs_batch_mean_ratio=0.3246; L_recon_present=0.5845 |
+| 22 | [`gallant-dew-22`](wave_1/run_022_gallant-dew-22/) | `708jrel8` | `crashed` | full-prediction | dataset=ssv2; steps=15000; k=12; var=0.5; cov=0; slot=0; sigreg=0; recon=0.05/0; residual=false; present_only=false; n_c=32; D=512x2 | Low-rank rep | c_effective_rank=12.5094; c_cross_video_cosine=0.3045; c_std_mean=0.9893; coarse_vs_copy_ratio=1.7402; coarse_vs_batch_mean_ratio=0.3723; L_recon_present=0.5895 |
+| 23 | [`toasty-donkey-21`](wave_1/run_023_toasty-donkey-21/) | `a2trqp9c` | `crashed` | full-prediction | dataset=ssv2; steps=15000; k=12; var=0.5; cov=0; slot=0; sigreg=0; recon=0.1/0; residual=false; present_only=false; n_c=32; D=256x2 | Low-rank rep | c_effective_rank=12.9731; c_cross_video_cosine=0.2487; c_std_mean=1.0345; coarse_vs_copy_ratio=1.5857; coarse_vs_batch_mean_ratio=0.3422; L_recon_present=0.5959 |
+| 24 | [`light-universe-24`](wave_1/run_024_light-universe-24/) | `rju7xsh2` | `crashed` | full-prediction | dataset=ssv2; steps=15000; k=12; var=0.5; cov=0; slot=0; sigreg=0; recon=0.5/0; residual=false; present_only=false; n_c=32; D=256x2 | Low-rank rep | c_effective_rank=12.6552; c_cross_video_cosine=0.2824; c_std_mean=1.0185; coarse_vs_copy_ratio=1.6644; coarse_vs_batch_mean_ratio=0.3594; L_recon_present=0.5855 |
+| 25 | [`earnest-dragon-25`](wave_2/run_025_earnest-dragon-25/) | `2xsd5jwr` | `crashed` | full-prediction | dataset=ssv2; steps=15000; k=12; var=0.5; cov=0; slot=0; sigreg=0; recon=0.05/0; residual=false; present_only=false; n_c=256; D=256x2 | Smoke / inconclusive | c_effective_rank=9.4052; c_cross_video_cosine=0.6885; c_std_mean=0.5243; coarse_vs_copy_ratio=47.1775; coarse_vs_batch_mean_ratio=9.839; L_recon_present=1.0324 |
+| 26 | [`pious-mountain-28`](wave_2/run_026_pious-mountain-28/) | `7u5zkw6t` | `crashed` | full-prediction | dataset=ssv2; steps=15000; k=12; var=0.5; cov=0; slot=0; sigreg=0; recon=0.05/0; residual=false; present_only=false; n_c=64; D=256x2 | Smoke / inconclusive | c_effective_rank=8.8219; c_cross_video_cosine=0.7359; c_std_mean=0.4799; coarse_vs_copy_ratio=62.9974; coarse_vs_batch_mean_ratio=12.9475; L_recon_present=1.0299 |
+| 27 | [`quiet-firebrand-25`](wave_2/run_027_quiet-firebrand-25/) | `bbrrydax` | `crashed` | full-prediction | dataset=ssv2; steps=15000; k=12; var=0.5; cov=0; slot=0; sigreg=0; recon=0.2/0; residual=false; present_only=false; n_c=64; D=512x2 | Smoke / inconclusive | c_effective_rank=8.8218; c_cross_video_cosine=0.7359; c_std_mean=0.4799; coarse_vs_copy_ratio=62.9978; coarse_vs_batch_mean_ratio=12.9475; L_recon_present=1.0447 |
+| 28 | [`classic-yogurt-29`](wave_2/run_028_classic-yogurt-29/) | `ryuh8cpr` | `crashed` | full-prediction | dataset=ssv2; steps=15000; k=12; var=0.5; cov=0; slot=0; sigreg=0; recon=0.05/0; residual=false; present_only=false; n_c=128; D=256x2 | Smoke / inconclusive | c_effective_rank=9.6446; c_cross_video_cosine=0.7349; c_std_mean=0.4843; coarse_vs_copy_ratio=66.8338; coarse_vs_batch_mean_ratio=14.055; L_recon_present=1.028 |
+| 29 | [`helpful-snow-25`](wave_2/run_029_helpful-snow-25/) | `tw685b5g` | `crashed` | full-prediction | dataset=ssv2; steps=15000; k=12; var=0.5; cov=0; slot=0; sigreg=0; recon=1/0; residual=false; present_only=false; n_c=32; D=256x2 | Smoke / inconclusive | c_effective_rank=9.4729; c_cross_video_cosine=0.7239; c_std_mean=0.4952; coarse_vs_copy_ratio=62.0671; coarse_vs_batch_mean_ratio=12.6011; L_recon_present=1.0246 |
+
+## Pattern Across The Branch
+
+Best copy ratio in this branch was run 021 at 1.5278; best batch-mean ratio was run 021 at 0.3246. None should be read as a full Phase 1 pass unless both gates pass together.
+
+Verdict distribution: Low-rank rep=5, Smoke / inconclusive=5.
+
+## What Changed The Research Direction
+
+That result spawned the SIGReg sweep in investigation_008, because SIGReg targets d_c utilization directly while n_c only adds slots.
+
+## Original Notes Preserved
+
 # Observations — investigation 007
 
 No run data yet. Pre-run hypotheses below; metrics + interpretation are appended as dated

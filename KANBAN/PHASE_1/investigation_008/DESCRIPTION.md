@@ -1,3 +1,38 @@
+# investigation_008 - Does SIGReg break the d_c utilization ceiling, and if it does, does prediction improve?
+
+<!-- AUTO-GENERATED-WANDB-KANBAN -->
+
+**Status:** CLOSED  
+**Runs covered:** 030, 031, 032, 033  
+**Theme:** SIGReg ladder on top of reconstruction-capacity recipe
+
+## Question
+
+Does SIGReg break the d_c utilization ceiling, and if it does, does prediction improve?
+
+## Why This Investigation Exists
+
+The capacity branch pointed at underused feature dimensions. SIGReg was introduced to push pooled c_t toward an isotropic distribution and raise effective rank.
+
+## W&B-Validated Run Coverage
+
+| # | Run | ID | State | Mode | Key config | Verdict | Last key metrics |
+|---:|---|---|---|---|---|---|---|
+| 30 | [`lambda_sigreg_3.0`](run_030_lambda_sigreg_3.0/) | `9jxc8i1q` | `crashed` | full-prediction | dataset=ssv2; steps=15000; k=12; var=0.5; cov=0; slot=0; sigreg=3; recon=0.05/0; residual=false; present_only=false; n_c=32; D=512x4 | Low-rank rep | c_effective_rank=34.4457; c_cross_video_cosine=0.3516; c_std_mean=0.9581; coarse_vs_copy_ratio=5.2415; coarse_vs_batch_mean_ratio=0.884; L_recon_present=0.5747 |
+| 31 | [`lambda_sigreg_1.0`](run_031_lambda_sigreg_1.0/) | `jk8kj7h7` | `crashed` | full-prediction | dataset=ssv2; steps=15000; k=12; var=0.5; cov=0; slot=0; sigreg=1; recon=0.05/0; residual=false; present_only=false; n_c=32; D=512x4 | Low-rank rep | c_effective_rank=13.0161; c_cross_video_cosine=0.2892; c_std_mean=1.0147; coarse_vs_copy_ratio=2.7053; coarse_vs_batch_mean_ratio=0.4522; L_recon_present=0.5858 |
+| 32 | [`lambda_sigreg_0.3`](run_032_lambda_sigreg_0.3/) | `x7z6e0ah` | `crashed` | full-prediction | dataset=ssv2; steps=15000; k=12; var=0.5; cov=0; slot=0; sigreg=0.3; recon=0.05/0; residual=false; present_only=false; n_c=32; D=512x4 | Low-rank rep | c_effective_rank=13.2162; c_cross_video_cosine=0.3067; c_std_mean=1.0191; coarse_vs_copy_ratio=2.3375; coarse_vs_batch_mean_ratio=0.4012; L_recon_present=0.5878 |
+| 33 | [`lambda_sigreg_10.0`](run_033_lambda_sigreg_10.0/) | `fbqgix1x` | `crashed` | full-prediction | dataset=ssv2; steps=15000; k=12; var=0.5; cov=0; slot=0; sigreg=10; recon=0.05/0; residual=false; present_only=false; n_c=32; D=512x4 | Healthy rep, no predictor | c_effective_rank=73.7941; c_cross_video_cosine=0.3844; c_std_mean=0.9074; coarse_vs_copy_ratio=9.0694; coarse_vs_batch_mean_ratio=1.103; L_recon_present=0.5768 |
+
+## Current Conclusion
+
+SIGReg is a real rank lever, especially at high weights. However, higher rank alone made prediction worse or left copy unbeaten, so geometry alone was not enough.
+
+## Evidence Standard
+
+The run entries above were reconciled against W&B API/export data on 2026-07-02. For run 052, the newest active run, the evidence was additionally refreshed live with `python run_history.py --run 662hfy3c --report`, which showed the run still `running` through step 5600.
+
+## Original Notes Preserved
+
 # Investigation 008 — Does SIGReg break the `d_c` utilization ceiling (rank 13/256)?
 
 **Status:** OPEN — design complete; **SIGReg code implemented** (`losses.sigreg_loss`,

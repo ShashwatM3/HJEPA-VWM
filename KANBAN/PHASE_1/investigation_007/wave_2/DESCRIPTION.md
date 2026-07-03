@@ -23,11 +23,11 @@ The 4 kept are the full latent ladder (the only untested axis) + the one interac
 
 | GPU | Run folder | λ_recon · decoder · n_c | Role | W&B id |
 |---|---|---|---|---|
-| 0 | [pious-mountain-28](pious-mountain-28/) | 0.05 · 256×2 · 64  | latent bookend (low) ⭐ | new (TBD) |
-| 1 | [classic-yogurt-29](classic-yogurt-29/) | 0.05 · 256×2 · 128 | latent interpolation | new (TBD) |
-| 2 | [earnest-dragon-25](earnest-dragon-25/) | 0.05 · 256×2 · 256 | latent bookend (high) ⭐ | new (TBD) |
-| 3 | [quiet-firebrand-25](quiet-firebrand-25/) | 0.2 · 512×2 · 64   | combined "all bigger" | new (TBD) |
-| — | [helpful-snow-25](helpful-snow-25/) | ~~1.0 · 256×2 · 32~~ | **DROPPED** | — |
+| 0 | [pious-mountain-28](run_026_pious-mountain-28/) | 0.05 · 256×2 · 64  | latent bookend (low) ⭐ | new (TBD) |
+| 1 | [classic-yogurt-29](run_028_classic-yogurt-29/) | 0.05 · 256×2 · 128 | latent interpolation | new (TBD) |
+| 2 | [earnest-dragon-25](run_025_earnest-dragon-25/) | 0.05 · 256×2 · 256 | latent bookend (high) ⭐ | new (TBD) |
+| 3 | [quiet-firebrand-25](run_027_quiet-firebrand-25/) | 0.2 · 512×2 · 64   | combined "all bigger" | new (TBD) |
+| — | [helpful-snow-25](run_029_helpful-snow-25/) | ~~1.0 · 256×2 · 32~~ | **DROPPED** | — |
 
 > Run folders keep their original (attempt-1) names; the W&B ids below are from the **deleted**
 > failed runs and are now dead. Update each folder's `OBSERVATIONS.md` with the **new** run name +
@@ -42,11 +42,11 @@ to fill the 5 GPUs and close the OFAT "flat vs not-pushed-hard-enough" blind spo
 
 | # | Run | λ_recon | Decoder | n_c | Intended probe | W&B id |
 |---|---|---|---|---|---|---|
-| 1 | [pious-mountain-28](pious-mountain-28/) | 0.05 | 256×2 | 64 | latent 2× | `7u5zkw6t` |
-| 2 | [classic-yogurt-29](classic-yogurt-29/) | 0.05 | 256×2 | 128 | latent 4× | `ryuh8cpr` |
-| 3 | [earnest-dragon-25](earnest-dragon-25/) | 0.05 | 256×2 | 256 | latent 8× (saturation) | `2xsd5jwr` |
-| 4 | [helpful-snow-25](helpful-snow-25/) | 1.0 | 256×2 | 32 | weight saturation | `tw685b5g` |
-| 5 | [quiet-firebrand-25](quiet-firebrand-25/) | 0.2 | 512×2 | 64 | combined "all bigger" | `bbrrydax` |
+| 1 | [pious-mountain-28](run_026_pious-mountain-28/) | 0.05 | 256×2 | 64 | latent 2× | `7u5zkw6t` |
+| 2 | [classic-yogurt-29](run_028_classic-yogurt-29/) | 0.05 | 256×2 | 128 | latent 4× | `ryuh8cpr` |
+| 3 | [earnest-dragon-25](run_025_earnest-dragon-25/) | 0.05 | 256×2 | 256 | latent 8× (saturation) | `2xsd5jwr` |
+| 4 | [helpful-snow-25](run_029_helpful-snow-25/) | 1.0 | 256×2 | 32 | weight saturation | `tw685b5g` |
+| 5 | [quiet-firebrand-25](run_027_quiet-firebrand-25/) | 0.2 | 512×2 | 64 | combined "all bigger" | `bbrrydax` |
 
 ## What actually happened
 

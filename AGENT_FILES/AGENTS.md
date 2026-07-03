@@ -326,6 +326,21 @@ Invariant: the decoder may know where output tubelets are, but it must not use
 a learned per-output-token content template. Tests enforce that `fixed_pos` is
 a buffer and that zero latent cannot emit position-specific content.
 
+### FeatureMeanTracker
+
+`FeatureMeanTracker` supports the residual reconstruction target
+(`cfg.train.recon_residual_target`):
+
+- Buffers only (`mean` fp32 `(N_ctx, D_e)`, `initialized` flag), zero
+  parameters — it can never enter the optimizer, AGC, weight decay, or EMA.
+- `update(detailed)` folds a training batch into an EMA per-tubelet-position
+  mean; the first batch initializes it directly. Train-step only; diagnostics
+  read it but never update it.
+- `subtract(features)` returns `features - mean` for the reconstruction target.
+- It travels outside the five-module bundle as an optional keyword argument and
+  is checkpointed under the optional `recon_feature_mean` key; old checkpoints
+  load fine and the mean re-warms.
+
 ## 7. Flow math and implemented loss functions
 
 All current flow losses use rectified flow:
@@ -404,6 +419,15 @@ Current reconstruction paths:
   and `B` through the coarse conditioning path.
 - Diagnostic readouts also score `decoder(c_plus)` and `decoder(c_hat)` under
   `no_grad`.
+
+Residual reconstruction target (`recon_residual_target`, default off): both
+anchors score against the per-position residual `e - mean` instead of the
+absolute features, where `mean` is the `FeatureMeanTracker` EMA per-tubelet
+mean of `e_t`. This removes the video-independent template component from the
+objective so reconstruction pressure must route video-specific content through
+`c_t` (the run-052 collapse fix). Gradient routing is unchanged; requires an
+active recon anchor (validated in `finalize_training_config`). Do not confuse
+it with `predict_residual`, which is the temporal residual for `F_c`.
 
 ### Variance floor
 
@@ -606,6 +630,12 @@ Reconstruction readouts:
 - `L_recon_present`: `decoder(c_t)` vs `e_t`.
 - `L_recon_cplus`: `decoder(c_plus)` vs `e_plus`.
 - `L_recon_chat`: `decoder(c_hat)` vs `e_plus`.
+- `L_recon_shuffled_c`: `decoder(roll(c_t, 1))` vs this video's target — decodes
+  ANOTHER video's latent against each target (deterministic roll, RNG-free).
+- `L_recon_video_gap`: `L_recon_shuffled_c - L_recon_present`. Near zero means
+  the decode barely depends on which video's latent it received — the run-052
+  template-collapse signature. In residual-target mode every readout scores the
+  residual `e - mean`, matching the training objective.
 
 Gradient and stability:
 
@@ -661,6 +691,7 @@ Training defaults:
 | `lambda_sigreg`, `lambda_cov`, `lambda_slot` | `0.0`, `0.0`, `0.0` |
 | `lambda_recon`, `lambda_recon_pred` | `0.0`, `0.0` |
 | `recon_loss_mode`, `recon_warmup_steps` | `cosine`, `2000` |
+| `recon_residual_target`, `recon_mean_momentum` | `False`, `0.99` |
 | `present_recon_only`, `predict_residual` | `False`, `False` |
 | `horizon_k`, `frame_stride` | `4`, `2` |
 | `precision` | `bf16` |

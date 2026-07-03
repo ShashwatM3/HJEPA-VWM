@@ -11,13 +11,13 @@ live W&B report linked there. **Numbers below were pulled from W&B, not memory.*
 
 | Run | Axis | **L_recon_present** | cplus | chat | copy_ratio | eff_rank | L_flow |
 |---|---|---|---|---|---|---|---|
-| [toasty-donkey-21](toasty-donkey-21/) | λ=0.1 | 0.5959 | 0.5954 | 0.6027 | 1.59 | 12.97 | 0.41 |
-| [jolly-glade-20](jolly-glade-20/) | λ=0.2 | 0.5915 | 0.5906 | 0.5966 | 1.56 | 12.98 | 0.40 |
-| [light-universe-24](light-universe-24/) | λ=0.5 | 0.5855 | 0.5843 | 0.5913 | 1.66 | 12.66 | 0.42 |
-| [gallant-dew-22](gallant-dew-22/) | 512×2 | 0.5895 | 0.5917 | 0.5999 | 1.74 | 12.51 | 0.44 |
-| [eager-plant-22](eager-plant-22/) | 512×4 | 0.5845 | 0.5850 | 0.5959 | 1.53 | 12.95 | 0.42 |
+| [toasty-donkey-21](run_023_toasty-donkey-21/) | λ=0.1 | 0.5959 | 0.5954 | 0.6027 | 1.59 | 12.97 | 0.41 |
+| [jolly-glade-20](run_020_jolly-glade-20/) | λ=0.2 | 0.5915 | 0.5906 | 0.5966 | 1.56 | 12.98 | 0.40 |
+| [light-universe-24](run_024_light-universe-24/) | λ=0.5 | 0.5855 | 0.5843 | 0.5913 | 1.66 | 12.66 | 0.42 |
+| [gallant-dew-22](run_022_gallant-dew-22/) | 512×2 | 0.5895 | 0.5917 | 0.5999 | 1.74 | 12.51 | 0.44 |
+| [eager-plant-22](run_021_eager-plant-22/) | 512×4 | 0.5845 | 0.5850 | 0.5959 | 1.53 | 12.95 | 0.42 |
 
-baseline ([easy-blaze-19](../../investigation_006/easy-blaze-19/)): λ=0.05, 256×2 → ~0.60.
+baseline ([easy-blaze-19](../../investigation_006/run_019_easy-blaze-19/)): λ=0.05, 256×2 → ~0.60.
 
 ### Three load-bearing conclusions
 

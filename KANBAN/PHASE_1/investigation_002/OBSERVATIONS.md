@@ -1,3 +1,32 @@
+# Observations - investigation_002
+
+<!-- AUTO-GENERATED-WANDB-KANBAN -->
+
+## Cross-Run Synthesis
+
+The smoke runs validated execution and logging. They also showed that early untrained representations were collapsed or low-rank, so later work had to separate infrastructure success from learning success.
+
+## Run-by-Run Evidence
+
+| # | Run | ID | State | Mode | Key config | Verdict | Last key metrics |
+|---:|---|---|---|---|---|---|---|
+| 1 | [`youthful-pond-1`](run_001_youthful-pond-1/) | `x4pwz33d` | `finished` | full-prediction | dataset=ssv2_tiny; steps=100; k=4; var=0.1; cov=0; slot=0; sigreg=0; recon=0/0; residual=false; present_only=false; n_c=32; D=n/a | Smoke / inconclusive | c_effective_rank=8.9986; c_cross_video_cosine=0.7175; c_std_mean=0.4984; coarse_vs_copy_ratio=171.5862; coarse_vs_batch_mean_ratio=12.2494 |
+| 2 | [`efficient-aardvark-2`](run_002_efficient-aardvark-2/) | `fz7ztfc8` | `finished` | full-prediction | dataset=ssv2_tiny; steps=200; k=4; var=0.1; cov=0; slot=0; sigreg=0; recon=0/0; residual=false; present_only=false; n_c=32; D=n/a | Smoke / inconclusive | c_effective_rank=8.9986; c_cross_video_cosine=0.7175; c_std_mean=0.4984; coarse_vs_copy_ratio=171.5862; coarse_vs_batch_mean_ratio=12.2494 |
+| 3 | [`comfy-glade-3`](run_003_comfy-glade-3/) | `0mgmqxxi` | `finished` | full-prediction | dataset=ssv2_tiny; steps=200; k=4; var=0.1; cov=0; slot=0; sigreg=0; recon=0/0; residual=false; present_only=false; n_c=32; D=n/a | Smoke / inconclusive | c_effective_rank=8.9986; c_cross_video_cosine=0.7175; c_std_mean=0.4984; coarse_vs_copy_ratio=171.5862; coarse_vs_batch_mean_ratio=12.2494 |
+| 4 | [`charmed-haze-4`](run_004_charmed-haze-4/) | `gj8ypv0d` | `finished` | full-prediction | dataset=ssv2_tiny; steps=200; k=4; var=0.1; cov=0; slot=0; sigreg=0; recon=0/0; residual=false; present_only=false; n_c=32; D=n/a | Smoke / inconclusive | c_effective_rank=8.9986; c_cross_video_cosine=0.7175; c_std_mean=0.4984; coarse_vs_copy_ratio=171.5862; coarse_vs_batch_mean_ratio=12.2494 |
+
+## Pattern Across The Branch
+
+Best copy ratio in this branch was run 001 at 171.5862; best batch-mean ratio was run 001 at 12.2494. None should be read as a full Phase 1 pass unless both gates pass together.
+
+Verdict distribution: Smoke / inconclusive=4.
+
+## What Changed The Research Direction
+
+With infrastructure usable, the research shifted to full-data Phase 1 collapse and baseline diagnostics.
+
+## Original Notes Preserved
+
 # Observations — Investigation 002 (dataloader throughput)
 
 ## Baseline (pre-fix)

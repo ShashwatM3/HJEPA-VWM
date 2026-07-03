@@ -4,9 +4,9 @@ Hierarchical JEPA-Flow video world model — planning docs and Phase 1 implement
 
 ## Architecture
 
-HJEPA-VWM trains a video world model whose internal state is a two-level latent hierarchy: a detailed latent `e_t` (from a **frozen pretrained V-JEPA 2 ViT-L/16 encoder**, `D_e=1024`) for local visual detail and a compressed abstract latent `c_t` (from a trainable bottleneck `B`, 32×256) for future-relevant structure. Phase 1 predicts the future abstract latent `c⁺_{t+k}` with a conditional rectified-flow model `F_c`, against a stop-gradient **EMA bottleneck** target (`B_EMA`); collapse is prevented by a **variance floor on `c_t`** (no SIGReg). This is not a video diffusion model; the compressed predictive state is the core object being tested.
+HJEPA-VWM trains a video world model whose internal state is a two-level latent hierarchy: a detailed latent `e_t` (from a **frozen pretrained V-JEPA 2 ViT-L/16 encoder**, `D_e=1024`) for local visual detail and a compressed abstract latent `c_t` (from a trainable bottleneck `B`, 32×256) for future-relevant structure. Phase 1 predicts the future abstract latent `c⁺_{t+k}` with a conditional rectified-flow model `F_c`, against a stop-gradient **EMA bottleneck** target (`B_EMA`); collapse is prevented by a **variance floor on** `c_t` (no SIGReg). This is not a video diffusion model; the compressed predictive state is the core object being tested.
 
-## For coding agents
+## For coding agentsre
 
 Start with `AGENT_FILES/AGENTS.md`. It defines the mandatory read order, document precedence, RunPod volume contract, and phase workflow. Do not infer architecture from generic ML patterns.
 
@@ -60,6 +60,8 @@ After 10k+ steps, acceptance requires:
 - model L_c <= 0.70 x copy-baseline L_c
 - model L_c <= 0.50 x batch-mean-baseline L_c
 
+
+
 ## One-time SSv2-tiny creation
 
 Run this once on the RunPod after `/workspace/data/ssv2` exists:
@@ -107,37 +109,43 @@ Expected runtime: about 4–5 hours for 30k steps on an A100 80GB with `ssv2_tin
 
 ### Training flags
 
-| Flag | Values | Use |
-|---|---|---|
-| `--data` | `ssv2`, `ssv2_tiny` | Selects the dataset split root. |
-| `--steps` | integer | Sets max training steps for this launch. |
-| `--resume` | checkpoint path | Loads model and optimizer state from a checkpoint. |
-| `--seed` | integer | Sets Python/Torch RNG seed. |
-| `--stage0-only` | boolean flag | Runs one synthetic sanity step instead of training. |
-| `--log-every` | integer | Overrides console/W&B train metric frequency. |
-| `--diag-every` | integer | Overrides validation diagnostic frequency. |
-| `--checkpoint-dir` | path | Writes checkpoints to this directory. |
-| `--horizon-k` | integer frames | Sets future offset in original video frames. |
-| `--predict-residual` | boolean flag | Predicts `c_{t+k}-c_t` instead of full `c_{t+k}`. |
-| `--present-recon-only` | boolean flag | Trains only `D(B(e_t))->e_t` and skips prediction losses. |
-| `--recon-loss-mode` | `cosine`, `relative_mse` | Chooses new unit-normalized cosine recon or legacy `MSE/Var(e)`. |
-| `--lambda-recon` | float >= 0 | Weights present reconstruction `D(c_t)->e_t`. |
-| `--lambda-recon-pred` | float >= 0 | Weights predicted-future reconstruction `D(c_hat)->e_{t+k}`. |
-| `--recon-warmup-steps` | integer | Linearly ramps reconstruction losses over this many steps. |
-| `--lambda-var` | float >= 0 | Weights the `c_t` variance floor. |
-| `--lambda-sigreg` | float >= 0 | Weights SIGReg isotropic-Gaussian regularization on `c_t`. |
-| `--sigreg-warmup-steps` | integer | Linearly ramps SIGReg over this many steps. |
-| `--lambda-cov` | float >= 0 | Weights optional VICReg-C covariance penalty. |
-| `--lambda-slot` | float >= 0 | Weights optional slot-diversity penalty. |
-| `--lr-bottleneck` | float | Sets peak LR for bottleneck `B`. |
-| `--lr-coarse-flow` | float | Sets peak LR for coarse flow `F_c`. |
-| `--no-agc` | boolean flag | Disables adaptive gradient clipping. |
-| `--agc-lambda-bottleneck` | float > 0 | Sets AGC clip factor for `B`. |
-| `--agc-lambda-coarse-flow` | float > 0 | Sets AGC clip factor for `F_c`. |
-| `--grad-skip-threshold` | float | Skips optimizer steps above this post-AGC global norm. |
-| `--decoder-dim` | integer | Sets reconstruction decoder width. |
-| `--decoder-blocks` | integer | Sets reconstruction decoder depth. |
-| `--n-c` | integer | Sets abstract latent slot count. |
+
+| Flag                       | Values                   | Use                                                              |
+| -------------------------- | ------------------------ | ---------------------------------------------------------------- |
+| `--data`                   | `ssv2`, `ssv2_tiny`      | Selects the dataset split root.                                  |
+| `--steps`                  | integer                  | Sets max training steps for this launch.                         |
+| `--resume`                 | checkpoint path          | Loads model and optimizer state from a checkpoint.               |
+| `--seed`                   | integer                  | Sets Python/Torch RNG seed.                                      |
+| `--stage0-only`            | boolean flag             | Runs one synthetic sanity step instead of training.              |
+| `--log-every`              | integer                  | Overrides console/W&B train metric frequency.                    |
+| `--diag-every`             | integer                  | Overrides validation diagnostic frequency.                       |
+| `--checkpoint-dir`         | path                     | Writes checkpoints to this directory.                            |
+| `--horizon-k`              | integer frames           | Sets future offset in original video frames.                     |
+| `--predict-residual`       | boolean flag             | Predicts `c_{t+k}-c_t` instead of full `c_{t+k}`.                |
+| `--present-recon-only`     | boolean flag             | Trains only `D(B(e_t))->e_t` and skips prediction losses.        |
+| `--recon-loss-mode`        | `cosine`, `relative_mse` | Chooses new unit-normalized cosine recon or legacy `MSE/Var(e)`. |
+| `--recon-residual-target`  | boolean flag             | Reconstructs the per-position residual `e - mean(e)` so the shared feature template earns zero loss (run-052 fix). |
+| `--recon-mean-momentum`    | float in (0, 1)          | EMA momentum for the tracked per-position feature mean (default 0.99). |
+| `--lambda-recon`           | float >= 0               | Weights present reconstruction `D(c_t)->e_t`.                    |
+| `--lambda-recon-pred`      | float >= 0               | Weights predicted-future reconstruction `D(c_hat)->e_{t+k}`.     |
+| `--recon-warmup-steps`     | integer                  | Linearly ramps reconstruction losses over this many steps.       |
+| `--lambda-var`             | float >= 0               | Weights the `c_t` variance floor.                                |
+| `--lambda-sigreg`          | float >= 0               | Weights SIGReg isotropic-Gaussian regularization on `c_t`.       |
+| `--sigreg-warmup-steps`    | integer                  | Linearly ramps SIGReg over this many steps.                      |
+| `--lambda-cov`             | float >= 0               | Weights optional VICReg-C covariance penalty.                    |
+| `--lambda-slot`            | float >= 0               | Weights optional slot-diversity penalty.                         |
+| `--lr-bottleneck`          | float                    | Sets peak LR for bottleneck `B`.                                 |
+| `--lr-coarse-flow`         | float                    | Sets peak LR for coarse flow `F_c`.                              |
+| `--no-agc`                 | boolean flag             | Disables adaptive gradient clipping.                             |
+| `--agc-lambda-bottleneck`  | float > 0                | Sets AGC clip factor for `B`.                                    |
+| `--agc-lambda-coarse-flow` | float > 0                | Sets AGC clip factor for `F_c`.                                  |
+| `--grad-skip-threshold`    | float                    | Skips optimizer steps above this post-AGC global norm.           |
+| `--decoder-dim`            | integer                  | Sets reconstruction decoder width.                               |
+| `--decoder-blocks`         | integer                  | Sets reconstruction decoder depth.                               |
+| `--n-c`                    | integer                  | Sets abstract latent slot count.                                 |
+
+
+
 
 ## Verification
 
@@ -159,11 +167,16 @@ python -c "from models import smoke_test_encoder; smoke_test_encoder()"   # load
 python train.py --stage0-only
 ```
 
+
+
 ## Documentation layout
 
-| Folder | Contents |
-|---|---|
-| `AGENT_FILES/AGENT-BEHAVIOUR/` | `PROTOCOL.md`, `CODE_DESIGN.md` |
-| `AGENT_FILES/KNOWLEDGE/` | Architecture brief, `UNDERSTANDING.md` |
-| `AGENT_FILES/PHASES/` | Phase 1–3 implementation specs |
-| `AGENT_FILES/SETUPS/` | `VOLUME_LAYOUT.md`, `SETUP.md`, `SETUP_POD.md` |
+
+| Folder                         | Contents                                       |
+| ------------------------------ | ---------------------------------------------- |
+| `AGENT_FILES/AGENT-BEHAVIOUR/` | `PROTOCOL.md`, `CODE_DESIGN.md`                |
+| `AGENT_FILES/KNOWLEDGE/`       | Architecture brief, `UNDERSTANDING.md`         |
+| `AGENT_FILES/PHASES/`          | Phase 1–3 implementation specs                 |
+| `AGENT_FILES/SETUPS/`          | `VOLUME_LAYOUT.md`, `SETUP.md`, `SETUP_POD.md` |
+
+

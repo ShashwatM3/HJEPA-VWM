@@ -2,7 +2,7 @@
 
 Execution walkthrough for the investigation_011 present-only geometry sweep. This is the
 operational plan for Recommendation 1 from
-[`../fixed-position-present-recon/ANALYSIS_inv011_fixed_position_present_recon.md`](../fixed-position-present-recon/ANALYSIS_inv011_fixed_position_present_recon.md):
+[`../fixed-position-present-recon/ANALYSIS_inv011_fixed_position_present_recon.md`](../run_041_inv011_fixed_position_present_recon/ANALYSIS_inv011_fixed_position_present_recon.md):
 
 ```text
 present-only reconstruction
@@ -37,7 +37,7 @@ lambda_cov    = {0.0, 0.003, 0.01}
 ```
 
 But the already-completed run
-[`inv011_fixed_position_present_recon`](../fixed-position-present-recon/OBSERVATIONS.md) is exactly:
+[`inv011_fixed_position_present_recon`](../run_041_inv011_fixed_position_present_recon/OBSERVATIONS.md) is exactly:
 
 ```text
 lambda_sigreg = 5.0
@@ -526,7 +526,7 @@ existing anchor `hcr2qx19` -> read rank, recon, cosine, std, and slot rank toget
 ### Sources
 
 - Sibling operational guides:
-  [`../fixed-position-present-recon/GUIDE.md`](../fixed-position-present-recon/GUIDE.md),
+  [`../fixed-position-present-recon/GUIDE.md`](../run_041_inv011_fixed_position_present_recon/GUIDE.md),
   [`../../investigation_008/GUIDE.md`](../../investigation_008/GUIDE.md),
   [`../../investigation_007/GUIDE.md`](../../investigation_007/GUIDE.md)
 - Shared fresh-pod checklist:

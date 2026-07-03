@@ -1,3 +1,25 @@
+# Observations - investigation_004
+
+<!-- AUTO-GENERATED-WANDB-KANBAN -->
+
+## Cross-Run Synthesis
+
+No W&B run is assigned to this investigation in the canonical run sequence. Later present-only geometry sweeps revisited covariance in a better-controlled setting after SIGReg and fixed-position reconstruction clarified the failure mode.
+
+## Run-by-Run Evidence
+
+No canonical W&B runs belong to this paused investigation.
+
+## Pattern Across The Branch
+
+This branch is preserved as planning context. Its question reappears later in better-controlled experiments.
+
+## What Changed The Research Direction
+
+Keep this as historical context; use investigation_011 for covariance evidence rather than treating this paused branch as an experimental result.
+
+## Original Notes Preserved
+
 # Observations — Investigation 004 (VICReg-C)
 
 ## Hypothesis
@@ -20,10 +42,10 @@ Step-3500 verdict on full SSv2, `lambda_cov=0`:
 
 VICReg-C (`lambda_cov`) was **never tested as the primary isolated lever**. It appeared
 only as a low-weight **adjunct** alongside slot loss on the slot-arc runs
-([`serene-cloud-8`](../investigation_003/serene-cloud-8/),
-[`skilled-waterfall-10`](../investigation_003/skilled-waterfall-10/),
-[`olive-terrain-11`](../investigation_003/olive-terrain-11/),
-[`copper-sky-12`](../investigation_003/copper-sky-12/)) at **`lambda_cov=0.0027`** —
+([`serene-cloud-8`](../investigation_003/run_008_serene-cloud-8/),
+[`skilled-waterfall-10`](../investigation_003/run_010_skilled-waterfall-10/),
+[`olive-terrain-11`](../investigation_003/run_011_olive-terrain-11/),
+[`copper-sky-12`](../investigation_003/run_012_copper-sky-12/)) at **`lambda_cov=0.0027`** —
 all confirmed via W&B config. Because slot loss dominated those runs and then
 Goodharted, the covariance term's isolated effect is **unobservable** from them.
 

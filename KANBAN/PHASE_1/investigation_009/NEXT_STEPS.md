@@ -1,3 +1,30 @@
+# Next Steps - investigation_009
+
+<!-- AUTO-GENERATED-WANDB-KANBAN -->
+
+## Current Recommendation
+
+The next branch cleaned optimizer and regularization settings around residual prediction to see whether the result survived a full clean run.
+
+## Closure / Carry-Forward Status
+
+- Status: **CLOSED**.
+- Conclusion to carry forward: Residual prediction made c_t more dynamic and healthier, but F_c mostly tied the zero-residual baseline. The failure moved from representation collapse toward predictor learning.
+- Runs covered: 034, 035.
+
+## Follow-Up Chain
+
+This investigation feeds into `investigation_010`: clean residual run with optimizer/regularization plumbing. The reason is: Investigation 009 had promising representation movement but still poor forecasting. This branch removed confounds by using the cleaned residual/reconstruction/SIGReg setup.
+
+## Guardrails For Future Reuse
+
+- Do not cite a present-only result as a prediction success.
+- Do not cite a low `L_flow` as success without the copy and batch-mean gates.
+- Do not compare residual-mode copy ratios against full-latent copy ratios without naming the mode difference.
+- When reviving this branch, start from the exact run folder and W&B id, not a remembered nickname.
+
+## Original Notes Preserved
+
 # Next steps — investigation_009 (residual prediction + SIGReg substrate)
 
 ## Tier 0 — commit the code (prerequisite, user action) ⏳

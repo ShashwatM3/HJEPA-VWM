@@ -1,3 +1,30 @@
+# Next Steps - investigation_007
+
+<!-- AUTO-GENERATED-WANDB-KANBAN -->
+
+## Current Recommendation
+
+That result spawned the SIGReg sweep in investigation_008, because SIGReg targets d_c utilization directly while n_c only adds slots.
+
+## Closure / Carry-Forward Status
+
+- Status: **CLOSED**.
+- Conclusion to carry forward: Decoder width/depth and reconstruction weight did not explain the floor. The important finding was a utilization ceiling: c_effective_rank stayed near the historical low-rank band unless a geometry regularizer directly attacked d_c usage.
+- Runs covered: 020, 021, 022, 023, 024, 025, 026, 027, 028, 029.
+
+## Follow-Up Chain
+
+This investigation feeds into `investigation_008`: SIGReg ladder on top of reconstruction-capacity recipe. The reason is: The capacity branch pointed at underused feature dimensions. SIGReg was introduced to push pooled c_t toward an isotropic distribution and raise effective rank.
+
+## Guardrails For Future Reuse
+
+- Do not cite a present-only result as a prediction success.
+- Do not cite a low `L_flow` as success without the copy and batch-mean gates.
+- Do not compare residual-mode copy ratios against full-latent copy ratios without naming the mode difference.
+- When reviving this branch, start from the exact run folder and W&B id, not a remembered nickname.
+
+## Original Notes Preserved
+
 # Next steps — investigation 007
 
 ## Status (updated 2026-06-27)
@@ -12,8 +39,8 @@ capacity-bound) is **untested**. See [`wave_1/`](wave_1/DESCRIPTION.md), [`wave_
 1. **Diagnose the death:** `tail -n 50 logs/*.log` on the pod (traceback vs. bare `Killed`); check
    RunPod pod events for a stop/reclaim; `dmesg | grep -i oom`.
 2. **Re-launch a reduced wave: `n_c=64` + `n_c=256` only** — the two bookends that decide the
-   latent-capacity question ([wave_2/pious-mountain-28](wave_2/pious-mountain-28/),
-   [wave_2/earnest-dragon-25](wave_2/earnest-dragon-25/)). Commands in those DESCRIPTIONs.
+   latent-capacity question ([wave_2/pious-mountain-28](wave_2/run_026_pious-mountain-28/),
+   [wave_2/earnest-dragon-25](wave_2/run_025_earnest-dragon-25/)). Commands in those DESCRIPTIONs.
 3. **Harden the launch:** confirm tmux detach before SSH disconnect; add a step-600 tripwire
    (`grep -L "step.*500" logs/*.log` after ~15 min) so a silent early death can't recur.
 4. Read **`L_recon_present` ∧ `c_effective_rank` ∧ `coarse_vs_copy_ratio`** against SWEEP_PLAN §4.

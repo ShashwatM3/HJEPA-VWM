@@ -1,3 +1,30 @@
+# Observations - investigation_009
+
+<!-- AUTO-GENERATED-WANDB-KANBAN -->
+
+## Cross-Run Synthesis
+
+Residual prediction made c_t more dynamic and healthier, but F_c mostly tied the zero-residual baseline. The failure moved from representation collapse toward predictor learning.
+
+## Run-by-Run Evidence
+
+| # | Run | ID | State | Mode | Key config | Verdict | Last key metrics |
+|---:|---|---|---|---|---|---|---|
+| 34 | [`sigreg-only`](run_034_sigreg-only/) | `xz3nabr9` | `crashed` | full-prediction | dataset=ssv2; steps=15000; k=12; var=0.5; cov=0; slot=0; sigreg=6; recon=0/0; residual=false; present_only=false; n_c=32; D=512x4 | Low-rank rep | c_effective_rank=50.5622; c_cross_video_cosine=0.3934; c_std_mean=0.9241; coarse_vs_copy_ratio=6.1219; coarse_vs_batch_mean_ratio=0.9538; L_recon_present=1.0454 |
+| 35 | [`sigreg-recon-residual`](run_035_sigreg-recon-residual/) | `jsh6uo7p` | `crashed` | full-prediction | dataset=ssv2; steps=15000; k=12; var=0.5; cov=0; slot=0; sigreg=5; recon=0.05/0.05; residual=true; present_only=false; n_c=32; D=512x4 | Low-rank rep | c_effective_rank=57.9796; c_cross_video_cosine=0.1699; c_std_mean=1.0048; coarse_vs_copy_ratio=1.0883; coarse_vs_batch_mean_ratio=1.1757; L_recon_present=0.5691 |
+
+## Pattern Across The Branch
+
+Best copy ratio in this branch was run 035 at 1.0883; best batch-mean ratio was run 034 at 0.9538. None should be read as a full Phase 1 pass unless both gates pass together.
+
+Verdict distribution: Low-rank rep=2.
+
+## What Changed The Research Direction
+
+The next branch cleaned optimizer and regularization settings around residual prediction to see whether the result survived a full clean run.
+
+## Original Notes Preserved
+
 # Observations — investigation_009 (residual prediction + SIGReg substrate)
 
 No run data yet. This file registers the **pre-run predictions** the wave is launched on; metrics +

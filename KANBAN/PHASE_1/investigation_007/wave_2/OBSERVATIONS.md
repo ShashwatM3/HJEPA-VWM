@@ -12,11 +12,11 @@ Full version: [`../END_OF_WAVE_2.md`](../END_OF_WAVE_2.md). Numbers pulled from 
 
 | Run | runtime | last step | last heartbeat | logged history |
 |---|---|---|---|---|
-| [pious-mountain-28](pious-mountain-28/) | 350 s | 200 | 03:47:43Z | step 0 only |
-| [classic-yogurt-29](classic-yogurt-29/) | 381 s | 200 | 03:47:43Z | step 0 only |
-| [earnest-dragon-25](earnest-dragon-25/) | 352 s | 200 | 03:47:43Z | step 0 only |
-| [helpful-snow-25](helpful-snow-25/) | 346 s | 200 | 03:47:43Z | step 0 only |
-| [quiet-firebrand-25](quiet-firebrand-25/) | 347 s | 200 | 03:47:43Z | step 0 only |
+| [pious-mountain-28](run_026_pious-mountain-28/) | 350 s | 200 | 03:47:43Z | step 0 only |
+| [classic-yogurt-29](run_028_classic-yogurt-29/) | 381 s | 200 | 03:47:43Z | step 0 only |
+| [earnest-dragon-25](run_025_earnest-dragon-25/) | 352 s | 200 | 03:47:43Z | step 0 only |
+| [helpful-snow-25](run_029_helpful-snow-25/) | 346 s | 200 | 03:47:43Z | step 0 only |
+| [quiet-firebrand-25](run_027_quiet-firebrand-25/) | 347 s | 200 | 03:47:43Z | step 0 only |
 
 **Smoking gun:** five independent processes stopped at the *same second* → the pod / tmux session
 / process group went down together, not a per-run crash.

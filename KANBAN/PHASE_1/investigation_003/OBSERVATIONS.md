@@ -1,3 +1,37 @@
+# Observations - investigation_003
+
+<!-- AUTO-GENERATED-WANDB-KANBAN -->
+
+## Cross-Run Synthesis
+
+The useful result was not slot loss. The project learned that horizon_k=12 with a stronger variance floor could stabilize basic representation health, but the representation remained low-rank and still did not pass the copy or batch-mean gates.
+
+## Run-by-Run Evidence
+
+| # | Run | ID | State | Mode | Key config | Verdict | Last key metrics |
+|---:|---|---|---|---|---|---|---|
+| 6 | [`exalted-lion-6`](run_006_exalted-lion-6/) | `wv69n7n5` | `finished` | full-prediction | dataset=ssv2_tiny; steps=500; k=4; var=0.1; cov=0; slot=0; sigreg=0; recon=0/0; residual=false; present_only=false; n_c=32; D=n/a | Smoke / inconclusive | c_effective_rank=10.3413; c_cross_video_cosine=0.2461; c_std_mean=0.8307; coarse_vs_copy_ratio=2.9663; coarse_vs_batch_mean_ratio=1.9614 |
+| 7 | [`sleek-leaf-7`](run_007_sleek-leaf-7/) | `rpxyg9qt` | `crashed` | full-prediction | dataset=ssv2; steps=15000; k=4; var=0.1; cov=0; slot=0; sigreg=0; recon=0/0; residual=false; present_only=false; n_c=32; D=n/a | Invalid | c_effective_rank=9.4703; c_cross_video_cosine=0.4996; c_std_mean=0.6909; coarse_vs_copy_ratio=2.3479; coarse_vs_batch_mean_ratio=1.3945 |
+| 8 | [`serene-cloud-8`](run_008_serene-cloud-8/) | `dhp1i3fk` | `killed` | full-prediction | dataset=ssv2; steps=5000; k=4; var=0.1; cov=0.0027; slot=0.25; sigreg=0; recon=0/0; residual=false; present_only=false; n_c=32; D=n/a | Invalid | c_effective_rank=14.4777; c_cross_video_cosine=0.7435; c_std_mean=0.45; coarse_vs_copy_ratio=11.4562; coarse_vs_batch_mean_ratio=5.9294 |
+| 9 | [`confused-butterfly-9`](run_009_confused-butterfly-9/) | `m30jxiye` | `killed` | full-prediction | dataset=ssv2; steps=5000; k=4; var=0.1; cov=0.0027; slot=0.25; sigreg=0; recon=0/0; residual=false; present_only=false; n_c=32; D=n/a | Smoke / inconclusive | n/a |
+| 10 | [`skilled-waterfall-10`](run_010_skilled-waterfall-10/) | `27i1r9qi` | `crashed` | full-prediction | dataset=ssv2; steps=15000; k=12; var=0.1; cov=0.0027; slot=0.05; sigreg=0; recon=0/0; residual=false; present_only=false; n_c=32; D=n/a | Invalid | c_effective_rank=7.2924; c_cross_video_cosine=0.5756; c_std_mean=0.6035; coarse_vs_copy_ratio=1.8968; coarse_vs_batch_mean_ratio=2.3786 |
+| 11 | [`olive-terrain-11`](run_011_olive-terrain-11/) | `q40nq0l3` | `killed` | full-prediction | dataset=ssv2; steps=15000; k=12; var=0.1; cov=0.0027; slot=0.05; sigreg=0; recon=0/0; residual=false; present_only=false; n_c=32; D=n/a | Invalid | c_effective_rank=9.0648; c_cross_video_cosine=0.6538; c_std_mean=0.5552; coarse_vs_copy_ratio=2.8482; coarse_vs_batch_mean_ratio=2.6544 |
+| 12 | [`copper-sky-12`](run_012_copper-sky-12/) | `ejror834` | `killed` | full-prediction | dataset=ssv2; steps=15000; k=12; var=0.1; cov=0.0027; slot=0.05; sigreg=0; recon=0/0; residual=false; present_only=false; n_c=32; D=n/a | Invalid | c_effective_rank=4.8157; c_cross_video_cosine=0.7495; c_std_mean=0.4585; coarse_vs_copy_ratio=2.0106; coarse_vs_batch_mean_ratio=4.2299 |
+| 13 | [`cerulean-snow-13`](run_013_cerulean-snow-13/) | `4lo4j7qb` | `killed` | full-prediction | dataset=ssv2; steps=15000; k=12; var=0.5; cov=0; slot=0; sigreg=0; recon=0/0; residual=false; present_only=false; n_c=32; D=n/a | Low-rank rep | c_effective_rank=13.6717; c_cross_video_cosine=0.2356; c_std_mean=1.0378; coarse_vs_copy_ratio=0.9493; coarse_vs_batch_mean_ratio=0.2046 |
+| 14 | [`jolly-forest-14`](run_014_jolly-forest-14/) | `8bkeeuio` | `crashed` | full-prediction | dataset=ssv2; steps=15000; k=12; var=0.5; cov=0; slot=0; sigreg=0; recon=0/0; residual=false; present_only=false; n_c=32; D=n/a | Low-rank rep | c_effective_rank=9.392; c_cross_video_cosine=0.2281; c_std_mean=0.9446; coarse_vs_copy_ratio=1.5639; coarse_vs_batch_mean_ratio=0.3607 |
+
+## Pattern Across The Branch
+
+Best copy ratio in this branch was run 013 at 0.9493; best batch-mean ratio was run 013 at 0.2046. None should be read as a full Phase 1 pass unless both gates pass together.
+
+Verdict distribution: Invalid=5, Low-rank rep=2, Smoke / inconclusive=2.
+
+## What Changed The Research Direction
+
+The next branch tried longer acceptance-style runs and optimizer/EMA hardening, because basic collapse control was still not Phase 1 success.
+
+## Original Notes Preserved
+
 # Observations — Investigation 003 (collapse)
 
 ## Hypothesis timeline
@@ -8,14 +42,14 @@
 
 **Result:** **Partially true but insufficient.** Init fixes (baked into model, commit `62b94dd`)
 improved starting rank (~9 vs ~5) and attention entropy. Rank still stalled without stronger
-variance pressure. Init is **hygiene**, not the cure ([`ANALYSIS_AND_DECISIONS.md`](../../AGENT_FILES/KANBAN/04-FIX-DIMENSIONAL-COLLAPSE/ANALYSIS_AND_DECISIONS.md)).
+variance pressure. Init is **hygiene**, not the cure ([`ANALYSIS_AND_DECISIONS.md`](../../../AGENT_FILES/KANBAN/04-FIX-DIMENSIONAL-COLLAPSE/ANALYSIS_AND_DECISIONS.md)).
 
 ### H2: Missing decorrelation term (VICReg-C / SIGReg)
 
 **Evidence:** `L_var` only prevents constant dims, not correlated subspaces. Effective rank ~5
 with healthy dead-dim fraction.
 
-**Result:** VICReg-C implemented (flag-gated) but **deprioritized** after H4 won. See [investigation_004](investigation_004/). SIGReg held as escalation, not tried.
+**Result:** VICReg-C implemented (flag-gated) but **deprioritized** after H4 won. See [investigation_004](../investigation_004/). SIGReg held as escalation, not tried.
 
 ### H3: Slot-diversity loss fixes redundant slots
 
@@ -96,5 +130,5 @@ had.
 
 ## Links
 
-- Brief run table: [`AGENT_FILES/KNOWLEDGE/BRIEF_V0_3.md`](../../AGENT_FILES/KNOWLEDGE/BRIEF_V0_3.md) §13
-- Local log: [`logs/cerulean-snow-13/output.log`](../../../logs/cerulean-snow-13/output.log)
+- Brief run table: [`AGENT_FILES/KNOWLEDGE/BRIEF_V0_3.md`](../../../AGENT_FILES/KNOWLEDGE/BRIEF_V0_3.md) §13
+- Local log: `logs/cerulean-snow-13/output.log` (`run_013_cerulean-snow-13/output.log`; not present locally)

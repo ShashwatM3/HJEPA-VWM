@@ -1,3 +1,30 @@
+# Observations - investigation_006
+
+<!-- AUTO-GENERATED-WANDB-KANBAN -->
+
+## Cross-Run Synthesis
+
+Reconstruction improved stability/readouts but did not break the rank ceiling or make F_c beat copy. Prediction-side reconstruction also showed that the decoder could be blind to whether c_hat was actually a good future latent.
+
+## Run-by-Run Evidence
+
+| # | Run | ID | State | Mode | Key config | Verdict | Last key metrics |
+|---:|---|---|---|---|---|---|---|
+| 18 | [`fanciful-lake-18`](run_018_fanciful-lake-18/) | `yd5958s6` | `killed` | full-prediction | dataset=ssv2; steps=15000; k=12; var=0.5; cov=0; slot=0; sigreg=0; recon=0.05/0; residual=false; present_only=false; n_c=32; D=256x2 | Low-rank rep | c_effective_rank=13.1001; c_cross_video_cosine=0.3192; c_std_mean=1.0074; coarse_vs_copy_ratio=2.5897; coarse_vs_batch_mean_ratio=0.3722; L_recon_present=0.5992 |
+| 19 | [`easy-blaze-19`](run_019_easy-blaze-19/) | `3syv6wp2` | `finished` | full-prediction | dataset=ssv2; steps=15000; k=12; var=0.5; cov=0; slot=0; sigreg=0; recon=0.05/0.05; residual=false; present_only=false; n_c=32; D=256x2 | Low-rank rep | c_effective_rank=12.5658; c_cross_video_cosine=0.4141; c_std_mean=0.9456; coarse_vs_copy_ratio=2.9533; coarse_vs_batch_mean_ratio=0.3898; L_recon_present=0.5989 |
+
+## Pattern Across The Branch
+
+Best copy ratio in this branch was run 018 at 2.5897; best batch-mean ratio was run 018 at 0.3722. None should be read as a full Phase 1 pass unless both gates pass together.
+
+Verdict distribution: Low-rank rep=2.
+
+## What Changed The Research Direction
+
+The project moved into decoder capacity and latent-utilization sweeps to determine whether the reconstruction floor was architectural capacity or c-space utilization.
+
+## Original Notes Preserved
+
 # Observations — investigation 006
 
 No run data yet. This section records the **pre-run analysis** that motivated the
@@ -48,7 +75,7 @@ mechanism; metrics and interpretation are appended as dated sections once runs l
 
 ## 2026-06-25 — fanciful-lake-18 (first active run, λ_recon=0.05) — results
 
-Full analysis in [`fanciful-lake-18/OBSERVATIONS.md`](fanciful-lake-18/OBSERVATIONS.md).
+Full analysis in [`fanciful-lake-18/OBSERVATIONS.md`](run_018_fanciful-lake-18/OBSERVATIONS.md).
 Run reached step 14400 (killed by operator), full SSv2, royal-cherry regime + recon.
 Reading the signals above against the data:
 
@@ -78,7 +105,7 @@ expected to break the rank ceiling (looks structural at 128:1 compression — op
 
 ## 2026-06-25 — easy-blaze-19 (option 3, λ_recon_pred=0.05) — NEGATIVE RESULT
 
-Full analysis: [`easy-blaze-19/OBSERVATIONS.md`](easy-blaze-19/OBSERVATIONS.md). Clean A/B vs
+Full analysis: [`easy-blaze-19/OBSERVATIONS.md`](run_019_easy-blaze-19/OBSERVATIONS.md). Clean A/B vs
 fanciful (same seed/config, only `lambda_recon_pred` 0 → 0.05); completed full 15k.
 
 **Option 3 did not work.** Routing reconstruction through `F_c` on the predicted latent:
@@ -102,4 +129,4 @@ A `lambda_recon=0.2` ablation answers it cheaply (does `L_recon_present` drop be
 weight-bound → bigger λ / bigger `c`, then re-test option 3. If capacity-bound → reconstruction
 is the wrong lever for prediction; pivot to the **task/horizon** (copy is strong because `c`
 barely moves over horizon-12: `‖Δc‖/‖c‖` ~0.38 and falling). See
-[`easy-blaze-19/NEXT_STEPS.md`](easy-blaze-19/NEXT_STEPS.md).
+[`easy-blaze-19/NEXT_STEPS.md`](run_019_easy-blaze-19/NEXT_STEPS.md).

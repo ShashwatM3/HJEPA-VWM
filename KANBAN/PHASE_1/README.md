@@ -1,86 +1,93 @@
-# Phase 1 — Research KANBAN
+# Phase 1 - Research KANBAN
 
-Phase 1 trains **coarse dynamics only**: frozen V-JEPA 2 encoder, trainable
-bottleneck `B`, EMA bottleneck `B_EMA`, and coarse flow `F_c`, with a variance
-floor on abstract latent `c_t`. The question is whether this stack learns
-non-collapsed representations and beats copy/batch-mean baselines at a fixed
-horizon.
+<!-- AUTO-GENERATED-WANDB-KANBAN -->
 
-**Authoritative spec:** [`AGENT_FILES/PHASES/PHASE_1.md`](../AGENT_FILES/PHASES/PHASE_1.md)
+Phase 1 currently covers coarse dynamics only: frozen V-JEPA 2 encoder, trainable bottleneck `B`, EMA bottleneck `B_EMA`, coarse flow `F_c`, optional feature reconstruction decoder `D`, and diagnostic/regularization knobs used to understand collapse, rank, temporal dynamics, reconstruction honesty, and prediction baselines.
 
-**History source:** [`AGENT_FILES/COMPLETE_FULL_CHAT`](../AGENT_FILES/COMPLETE_FULL_CHAT) + W&B run list (June 2026).
+## Current Status (W&B-Verified 2026-07-02)
 
----
+- W&B project: `smahalanobis-uc-davis/hjepa-vwm`.
+- Live W&B project query found **52 runs** in creation order.
+- Current newest run: run 052 `ae_sharp_slots_recon_only` (`662hfy3c`), still `running` when refreshed live through step 5600.
+- No full-prediction run has passed both Phase 1 gates (`coarse_vs_copy_ratio <= 0.70` and `coarse_vs_batch_mean_ratio <= 0.50`).
+- The canonical negative result is run 037 `soft-universe-37`: high-rank, spread, video-specific c_t, but copy ratio around 1.06.
+- Present-only geometry runs in investigation 011 prove the bottleneck can be made high-rank and decodable, but they are not prediction successes until transferred into a full-prediction run.
+- Run 052 currently shows the opposite tradeoff: reconstruction improves strongly without geometry regularizers, but c_t remains weakly spread and video-independent.
 
-## Current status (June 2026)
+## Investigation Index
 
-| Investigation | Question | Status | Runs |
+| Investigation | Status | Runs | Current conclusion |
 |---|---|---|---|
-| [001](investigation_001/) | Can Phase 1 train without numerical blow-up? | **CLOSED** | 1 |
-| [002](investigation_002/) | Is dataloader throughput sufficient for full SSv2? | **CLOSED** | 4 |
-| [003](investigation_003/) | Why does `c_t` collapse? | **CLOSED** | 9 |
-| [004](investigation_004/) | Is VICReg-C needed beyond `lambda_var=0.5`? | **PAUSED** | 1 (Run A) |
-| [005](investigation_005/) | Can we finish the 15k acceptance run? | **ACTIVE** | 3 |
-| [006](investigation_006/) | Does a reconstruction anchor break the rank ceiling? | **ACTIVE** | 2 (`fanciful-lake-18`, `easy-blaze-19`) |
-| [007](investigation_007/) | What binds the ~0.60 reconstruction capacity floor? | **ACTIVE** | 10, in 2 waves ([wave_1](investigation_007/wave_1/) ✅ · [wave_2](investigation_007/wave_2/) ⏸️ on hold) |
-| [008](investigation_008/) | Does SIGReg break the `d_c` utilization ceiling (rank 13/256)? | **OPEN** | 0 (sweep designed, code pending) |
+| [investigation_001](investigation_001/) | CLOSED | 005 | The long baseline was not a success signal. It exposed late instability and weak prediction, which made optimizer hardening, restart discipline, and clearer acceptance metrics necessary before interpreting longer runs. |
+| [investigation_002](investigation_002/) | CLOSED | 001, 002, 003, 004 | The smoke runs validated execution and logging. They also showed that early untrained representations were collapsed or low-rank, so later work had to separate infrastructure success from learning success. |
+| [investigation_003](investigation_003/) | CLOSED | 006, 007, 008, 009, 010, 011, 012, 013, 014 | The useful result was not slot loss. The project learned that horizon_k=12 with a stronger variance floor could stabilize basic representation health, but the representation remained low-rank and still did not pass the copy or batch-mean gates. |
+| [investigation_004](investigation_004/) | PAUSED | none | No W&B run is assigned to this investigation in the canonical run sequence. Later present-only geometry sweeps revisited covariance in a better-controlled setting after SIGReg and fixed-position reconstruction clarified the failure mode. |
+| [investigation_005](investigation_005/) | CLOSED | 015, 016, 017 | Longer training exposed that nonzero variance was not enough. The runs either became unstable or stayed far from the prediction gates; rank was still low or collapsed, and copy remained competitive. |
+| [investigation_006](investigation_006/) | CLOSED | 018, 019 | Reconstruction improved stability/readouts but did not break the rank ceiling or make F_c beat copy. Prediction-side reconstruction also showed that the decoder could be blind to whether c_hat was actually a good future latent. |
+| [investigation_007](investigation_007/) | CLOSED | 020, 021, 022, 023, 024, 025, 026, 027, 028, 029 | Decoder width/depth and reconstruction weight did not explain the floor. The important finding was a utilization ceiling: c_effective_rank stayed near the historical low-rank band unless a geometry regularizer directly attacked d_c usage. |
+| [investigation_008](investigation_008/) | CLOSED | 030, 031, 032, 033 | SIGReg is a real rank lever, especially at high weights. However, higher rank alone made prediction worse or left copy unbeaten, so geometry alone was not enough. |
+| [investigation_009](investigation_009/) | CLOSED | 034, 035 | Residual prediction made c_t more dynamic and healthier, but F_c mostly tied the zero-residual baseline. The failure moved from representation collapse toward predictor learning. |
+| [investigation_010](investigation_010/) | CLOSED | 036, 037 | Run 037 proved a key negative: c_t can be high-rank, video-specific, and stable while F_c still fails the copy gate. That is the canonical healthy-representation/no-predictor result. |
+| [investigation_011](investigation_011/) | CLOSED | 038, 039, 040, 041, 042, 043, 044, 045, 046, 047, 048, 049, 050, 051 | Present reconstruction can be strong, and SIGReg plus small covariance can raise c_effective_rank above 100 while preserving video specificity. But those are present-side wins; no full-prediction run has inherited them and passed the Phase 1 copy/batch-mean gates. |
+| [investigation_012](investigation_012/) | RUNNING | 052 | Live W&B through step 5600 shows strong reconstruction progress but not healthy representation geometry: c_std_mean is still far below 1, cross-video cosine remains high, and rank has fallen into the low 20s. The run is still active, so the final verdict remains provisional. |
 
-**Winning config:** full SSv2, `horizon_k=12`, `lambda_var=0.5`, no slot loss.
+## Complete W&B Run Index
 
-**Active work:** [`investigation_007`](investigation_007/) — the capacity-floor OFAT sweep, run as two
-5-wide waves on a 5× H100 pod. **[Wave 1](investigation_007/wave_1/)** (weight × decoder, 5 runs,
-COMPLETE) ruled out both axes: `L_recon_present` pinned at **0.585 ± 0.01**, and the deeper findings
-are that *reconstruction is structurally blind to prediction* (`chat − cplus` ≈ 0.01 ≪ floor) and the
-floor is a **utilization** limit (`c_effective_rank` ~13/256, invariant) on `d_c`.
-**[Wave 2](investigation_007/wave_2/)** (latent axis `n_c` + saturation extremes, 5 runs) **failed to
-run** — all died at step 200 in a synchronized whole-pod death, so the `n_c` hypothesis is still
-untested and needs a reduced re-run (`n_c=64` + `n_c=256`). Reframe + external lit + next steps:
-[`investigation_007/END_OF_WAVE_2.md`](investigation_007/END_OF_WAVE_2.md). **Next chosen step:**
-Wave 2 is **on hold**; [`investigation_008`](investigation_008/) sweeps **SIGReg** (isotropic-Gaussian
-regularizer) to attack the `d_c` utilization ceiling (rank 13/256) Wave 1 identified — the axis
-`n_c` doesn't touch. If SIGReg lifts rank but prediction still loses to copy, the temporal/prediction
-pivot (a probable **investigation_009**) becomes unimpeachable. Predecessor:
-[`investigation_006`](investigation_006/) (`easy-blaze-19` capacity-floor finding).
+| # | Run | ID | Created | State | Investigation | Mode | Verdict |
+|---:|---|---|---|---|---|---|---|
+| 1 | [`youthful-pond-1`](investigation_002/run_001_youthful-pond-1/) | `x4pwz33d` | 2026-06-09T02:34:34Z | `finished` | [investigation_002](investigation_002/) | full-prediction | Smoke / inconclusive |
+| 2 | [`efficient-aardvark-2`](investigation_002/run_002_efficient-aardvark-2/) | `fz7ztfc8` | 2026-06-09T02:41:14Z | `finished` | [investigation_002](investigation_002/) | full-prediction | Smoke / inconclusive |
+| 3 | [`comfy-glade-3`](investigation_002/run_003_comfy-glade-3/) | `0mgmqxxi` | 2026-06-09T02:52:33Z | `finished` | [investigation_002](investigation_002/) | full-prediction | Smoke / inconclusive |
+| 4 | [`charmed-haze-4`](investigation_002/run_004_charmed-haze-4/) | `gj8ypv0d` | 2026-06-10T00:21:43Z | `finished` | [investigation_002](investigation_002/) | full-prediction | Smoke / inconclusive |
+| 5 | [`peachy-terrain-5`](investigation_001/run_005_peachy-terrain-5/) | `1chv2608` | 2026-06-10T00:42:46Z | `failed` | [investigation_001](investigation_001/) | full-prediction | Low-rank rep |
+| 6 | [`exalted-lion-6`](investigation_003/run_006_exalted-lion-6/) | `wv69n7n5` | 2026-06-13T14:35:43Z | `finished` | [investigation_003](investigation_003/) | full-prediction | Smoke / inconclusive |
+| 7 | [`sleek-leaf-7`](investigation_003/run_007_sleek-leaf-7/) | `rpxyg9qt` | 2026-06-13T18:52:06Z | `crashed` | [investigation_003](investigation_003/) | full-prediction | Invalid |
+| 8 | [`serene-cloud-8`](investigation_003/run_008_serene-cloud-8/) | `dhp1i3fk` | 2026-06-16T04:01:47Z | `killed` | [investigation_003](investigation_003/) | full-prediction | Invalid |
+| 9 | [`confused-butterfly-9`](investigation_003/run_009_confused-butterfly-9/) | `m30jxiye` | 2026-06-16T18:15:37Z | `killed` | [investigation_003](investigation_003/) | full-prediction | Smoke / inconclusive |
+| 10 | [`skilled-waterfall-10`](investigation_003/run_010_skilled-waterfall-10/) | `27i1r9qi` | 2026-06-16T18:16:19Z | `crashed` | [investigation_003](investigation_003/) | full-prediction | Invalid |
+| 11 | [`olive-terrain-11`](investigation_003/run_011_olive-terrain-11/) | `q40nq0l3` | 2026-06-17T13:01:03Z | `killed` | [investigation_003](investigation_003/) | full-prediction | Invalid |
+| 12 | [`copper-sky-12`](investigation_003/run_012_copper-sky-12/) | `ejror834` | 2026-06-19T09:39:56Z | `killed` | [investigation_003](investigation_003/) | full-prediction | Invalid |
+| 13 | [`cerulean-snow-13`](investigation_003/run_013_cerulean-snow-13/) | `4lo4j7qb` | 2026-06-19T12:51:57Z | `killed` | [investigation_003](investigation_003/) | full-prediction | Low-rank rep |
+| 14 | [`jolly-forest-14`](investigation_003/run_014_jolly-forest-14/) | `8bkeeuio` | 2026-06-20T07:13:55Z | `crashed` | [investigation_003](investigation_003/) | full-prediction | Low-rank rep |
+| 15 | [`elated-snowflake-15`](investigation_005/run_015_elated-snowflake-15/) | `jhodg49x` | 2026-06-20T15:23:36Z | `crashed` | [investigation_005](investigation_005/) | full-prediction | Invalid |
+| 16 | [`drawn-elevator-16`](investigation_005/run_016_drawn-elevator-16/) | `0n5mx3qf` | 2026-06-22T04:01:20Z | `finished` | [investigation_005](investigation_005/) | full-prediction | Invalid |
+| 17 | [`royal-cherry-17`](investigation_005/run_017_royal-cherry-17/) | `0xv4upvb` | 2026-06-24T12:03:39Z | `killed` | [investigation_005](investigation_005/) | full-prediction | Low-rank rep |
+| 18 | [`fanciful-lake-18`](investigation_006/run_018_fanciful-lake-18/) | `yd5958s6` | 2026-06-25T12:50:29Z | `killed` | [investigation_006](investigation_006/) | full-prediction | Low-rank rep |
+| 19 | [`easy-blaze-19`](investigation_006/run_019_easy-blaze-19/) | `3syv6wp2` | 2026-06-25T22:10:05Z | `finished` | [investigation_006](investigation_006/) | full-prediction | Low-rank rep |
+| 20 | [`jolly-glade-20`](investigation_007/wave_1/run_020_jolly-glade-20/) | `5x7aoxnn` | 2026-06-26T23:37:41Z | `crashed` | [investigation_007](investigation_007/) | full-prediction | Low-rank rep |
+| 21 | [`eager-plant-22`](investigation_007/wave_1/run_021_eager-plant-22/) | `591mt31k` | 2026-06-26T23:37:43Z | `crashed` | [investigation_007](investigation_007/) | full-prediction | Low-rank rep |
+| 22 | [`gallant-dew-22`](investigation_007/wave_1/run_022_gallant-dew-22/) | `708jrel8` | 2026-06-26T23:37:43Z | `crashed` | [investigation_007](investigation_007/) | full-prediction | Low-rank rep |
+| 23 | [`toasty-donkey-21`](investigation_007/wave_1/run_023_toasty-donkey-21/) | `a2trqp9c` | 2026-06-26T23:37:43Z | `crashed` | [investigation_007](investigation_007/) | full-prediction | Low-rank rep |
+| 24 | [`light-universe-24`](investigation_007/wave_1/run_024_light-universe-24/) | `rju7xsh2` | 2026-06-26T23:37:43Z | `crashed` | [investigation_007](investigation_007/) | full-prediction | Low-rank rep |
+| 25 | [`earnest-dragon-25`](investigation_007/wave_2/run_025_earnest-dragon-25/) | `2xsd5jwr` | 2026-06-27T03:41:07Z | `crashed` | [investigation_007](investigation_007/) | full-prediction | Smoke / inconclusive |
+| 26 | [`pious-mountain-28`](investigation_007/wave_2/run_026_pious-mountain-28/) | `7u5zkw6t` | 2026-06-27T03:41:07Z | `crashed` | [investigation_007](investigation_007/) | full-prediction | Smoke / inconclusive |
+| 27 | [`quiet-firebrand-25`](investigation_007/wave_2/run_027_quiet-firebrand-25/) | `bbrrydax` | 2026-06-27T03:41:07Z | `crashed` | [investigation_007](investigation_007/) | full-prediction | Smoke / inconclusive |
+| 28 | [`classic-yogurt-29`](investigation_007/wave_2/run_028_classic-yogurt-29/) | `ryuh8cpr` | 2026-06-27T03:41:07Z | `crashed` | [investigation_007](investigation_007/) | full-prediction | Smoke / inconclusive |
+| 29 | [`helpful-snow-25`](investigation_007/wave_2/run_029_helpful-snow-25/) | `tw685b5g` | 2026-06-27T03:41:07Z | `crashed` | [investigation_007](investigation_007/) | full-prediction | Smoke / inconclusive |
+| 30 | [`lambda_sigreg_3.0`](investigation_008/run_030_lambda_sigreg_3.0/) | `9jxc8i1q` | 2026-06-27T17:44:35Z | `crashed` | [investigation_008](investigation_008/) | full-prediction | Low-rank rep |
+| 31 | [`lambda_sigreg_1.0`](investigation_008/run_031_lambda_sigreg_1.0/) | `jk8kj7h7` | 2026-06-27T17:44:36Z | `crashed` | [investigation_008](investigation_008/) | full-prediction | Low-rank rep |
+| 32 | [`lambda_sigreg_0.3`](investigation_008/run_032_lambda_sigreg_0.3/) | `x7z6e0ah` | 2026-06-27T17:44:36Z | `crashed` | [investigation_008](investigation_008/) | full-prediction | Low-rank rep |
+| 33 | [`lambda_sigreg_10.0`](investigation_008/run_033_lambda_sigreg_10.0/) | `fbqgix1x` | 2026-06-27T17:44:38Z | `crashed` | [investigation_008](investigation_008/) | full-prediction | Healthy rep, no predictor |
+| 34 | [`sigreg-only`](investigation_009/run_034_sigreg-only/) | `xz3nabr9` | 2026-06-28T03:34:48Z | `crashed` | [investigation_009](investigation_009/) | full-prediction | Low-rank rep |
+| 35 | [`sigreg-recon-residual`](investigation_009/run_035_sigreg-recon-residual/) | `jsh6uo7p` | 2026-06-28T03:34:51Z | `crashed` | [investigation_009](investigation_009/) | full-prediction | Low-rank rep |
+| 36 | [`upbeat-frog-36`](investigation_010/run_036_upbeat-frog-36/) | `b4lf89if` | 2026-06-29T11:38:22Z | `killed` | [investigation_010](investigation_010/) | full-prediction | Smoke / inconclusive |
+| 37 | [`soft-universe-37`](investigation_010/run_037_soft-universe-37/) | `2vbo6pbm` | 2026-06-29T11:38:25Z | `finished` | [investigation_010](investigation_010/) | full-prediction | Healthy rep, no predictor |
+| 38 | [`new_recon_loss`](investigation_011/run_038_new_recon_loss/) | `1u69hpfm` | 2026-06-30T10:17:00Z | `finished` | [investigation_011](investigation_011/) | full-prediction | Healthy rep, no predictor |
+| 39 | [`original_recon_loss + no-pred`](investigation_011/run_039_original_recon_loss-no-pred/) | `kttd1fib` | 2026-06-30T10:22:24Z | `finished` | [investigation_011](investigation_011/) | present-only | Collapsed rep |
+| 40 | [`inv011_fixed_position_decoder`](investigation_011/run_040_inv011_fixed_position_decoder/) | `io74f32b` | 2026-06-30T18:48:31Z | `finished` | [investigation_011](investigation_011/) | full-prediction | Low-rank rep |
+| 41 | [`inv011_fixed_position_present_recon`](investigation_011/run_041_inv011_fixed_position_present_recon/) | `hcr2qx19` | 2026-07-01T11:39:16Z | `crashed` | [investigation_011](investigation_011/) | present-only | Low-rank decodable |
+| 42 | [`po_geom_sig7p5_cov0`](investigation_011/present-only-geometry-sweep/wave_1/run_042_po_geom_sig7p5_cov0/) | `fq0crddc` | 2026-07-01T20:55:01Z | `finished` | [investigation_011](investigation_011/) | present-only | Low-rank decodable |
+| 43 | [`po_geom_sig5_cov0p003`](investigation_011/present-only-geometry-sweep/wave_1/run_043_po_geom_sig5_cov0p003/) | `4f2p1e7b` | 2026-07-01T20:55:02Z | `finished` | [investigation_011](investigation_011/) | present-only | Strong present representation |
+| 44 | [`po_geom_sig10_cov0p003`](investigation_011/present-only-geometry-sweep/wave_1/run_044_po_geom_sig10_cov0p003/) | `5xockdbh` | 2026-07-01T20:55:02Z | `finished` | [investigation_011](investigation_011/) | present-only | Strong present representation |
+| 45 | [`po_geom_sig12p5_cov0`](investigation_011/present-only-geometry-sweep/wave_1/run_045_po_geom_sig12p5_cov0/) | `76d6o8d2` | 2026-07-01T20:55:02Z | `finished` | [investigation_011](investigation_011/) | present-only | Strong present representation |
+| 46 | [`po_geom_sig10_cov0`](investigation_011/present-only-geometry-sweep/wave_1/run_046_po_geom_sig10_cov0/) | `9ap28tbw` | 2026-07-01T20:55:03Z | `finished` | [investigation_011](investigation_011/) | present-only | Strong present representation |
+| 47 | [`po_geom_sig5_cov0p01`](investigation_011/present-only-geometry-sweep/wave_2/run_047_po_geom_sig5_cov0p01/) | `az60m6mx` | 2026-07-02T03:48:45Z | `crashed` | [investigation_011](investigation_011/) | present-only | Strong present representation |
+| 48 | [`po_geom_sig7p5_cov0p003`](investigation_011/present-only-geometry-sweep/wave_2/run_048_po_geom_sig7p5_cov0p003/) | `bg7ennr5` | 2026-07-02T03:48:46Z | `crashed` | [investigation_011](investigation_011/) | present-only | Strong present representation |
+| 49 | [`po_geom_sig10_cov0p01`](investigation_011/present-only-geometry-sweep/wave_2/run_049_po_geom_sig10_cov0p01/) | `bttexglp` | 2026-07-02T03:48:46Z | `crashed` | [investigation_011](investigation_011/) | present-only | Strong present representation |
+| 50 | [`po_geom_sig7p5_cov0p01`](investigation_011/present-only-geometry-sweep/wave_2/run_050_po_geom_sig7p5_cov0p01/) | `h5t89ezx` | 2026-07-02T03:48:46Z | `crashed` | [investigation_011](investigation_011/) | present-only | Strong present representation |
+| 51 | [`po_geom_sig12p5_cov0p003`](investigation_011/present-only-geometry-sweep/wave_2/run_051_po_geom_sig12p5_cov0p003/) | `mtrviiab` | 2026-07-02T03:48:46Z | `crashed` | [investigation_011](investigation_011/) | present-only | Strong present representation |
+| 52 | [`ae_sharp_slots_recon_only`](investigation_012/run_052_ae_sharp_slots_recon_only/) | `662hfy3c` | 2026-07-02T15:32:02Z | `running` | [investigation_012](investigation_012/) | present-only | Collapsed rep |
 
----
+## Reading Rule
 
-## Complete W&B run index (hjepa-vwm)
-
-All runs from project dashboard, in W&B creation order:
-
-| # | Run name | ID | Runtime | Investigation | BRIEF |
-|---|---|---|---|---|---|
-| 1 | `youthful-pond-1` | x4pwz33d | 2m25s | 002 | smoke |
-| 2 | `efficient-aardvark-2` | fz7ztfc8 | 5m16s | 002 | smoke |
-| 3 | `comfy-glade-3` | 0mgmqxxi | 5m29s | 002 | smoke |
-| 4 | `charmed-haze-4` | gj8ypv0d | 4m27s | 002 | smoke |
-| 5 | `peachy-terrain-5` | 1chv2608 | 3h53m | 001 | **Run 1** |
-| 6 | `exalted-lion-6` | wv69n7n5 | 14m18s | 003 | P1 diag |
-| 7 | `sleek-leaf-7` | rpxyg9qt | 1h39m | 003 | **Run 2** |
-| 8 | `serene-cloud-8` | dhp1i3fk | 1h32m | 003 | **Run 3** |
-| 9 | `confused-butterfly-9` | m30jxiye | 1s | 003 | fail |
-| 10 | `skilled-waterfall-10` | 27i1r9qi | 1h8m | 003 | **Run 4** (ran k=4, raw slot — inert) |
-| 11 | `olive-terrain-11` | q40nq0l3 | 1h58m | 003 | Run 5a (first centered-slot k=12) |
-| 12 | `copper-sky-12` | ejror834 | 2h24m | 003 | **Run 5b** (slot Goodhart confirmed) |
-| 13 | `cerulean-snow-13` | 4lo4j7qb | 3h7m | 003 | **Run 6** ✓ |
-| 14 | `jolly-forest-14` | 8bkeeuio | 1h32m | 003 | Run 6b (winning-config repeat, crashed @3900) |
-| 15 | `elated-snowflake-15` | jhodg49x | 5h25m | 005 | 15k fail |
-| 16 | `drawn-elevator-16` | 0n5mx3qf | 3h29m | 005 | resume fail |
-| 17 | `royal-cherry-17` | 0xv4upvb | 4h52m | 005 | AGC resume — skip-free, rank collapse |
-| 18 | `fanciful-lake-18` | yd5958s6 | 6h29m | 006 | recon anchor (λ=0.05) — cliff removed, rank ceiling held, copy gate failed |
-| 19 | `easy-blaze-19` | 3syv6wp2 | 6h10m | 006 | option 3 (λ_pred=0.05) — negative: capacity floor blocks prediction gain |
-
-Project URL: https://wandb.ai/smahalanobis-uc-davis/hjepa-vwm
-
-**Mapping notes (resolved via W&B MCP, 2026-06-25):** all run configs are now confirmed
-against the W&B config panel. `olive-terrain-11` = first centered-slot k=12 run (slot=0.05,
-cov=0.0027); `jolly-forest-14` = winning-config repeat (var=0.5, k=12, no slot), crashed
-@3900. `skilled-waterfall-10` actually ran at **k=4** (launch drift) on the inert raw slot
-loss. See each run's DESCRIPTION for the verified command/config.
-
----
-
-## How to use this folder
-
-Read [`../PROTOCOL.md`](../PROTOCOL.md) before editing. One investigation + one run
-folder at a time unless cross-linking.
+Use `KANBAN/README_for_reading_experiments.md` for every run. Full-prediction and present-only runs use different cycles and must not be compared with the same gates.

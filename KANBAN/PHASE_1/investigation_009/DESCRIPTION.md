@@ -1,3 +1,36 @@
+# investigation_009 - If F_c predicts the future residual instead of the full future latent, does it finally beat the zero-change/copy baseline?
+
+<!-- AUTO-GENERATED-WANDB-KANBAN -->
+
+**Status:** CLOSED  
+**Runs covered:** 034, 035  
+**Theme:** residual prediction and zero-change baseline diagnosis
+
+## Question
+
+If F_c predicts the future residual instead of the full future latent, does it finally beat the zero-change/copy baseline?
+
+## Why This Investigation Exists
+
+SIGReg showed c_t could be made richer without solving prediction. Residual mode directly reframed the task around future change and made the copy baseline equivalent to predicting zero residual.
+
+## W&B-Validated Run Coverage
+
+| # | Run | ID | State | Mode | Key config | Verdict | Last key metrics |
+|---:|---|---|---|---|---|---|---|
+| 34 | [`sigreg-only`](run_034_sigreg-only/) | `xz3nabr9` | `crashed` | full-prediction | dataset=ssv2; steps=15000; k=12; var=0.5; cov=0; slot=0; sigreg=6; recon=0/0; residual=false; present_only=false; n_c=32; D=512x4 | Low-rank rep | c_effective_rank=50.5622; c_cross_video_cosine=0.3934; c_std_mean=0.9241; coarse_vs_copy_ratio=6.1219; coarse_vs_batch_mean_ratio=0.9538; L_recon_present=1.0454 |
+| 35 | [`sigreg-recon-residual`](run_035_sigreg-recon-residual/) | `jsh6uo7p` | `crashed` | full-prediction | dataset=ssv2; steps=15000; k=12; var=0.5; cov=0; slot=0; sigreg=5; recon=0.05/0.05; residual=true; present_only=false; n_c=32; D=512x4 | Low-rank rep | c_effective_rank=57.9796; c_cross_video_cosine=0.1699; c_std_mean=1.0048; coarse_vs_copy_ratio=1.0883; coarse_vs_batch_mean_ratio=1.1757; L_recon_present=0.5691 |
+
+## Current Conclusion
+
+Residual prediction made c_t more dynamic and healthier, but F_c mostly tied the zero-residual baseline. The failure moved from representation collapse toward predictor learning.
+
+## Evidence Standard
+
+The run entries above were reconciled against W&B API/export data on 2026-07-02. For run 052, the newest active run, the evidence was additionally refreshed live with `python run_history.py --run 662hfy3c --report`, which showed the run still `running` through step 5600.
+
+## Original Notes Preserved
+
 # Investigation 009 — Does predicting the temporal residual (Δ) beat the copy baseline?
 
 **Status:** OPEN — **both runs complete** (committed `bc77db6`); analysis written

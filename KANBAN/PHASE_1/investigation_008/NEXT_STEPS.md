@@ -1,3 +1,30 @@
+# Next Steps - investigation_008
+
+<!-- AUTO-GENERATED-WANDB-KANBAN -->
+
+## Current Recommendation
+
+The branch forced a temporal-prediction pivot: test residual prediction and ask whether the model can forecast change rather than memorize static present features.
+
+## Closure / Carry-Forward Status
+
+- Status: **CLOSED**.
+- Conclusion to carry forward: SIGReg is a real rank lever, especially at high weights. However, higher rank alone made prediction worse or left copy unbeaten, so geometry alone was not enough.
+- Runs covered: 030, 031, 032, 033.
+
+## Follow-Up Chain
+
+This investigation feeds into `investigation_009`: residual prediction and zero-change baseline diagnosis. The reason is: SIGReg showed c_t could be made richer without solving prediction. Residual mode directly reframed the task around future change and made the copy baseline equivalent to predicting zero residual.
+
+## Guardrails For Future Reuse
+
+- Do not cite a present-only result as a prediction success.
+- Do not cite a low `L_flow` as success without the copy and batch-mean gates.
+- Do not compare residual-mode copy ratios against full-latent copy ratios without naming the mode difference.
+- When reviving this branch, start from the exact run folder and W&B id, not a remembered nickname.
+
+## Original Notes Preserved
+
 # Next steps — investigation_008 (SIGReg sweep)
 
 ## Tier 0 — implement SIGReg (prerequisite, code change) ✅ DONE (uncommitted)

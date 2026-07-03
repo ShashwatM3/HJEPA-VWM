@@ -222,6 +222,26 @@ class TrainConfig:
     # (byte-identical to the option-1 baseline); with it on, the diag readout
     # L_recon_chat should DROP. See KANBAN investigation_006/fanciful-lake-18/NEXT_STEPS.
     lambda_recon_pred: float = 0.0
+    # Residual reconstruction target (investigation_013, the run-052 fix). When True,
+    # the reconstruction anchors train D against the PER-POSITION RESIDUAL e - e_mean
+    # instead of the absolute frozen features e, where e_mean is an EMA per-tubelet-
+    # position mean of e_t tracked across training batches (models.FeatureMeanTracker).
+    # Run 052 proved the absolute cosine objective is ~85% satisfiable by a video-
+    # independent "template" (decode the average feature field), so reconstruction
+    # pressure never had to route video-specific information through c_t and the
+    # representation collapsed (rank 13, cross-video cosine 0.91). Subtracting the
+    # per-position mean makes the template worth exactly zero: every unit of recon
+    # improvement must come from video-specific content. Applies to BOTH anchors
+    # (present e_t and prediction-side e_{t+k}; same tracker — the two clips share
+    # the encoder feature distribution). Default False -> byte-identical baseline
+    # (tracker constructed but never updated or used). Orthogonal to predict_residual
+    # (that is the TEMPORAL residual for F_c; this is a PER-POSITION feature residual
+    # for D). Requires lambda_recon > 0 or lambda_recon_pred > 0.
+    recon_residual_target: bool = False
+    # EMA momentum for the per-position feature mean. First batch initializes the
+    # mean directly; afterwards mean <- m * mean + (1 - m) * batch_mean. At 0.99 the
+    # mean is ~99% converged in ~460 steps, well inside recon_warmup_steps.
+    recon_mean_momentum: float = 0.99
     # Residual prediction (investigation_009). When True, F_c predicts the TEMPORAL
     # residual Δ = c_{t+k} - c_t (both from B_EMA -> a purely temporal target) instead of
     # the full future latent c_{t+k}, and the option-3 recon add-back becomes ĉ = c_t + Δ̂.

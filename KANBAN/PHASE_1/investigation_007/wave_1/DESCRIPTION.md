@@ -2,7 +2,7 @@
 
 **Status:** COMPLETE (all 5 cut at ~9k after the floor plateaued; healthy throughout)
 **Launched:** 2026-06-26 ~23:37Z · **Read:** 2026-06-27
-**Parent:** [investigation_007](../DESCRIPTION.md) · **Baseline it perturbs from:** [`easy-blaze-19`](../../investigation_006/easy-blaze-19/DESCRIPTION.md) (λ=0.05, 256×2, n_c=32 → floor ~0.60)
+**Parent:** [investigation_007](../DESCRIPTION.md) · **Baseline it perturbs from:** [`easy-blaze-19`](../../investigation_006/run_019_easy-blaze-19/DESCRIPTION.md) (λ=0.05, 256×2, n_c=32 → floor ~0.60)
 **Leads to:** [Wave 2](../wave_2/DESCRIPTION.md) (latent axis)
 
 ## What this wave is
@@ -21,11 +21,11 @@ independent processes, one per GPU (5× H100), `WANDB_RUN_GROUP=inv007_capacity_
 
 | # | Run | λ_recon | Decoder | n_c | Probe | W&B id |
 |---|---|---|---|---|---|---|
-| 1 | [toasty-donkey-21](toasty-donkey-21/) | 0.1 | 256×2 | 32 | weight (low) | `a2trqp9c` |
-| 2 | [jolly-glade-20](jolly-glade-20/) | 0.2 | 256×2 | 32 | weight (mid) | `5x7aoxnn` |
-| 3 | [light-universe-24](light-universe-24/) | 0.5 | 256×2 | 32 | weight (aggressive) | `rju7xsh2` |
-| 4 | [gallant-dew-22](gallant-dew-22/) | 0.05 | 512×2 | 32 | decoder width | `708jrel8` |
-| 5 | [eager-plant-22](eager-plant-22/) | 0.05 | 512×4 | 32 | decoder depth | `591mt31k` |
+| 1 | [toasty-donkey-21](run_023_toasty-donkey-21/) | 0.1 | 256×2 | 32 | weight (low) | `a2trqp9c` |
+| 2 | [jolly-glade-20](run_020_jolly-glade-20/) | 0.2 | 256×2 | 32 | weight (mid) | `5x7aoxnn` |
+| 3 | [light-universe-24](run_024_light-universe-24/) | 0.5 | 256×2 | 32 | weight (aggressive) | `rju7xsh2` |
+| 4 | [gallant-dew-22](run_022_gallant-dew-22/) | 0.05 | 512×2 | 32 | decoder width | `708jrel8` |
+| 5 | [eager-plant-22](run_021_eager-plant-22/) | 0.05 | 512×4 | 32 | decoder depth | `591mt31k` |
 
 *(Runs were launched in parallel; the numbering is the OFAT ladder, not wall-clock order — they
 share a `createdAt`. Read each in sequence 1→5 for the cleanest story.)*
