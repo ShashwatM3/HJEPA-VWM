@@ -182,6 +182,7 @@ Root implementation files:
 | `parse_logs.py` | Parses `step=N {dict}` console logs into JSON. |
 | `run_history.py` | W&B Public API export/report helper for logged metrics. |
 | `drift_probe.py` | Offline within-video temporal drift probe: frozen-encoder drift vs bottleneck-latent drift over a pinned probe set, evaluated from checkpoints. |
+| `rank_probe.py` | Offline frozen-encoder effective-rank probe: applies the `c_effective_rank` covariance-rank formula to cached V-JEPA `e` tokens over the drift-probe manifest. |
 | `requirements.txt` | Runtime and dev dependencies. |
 | `pyproject.toml` | Black and Ruff configuration. |
 | `tests/` | Unit tests for contracts, losses, optimizer grouping, AGC, decoder, modes. |
@@ -740,6 +741,13 @@ Offline probes (not part of the training loop):
   compares windows of the SAME video only — never two different videos. It is
   an analysis helper like `run_history.py`; training code never imports it and
   it logs nothing to W&B. See README "Within-video drift probe" for usage.
+- `rank_probe.py` measures the entropy effective rank of frozen V-JEPA `e`
+  features over the same pinned manifest/cache namespace as `drift_probe.py`.
+  Its pooled-token metric is the direct `e`-side analog of
+  `c_effective_rank`: stack `(B * N_ctx, D_e)` anchor-window tokens, center the
+  covariance, rank eigenvalues via entropy. It also reports per-video token
+  ranks and cross-video mean-vector rank. It is an offline analysis helper;
+  training code never imports it and it logs nothing to W&B.
 
 Future Phase-2/3 diagnostics, not implemented yet:
 
@@ -970,7 +978,7 @@ optimizer grouping, reconstruction, decoder, SIGReg, or present-only mode.
 - If a new loss is added, document exactly which modules it trains and add a
   test for the gradient contract.
 
-`parse_logs.py`, `run_history.py`, and `drift_probe.py`:
+`parse_logs.py`, `run_history.py`, `drift_probe.py`, and `rank_probe.py`:
 
 - Analysis helpers, not training dependencies.
 - Do not couple core training to these scripts.
@@ -981,6 +989,10 @@ optimizer grouping, reconstruction, decoder, SIGReg, or present-only mode.
   bottleneck is rebuilt from the config serialized inside the checkpoint;
   window sampling and transforms reuse `data.py` validation helpers. Pure
   helpers are unit-tested in `tests/test_drift_probe.py`.
+- `rank_probe.py` specifics: it shares the drift-probe manifest/cache naming by
+  default, encodes only anchor windows, and builds manifests compatible with the
+  default drift offset ladder so a rank-only first run does not poison later
+  drift comparisons. Pure helpers are unit-tested in `tests/test_rank_probe.py`.
 
 ## 18. Current limitations to keep visible
 

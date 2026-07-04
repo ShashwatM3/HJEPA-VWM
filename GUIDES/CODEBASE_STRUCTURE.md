@@ -23,6 +23,7 @@ HJEPA-VWM/
 ├── parse_logs.py          # Console log → JSON
 ├── run_history.py         # W&B Public API export + reports
 ├── drift_probe.py         # Offline within-video drift probe (V-JEPA vs latent)
+├── rank_probe.py          # Offline effective-rank probe for frozen V-JEPA embeddings
 ├── tests/                 # Contract and gradient-routing tests
 ├── requirements.txt
 ├── pyproject.toml         # Black + Ruff
@@ -113,6 +114,7 @@ KANBAN evidence.
 | `parse_logs.py` | Parses `step=N {dict}` console lines → structured JSON |
 | `run_history.py` | Pulls full metric history from W&B Public API; `--report` for Phase 1 summaries |
 | `drift_probe.py` | Within-video temporal drift: frozen V-JEPA embedding drift vs bottleneck latent drift (loaded from checkpoints) on a pinned probe set; writes JSON + PNGs, no W&B logging |
+| `rank_probe.py` | Frozen-encoder effective rank: applies the `c_effective_rank` covariance-rank formula to cached V-JEPA `e` tokens over the drift-probe manifest; writes JSON + optional PNG, no W&B logging |
 
 W&B project: **`smahalanobis-uc-davis/hjepa-vwm`**.
 
@@ -127,6 +129,9 @@ python parse_logs.py logs/my_run.txt -o logs/my_run.json
 # (usage details in README "Within-video drift probe")
 python drift_probe.py --data ssv2 --probe-videos 64 \
   --ckpt /workspace/ckpt/<run-dir>/phase1_step15000.pt
+
+# V-JEPA effective-rank budget over the same fixed probe-set namespace
+python rank_probe.py --data ssv2 --probe-videos 64
 ```
 
 Prefer the **W&B MCP server** in Cursor for interactive metric pulls (see
@@ -148,6 +153,7 @@ Prefer the **W&B MCP server** in Cursor for interactive metric pulls (see
 | `tests/test_sigreg.py` | SIGReg loss and logging RNG isolation |
 | `tests/test_bottleneck_attention.py` | Bottleneck cross-attention diagnostics |
 | `tests/test_drift_probe.py` | Drift-probe pure helpers: offsets, windows, drift matrices, Spearman, checkpoint-config rebuild |
+| `tests/test_rank_probe.py` | Rank-probe pure helpers: covariance spectrum, entropy-rank formula, energy ranks, report validation |
 
 Quick local checks (no encoder download):
 
