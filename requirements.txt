@@ -7,6 +7,7 @@ diffusers
 transformers>=4.53,<5  # V-JEPA 2 landed in 4.53; 5.x needs torch>=2.7 (float8_e8m0fnu)
 accelerate
 einops
+matplotlib  # drift_probe.py plots; probe degrades to JSON-only if absent
 pytest
 black
 ruff
