@@ -87,8 +87,31 @@ python drift_probe.py --data ssv2 --probe-videos 64 \
 # Detach: Ctrl-B then D.  Reattach: tmux attach -t drift_probe
 ```
 
-Outputs land in `logs/drift_probe/` on the pod; `scp`/`rsync` the PNGs + JSON back if you want
-them locally.
+Outputs land in `logs/drift_probe/` on the pod. The probe logs **nothing to W&B** by design —
+the graphs are local PNG files; view them by copying them to your laptop.
+
+**Viewing the graphs (copying outputs off the pod).** Run these on your LAPTOP (a local
+terminal, not the SSH session). RunPod's proxy SSH (`<pod-id>@ssh.runpod.io`) does **not**
+support `scp`/`sftp`, so pipe the bytes through plain `ssh` instead:
+
+```bash
+# One PNG (substitute your own <pod-id>@ssh.runpod.io connect string):
+ssh <pod-id>@ssh.runpod.io -i ~/.ssh/id_ed25519 \
+  "cat /workspace/hierarchal-jepa-flow-world-model/logs/drift_probe/graph1_ssv2_validation_n64_seed42.png" \
+  > ~/Desktop/graph1_drift.png
+open ~/Desktop/graph1_drift.png
+
+# All PNGs + JSON (excludes the ~1 GB feature cache):
+ssh <pod-id>@ssh.runpod.io -i ~/.ssh/id_ed25519 \
+  "tar -C /workspace/hierarchal-jepa-flow-world-model/logs -czf - --exclude='*.pt' drift_probe" \
+  > ~/Desktop/drift_probe.tgz
+tar -xzf ~/Desktop/drift_probe.tgz -C ~/Desktop && open ~/Desktop/drift_probe/
+```
+
+If your Connect tab also offers a **direct TCP** SSH command (`ssh root@<ip> -p <port> ...`),
+normal `scp -P <port> -i <key> root@<ip>:<remote-path> <local-path>` works over that one.
+Alternatives: open the PNG via Cursor/VS Code Remote-SSH's file explorer, or via the pod's
+JupyterLab if the RunPod Connect tab exposes one.
 
 **Option 2 — on a personal device (laptop/workstation).** Works only if the machine has the
 dependencies and a local SSv2 copy; there is no pod magic in the script itself:
