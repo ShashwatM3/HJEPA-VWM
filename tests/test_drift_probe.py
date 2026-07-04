@@ -53,7 +53,10 @@ def test_select_probe_order_is_deterministic_and_seed_sensitive():
     paths = [f"validation/{i}.webm" for i in range(50)]
     assert probe.select_probe_order(paths, 42) == probe.select_probe_order(paths, 42)
     assert probe.select_probe_order(paths, 42) != probe.select_probe_order(paths, 7)
-    assert sorted(probe.select_probe_order(paths, 42)) == paths  # permutation, no loss
+    # Permutation, no loss (compare as sets/sorted both sides: "10" < "5" lexicographically,
+    # so the numerically-ordered construction list is NOT sorted() order).
+    assert sorted(probe.select_probe_order(paths, 42)) == sorted(paths)
+    assert probe.select_probe_order(paths, 42) is not paths  # input never mutated in place
 
 
 def test_drift_matrix_recovers_known_cosine_distances():
@@ -102,7 +105,20 @@ def test_spearman_correlation_endpoints():
     up = torch.tensor([1.0, 2.0, 3.0, 4.0])
     assert math.isclose(probe.spearman_correlation(a, up), 1.0, abs_tol=1e-6)
     assert math.isclose(probe.spearman_correlation(a, -up), -1.0, abs_tol=1e-6)
-    assert probe.spearman_correlation(a, torch.zeros(4)) == 0.0  # degenerate -> 0
+    # Constant input is degenerate: average ranks make it rank-constant -> 0, never
+    # a fabricated correlation (the naive argsort ranking bug).
+    assert probe.spearman_correlation(a, torch.zeros(4)) == 0.0
+    assert probe.spearman_correlation(torch.zeros(4), a) == 0.0
+
+
+def test_spearman_correlation_handles_ties_with_average_ranks():
+    probe = _probe()
+    tied = torch.tensor([1.0, 2.0, 2.0, 3.0])
+    # Identical tied vectors are perfectly rank-correlated.
+    assert math.isclose(probe.spearman_correlation(tied, tied.clone()), 1.0, abs_tol=1e-6)
+    ranks = probe._average_ranks(tied)
+    assert ranks.tolist() == [0.0, 1.5, 1.5, 3.0]  # tie group shares its mean rank
+    assert probe._average_ranks(torch.zeros(3)).tolist() == [1.0, 1.0, 1.0]
 
 
 def test_model_config_from_checkpoint_dict_filters_and_applies_fields():
@@ -146,4 +162,6 @@ def test_latent_drift_through_real_bottleneck_small_geometry():
     assert drift.shape == (2, 1)
     assert torch.isfinite(drift).all()
     assert (drift >= -1e-5).all() and (drift <= 2.0 + 1e-5).all()
-    assert all(not p.requires_grad for p in bottleneck.parameters())
+    # The measurement path is no-grad: no gradient may accumulate on the module.
+    assert all(p.grad is None for p in bottleneck.parameters())
+    assert not bottleneck.training  # compute_latent_unit_vectors pins eval mode

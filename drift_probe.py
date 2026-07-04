@@ -283,28 +283,50 @@ def per_video_summary(drift: Tensor, offsets: list[int], graph2_offsets: list[in
     return drift[:, columns].mean(dim=1)
 
 
+def _average_ranks(x: Tensor) -> Tensor:
+    """Ranks with ties assigned their group's average rank (Spearman convention).
+
+    Naive `argsort` ranking hands TIED values arbitrary distinct ranks, which
+    fabricates variance — a constant vector would rank as [0, 1, 2, ...] and
+    correlate perfectly with anything monotone. Averaging within tie groups makes
+    a constant vector rank constant (degenerate -> correlation 0 downstream).
+
+    Args:
+        x: (N,) values.
+    Returns:
+        ranks: (N,) fp32 average ranks; ties share their group's mean rank.
+    """
+    _require_torch()
+    n = x.numel()
+    order = torch.argsort(x)
+    sorted_x = x[order]
+    ranks = torch.empty(n, dtype=torch.float32)
+    i = 0
+    while i < n:
+        j = i
+        while j + 1 < n and sorted_x[j + 1] == sorted_x[i]:
+            j += 1
+        ranks[order[i : j + 1]] = (i + j) / 2.0
+        i = j + 1
+    return ranks
+
+
 def spearman_correlation(a: Tensor, b: Tensor) -> float:
     """Spearman rank correlation between two 1-D tensors (no scipy dependency).
 
-    Answers "does the latent move when and only when V-JEPA moves": ranks both
-    sides, then computes the Pearson correlation of the ranks. Ties get arbitrary
-    adjacent ranks, which is fine for continuous drift values.
+    Answers "does the latent move when and only when V-JEPA moves": average-ranks
+    both sides (ties handled per the standard Spearman convention), then computes
+    the Pearson correlation of the ranks.
 
     Args:
         a: (N,) values.
         b: (N,) values, same length.
     Returns:
-        Correlation in [-1, 1] (0.0 for degenerate inputs).
+        Correlation in [-1, 1] (0.0 for degenerate/constant inputs).
     """
     _require_torch()
-
-    def ranks(x: Tensor) -> Tensor:
-        order = torch.argsort(x.float())
-        out = torch.empty(x.numel(), dtype=torch.float32)
-        out[order] = torch.arange(x.numel(), dtype=torch.float32)
-        return out
-
-    ra, rb = ranks(a.reshape(-1)), ranks(b.reshape(-1))
+    ra = _average_ranks(a.reshape(-1).float())
+    rb = _average_ranks(b.reshape(-1).float())
     ra, rb = ra - ra.mean(), rb - rb.mean()
     denom = float(ra.norm() * rb.norm())
     if denom < 1e-12:
@@ -568,7 +590,7 @@ def compute_latent_unit_vectors(
         `feature_key -> (N_c * D_c,)` fp32 CPU unit vectors.
     """
     _require_torch()
-    bottleneck = bottleneck.to(device)
+    bottleneck = bottleneck.to(device).eval()  # measurement is always eval-mode, no-grad
     units: dict[str, Tensor] = {}
     with torch.no_grad():
         for i in range(0, len(keys), latent_batch):
