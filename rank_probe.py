@@ -303,7 +303,7 @@ def parse_args() -> argparse.Namespace:
         "--device",
         default=None,
         choices=["cuda", "cpu"],
-        help="Override device (default: cuda if available).",
+        help="Override device for encoder cache misses and rank math (default: cuda if available).",
     )
     return parser.parse_args()
 
@@ -333,9 +333,11 @@ def main() -> None:
     )
     features = compute_encoder_features(cfg, manifest, [], cache_path, device, args.encoder_batch)
     video_tokens = [
-        features[feature_key(video["path"], video["anchor_end"])] for video in manifest["videos"]
+        features[feature_key(video["path"], video["anchor_end"])].to(device, dtype=torch.float32)
+        for video in manifest["videos"]
     ]
 
+    print(f"Computing effective-rank metrics on {device}...")
     report = rank_report(video_tokens)
     print(
         f"e effective ranks over {report['n_videos']} probe videos "
