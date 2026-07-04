@@ -21,7 +21,7 @@ The git repo holds **code only**. Datasets, checkpoints, and Hugging Face cache 
 | `/workspace/ssv2_raw/` | No | Yes |
 | `/workspace/hf_cache/` | No | Yes |
 
-RunPod mounts the network volume at `/workspace` by default. See [`SETUP_POD.md`](SETUP_POD.md) for SSH and troubleshooting.
+RunPod mounts the network volume at `/workspace` by default. SSH and pod ops: [`SETUP.md`](SETUP.md), [`GUIDES/MLOPS.md`](../../GUIDES/MLOPS.md).
 
 ---
 
@@ -56,7 +56,7 @@ This is what the volume looked like **before** Path A migration and **before** v
 |---|---|---|
 | Raw `.webm` videos | **Exists** — `/workspace/ssv2_raw/20bn-something-something-v2/` | Read-only; do not move or re-encode |
 | Full SSv2 symlink layout | **Exists** — but nested under old repo path | **One-time migrate** → `/workspace/data/ssv2/` ([`SETUP.md`](SETUP.md) A8) |
-| `ssv2_tiny` smoke subset | **Does not exist yet** | **Create once** via `make_subset.py` ([`SETUP.md`](SETUP.md) A12; spec in [`PHASE_1.md`](../PHASES/PHASE_1.md) §5) |
+| `ssv2_tiny` smoke subset | **Does not exist yet** on a fresh volume | **Create once** via `make_subset.py` ([`SETUP.md`](SETUP.md) A12; see [`AGENTS.md`](../AGENTS.md) §5) |
 | v0 Python codebase | **Does not exist** (only legacy code) | Agent implements Phases 1–3; human clones fresh repo ([`SETUP.md`](SETUP.md) A9) |
 | Checkpoints dir (sibling) | **Does not exist** at `/workspace/checkpoints/` | `mkdir` during setup; v0 writes `phase1_step*.pt`, etc. |
 | `hf_cache` populated | **Empty** | Fills in Phase 3 when `sd-vae-ft-mse` downloads |
@@ -92,7 +92,7 @@ After [`SETUP.md`](SETUP.md) Path A (steps A8, A9, A12) and Phase 1 `make_subset
 │   └── 20bn-something-something-v2/
 │
 ├── checkpoints/                               ← all training outputs (sibling to repo)
-│   ├── phase1_step30000.pt                    ← Phase 1 example
+│   ├── phase1_step15000.pt                    ← Phase 1 example (default `stage1_steps`)
 │   ├── checkpoint_step105000.pt             ← after Phase 2 latent stages
 │   └── checkpoint_step150000.pt               ← v0 final (Phase 3)
 │
@@ -117,7 +117,7 @@ Training selects which root via CLI: `python train.py --data ssv2_tiny` (default
 
 ## 4. Path defaults — what the code expects
 
-Hardcoded in `config.py` when the agent implements Phase 1 ([`PHASE_1.md`](../PHASES/PHASE_1.md) §2, §4):
+Hardcoded in `config.py` (see [`AGENTS.md`](../AGENTS.md) §12):
 
 | Symbol | Default path | Purpose |
 |---|---|---|
@@ -193,7 +193,6 @@ test -f /workspace/hierarchal-jepa-flow-world-model/train.py && echo "v0 code OK
 |---|---|
 | [`VOLUME_LAYOUT.md`](VOLUME_LAYOUT.md) | **This file** — current vs target volume tree, path contract |
 | [`SETUP.md`](SETUP.md) | Operator steps: SSH, clone, migrate, train |
-| [`SETUP_POD.md`](SETUP_POD.md) | RunPod SSH, troubleshooting, official doc links |
+| [`GUIDES/MLOPS.md`](../../GUIDES/MLOPS.md) | RunPod SSH, W&B, checkpoints |
+| [`../AGENTS.md`](../AGENTS.md) | Path defaults, data semantics, preprocessing |
 | [`../AGENT-BEHAVIOUR/PROTOCOL.md`](../AGENT-BEHAVIOUR/PROTOCOL.md) §3 | Deployment target summary for agents |
-| [`../PHASES/PHASE_1.md`](../PHASES/PHASE_1.md) §2, §5 | `config.py` paths and `make_subset.py` spec |
-| [`../KNOWLEDGE/UNDERSTANDING.md`](../KNOWLEDGE/UNDERSTANDING.md) §13 | SSv2 preprocessing constants |

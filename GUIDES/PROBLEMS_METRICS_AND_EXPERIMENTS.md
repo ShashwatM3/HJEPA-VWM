@@ -1,11 +1,42 @@
 # Problems, Metrics, and Experiments
 
-This note answers one question:
+This note answers two questions:
 
-> What problems have we faced, how did we recognize them in W&B/code metrics, and what did we try?
+1. **What do the logged metrics mean?** (glossary below — grounded in `diagnostics.py` and `train.py`)
+2. **What problems have we faced, how did we recognize them, and what did we try?** (experiment history below)
 
 The emphasis is on the W&B dashboard view: which metric moved, what that movement meant, what code
 or experiment we changed because of it, and what the next run told us.
+
+**How to read a run:** use the fixed Q1–Q8 cycles in
+[`GUIDES/READING_EXPERIMENTS.md`](READING_EXPERIMENTS.md).
+This file defines the metrics those cycles reference.
+
+## How metrics map to code
+
+| Where | Cadence | What logs |
+|---|---|---|
+| `train.train_step` | every `log_every` steps (default **50**) | training losses (`L_flow`, `L_var`, …), `grad_norm`, `grad_skipped`, AGC ratios |
+| `train.run_diagnostics` | every `diag_every` steps (default **500**) | representation health, coarse baselines, reconstruction readouts, `grad_has_nan` |
+
+Implementation sources:
+
+- **Representation + baselines:** `diagnostics.py` (`variance_stats`, `cross_video_cosine`,
+  `effective_rank`, `slot_diversity_rank`, `attention_entropy`, `coarse_baselines`,
+  `reconstruction_readouts`, `gradient_health`)
+- **Training step:** `train.py` (`train_step` return dict → W&B via `wandb.log`)
+- **CLI export:** `run_history.py` lists `CORE_METRICS` and `DIAG_METRICS` for API pulls
+
+**Mode flags (read config first):**
+
+- `present_recon_only=true` → no future clip, `L_flow=0`, no `coarse_*` baselines
+- `predict_residual=true` → copy baseline means “predict zero change” (same ratio semantics)
+- `recon_residual_target=true` → reconstruction targets use `e - mean(e)` via `FeatureMeanTracker`
+
+**Defaults vs operating values:** `config.py` ships `horizon_k=4`, `lambda_var=0.1`,
+`stage1_steps=15000`. Empirical Phase 1 runs that stabilized representation usually override with
+`--horizon-k 12` and `--lambda-var 0.5`. Acceptance gates are evaluated on **diagnostic** metrics at
+late steps, not on training-step `L_flow` alone.
 
 ## What We Are Trying To Solve
 
@@ -245,15 +276,11 @@ This is effective rank on the EMA target `c_plus`.
 This matters because `F_c` predicts the target branch, not just the online branch. If online `c_t`
 looks healthy but `c_plus` lags or stays lower-rank, the regression target is still weak or unstable.
 
-#### `c_slot_diversity_rank`
+#### `c_slot_diversity_rank` and `c_slot_diversity_rank_centered`
 
-This measures how many independent directions the bottleneck's query slots span within a video.
-
-It answers:
-
-```text
-Are the 32 slots learning different things, or are they redundant?
-```
+Both measure how many independent directions the bottleneck's 32 query slots span **within one
+video**. The raw key is kept for dashboard continuity; **`c_slot_diversity_rank_centered`** subtracts
+each video's mean slot vector first and is the cleaner readout for “are slots redundant?”
 
 It helped diagnose slot collapse, but later also taught us that optimizing a slot metric directly
 can Goodhart: the slot metric improves while actual representation/prediction quality worsens.
@@ -344,6 +371,35 @@ This is the linear warmup multiplier for reconstruction losses.
 
 Early in a run, `recon_scale` starts near zero and ramps to `1.0` over `recon_warmup_steps`.
 
+#### `L_recon_shuffled_c` and `L_recon_video_gap`
+
+**Diagnostic only** (present-recon and full-prediction paths). The code decodes **another video's**
+`c_t` (`torch.roll` on the batch) and scores it against this video's target features.
+
+```text
+L_recon_video_gap = L_recon_shuffled_c - L_recon_present
+```
+
+**Near zero** means the decoder barely depends on which video's latent it received — the run-052
+**template-collapse** signature. Use this when `recon_residual_target` or present-only reconstruction
+is active.
+
+#### `recon_mean_norm` and `recon_target_residual`
+
+Training-step helpers when `recon_residual_target=true`: `recon_target_residual=1` confirms residual
+targets are active; `recon_mean_norm` tracks the L2 norm of the EMA per-position feature mean
+(`FeatureMeanTracker`). Diagnostic readouts use the same residual target when this flag is on.
+
+#### `c_plus_std_mean`, `c_plus_std_median`
+
+Std health of the **EMA target** `c_plus` (not online `c_t`). Logged alongside online variance so
+you can see whether `B_EMA` lags behind online `B` after aggressive geometry regularizers.
+
+#### `present_recon_only` and `prediction_active`
+
+Diagnostic flags (`1.0` / `0.0`) confirming which training branch is active. If `prediction_active=0`
+but you expected full prediction, do not read `coarse_*` panels.
+
 ### Regularization Losses
 
 #### `L_var`
@@ -389,17 +445,18 @@ metric while hurting broader representation and prediction metrics.
 
 #### `grad_norm`
 
-This is the true pre-clip gradient norm from the training step.
+Post-**AGC**, pre-**global rescale** gradient norm from `clip_grad_norm_` in `train_step`. AGC
+clips per-tensor spikes first; this scalar is the total norm **before** the global `grad_clip=0.5`
+rescaling step. It drives `grad_skipped` when above `grad_skip_threshold` (default 150).
 
 Large spikes showed the instability problem. This metric was central in diagnosing late training
-explosions.
+explosions. It is **not** the raw pre-AGC magnitude, but it is the right stability readout — see
+`GUIDES/READING_EXPERIMENTS.md` Q1.
 
 #### `grad_global_norm_postclip`
 
-This is the gradient norm after AGC and global clipping.
-
-It is often near the global clip value and should not be read as the true raw gradient magnitude.
-Use `grad_norm` for that.
+Norm **after** global clipping. Often sits near `grad_clip` whenever clipping fires. Do not use this
+as the primary stability metric; prefer `grad_norm`.
 
 #### `grad_skipped`
 

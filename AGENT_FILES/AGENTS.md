@@ -14,15 +14,17 @@ function, class, and gradient path you are about to edit.
 2. Before touching code, read `AGENT_FILES/AGENT-BEHAVIOUR/CODE_DESIGN.md`.
 3. Before touching `config.py`, `data.py`, paths, or subsets, read
    `AGENT_FILES/SETUPS/VOLUME_LAYOUT.md`.
-4. Before changing architecture, read:
-   - `AGENT_FILES/KNOWLEDGE/SUPERVISOR_FEEDBACK_EXPLAINED.md`
-   - `AGENT_FILES/KNOWLEDGE/BRIEF_V0_3.md`
-   - `AGENT_FILES/KNOWLEDGE/UNDERSTANDING.md`
-   - the relevant phase file under `AGENT_FILES/PHASES/`
+4. Before changing architecture, read this file and trace `config.py` + the hot path in code.
+   Optional context (not prescriptions): [`GUIDES/latest_brief.md`](../GUIDES/latest_brief.md),
+   [`GUIDES/PROBLEMS_METRICS_AND_EXPERIMENTS.md`](../GUIDES/PROBLEMS_METRICS_AND_EXPERIMENTS.md).
+   See §2 below — **briefs are not ground truth.**
 5. Do not infer this project from generic ML habits. The important bugs here are
    gradient-routing, target-branch, shape, and diagnostic-contract bugs.
 6. Do not put experiment-run history, W&B run narratives, or KANBAN contents in
    this file. This document is about the project architecture and current code.
+7. When your change alters implementation, metrics, paths, ops, or experiment
+   record, **update the agent-maintained living docs in the same PR/session** —
+   see §2.2. Do not leave code and docs diverged.
 
 ## 1. What this project builds
 
@@ -58,31 +60,111 @@ When a doc describes `F_e`, frame generation, or multi-horizon prediction, treat
 that as intended design until code exists. When code and planning docs differ for
 implemented behavior, trace code first and then reconcile the docs explicitly.
 
-## 2. Source precedence
+## 2. Documentation, precedence, and research posture
 
-Use this order when sources conflict:
+### Source precedence (when sources conflict)
 
-1. Current root implementation files for implemented behavior:
+Use this order — **code always wins over prose**:
+
+1. **Root implementation files + tests** for anything implemented today:
    `config.py`, `data.py`, `models.py`, `losses.py`, `diagnostics.py`,
-   `train.py`, `make_subset.py`, and tests.
-2. `AGENT_FILES/KNOWLEDGE/BRIEF_V0_3.md` for current architecture intent.
-3. `AGENT_FILES/KNOWLEDGE/UNDERSTANDING.md` for shapes, terms, and planned
-   stage semantics.
-4. Active `AGENT_FILES/PHASES/PHASE_N.md` for work sequencing when the human
-   explicitly asks to execute a phase.
-5. `AGENT_FILES/AGENT-BEHAVIOUR/CODE_DESIGN.md` for code layout and style.
-6. `README.md` and human-facing `YOUR_FILES/` notes for orientation only.
+   `train.py`, `make_subset.py`, `tests/`.
+2. **This file (`AGENTS.md`)** — implementation-grounded map of shapes, modules,
+   training step, shipped defaults, invariants.
+3. **Living factual guides** (must stay aligned with code when it changes):
+   - [`GUIDES/CODEBASE_STRUCTURE.md`](../GUIDES/CODEBASE_STRUCTURE.md) — file map
+   - [`GUIDES/PROBLEMS_METRICS_AND_EXPERIMENTS.md`](../GUIDES/PROBLEMS_METRICS_AND_EXPERIMENTS.md) — metric glossary grounded in `diagnostics.py` / `train.py`
+4. **`KANBAN/PHASE_1/`** — what was tried, measured, and learned (experiment history,
+   not a build spec).
+5. **Architecture briefs** (historical intent and past reasoning only):
+   [`GUIDES/latest_brief.md`](../GUIDES/latest_brief.md),
+   [`GUIDES/original_brief.pdf`](../GUIDES/original_brief.pdf).
+6. **`README.md`**, other [`GUIDES/`](../GUIDES/README.md) playbooks — operator orientation.
 
-Important drift to know:
+### Briefs are not ground truth
 
-- The stale planning docs often mention 30k Phase-1 steps and older operating
-  defaults. Current code defaults are in `config.py`: Phase 1 has
-  `stage1_steps = 15000`, `warmup_steps = 1500`, `grad_clip = 0.5`, and
-  `grad_skip_threshold = 150.0`.
-- `BRIEF_V0_3.md` includes empirical run discussion. Do not copy run history
-  into this entry file.
-- `PHASE_2.md` still has an open detailed-target geometry decision. Do not
-  implement `F_e` until that ambiguity is resolved by the human.
+The briefs capture **a point-in-time research narrative**. Successful research architectures
+**inevitably evolve** as experiments falsify assumptions. Treat briefs as:
+
+- **Useful context** — why the hierarchy exists, what we thought at v0.1/v0.3, what empirically
+  seemed to help in past runs.
+- **Not a constraint** — do not refuse a sound idea because a brief did not anticipate it.
+- **Not an override** — if a brief says X and `config.py` / `train.py` do Y, **Y is current
+  behavior** until the human approves a change.
+- **Not a creativity ban** — propose new mechanisms, loss terms, or diagnostics when evidence
+  (KANBAN, W&B, code gaps) supports them. Escalate only for locked invariants in §15.
+
+When a brief recommendation differs from shipped defaults (e.g. brief suggests `--horizon-k 12`
+while `config.py` has `horizon_k=4`), **state both** and default to code unless the human is
+running a deliberate experiment.
+
+### 2.1 Human-owned docs (read; do not edit unless the human asks)
+
+These are **human-curated**. Use them for orientation. Do not rewrite them to match your code
+change — update the agent-maintained docs instead (§2.3).
+
+| Path | Why human-owned |
+|---|---|
+| [`README.md`](../README.md) | Project entry point and read order for newcomers — humans set navigation. |
+| [`GUIDES/README.md`](../GUIDES/README.md) | Guide catalog and grouping — humans decide what belongs in the index. |
+| [`GUIDES/EXPERIMENT_LIFECYCLE.md`](../GUIDES/EXPERIMENT_LIFECYCLE.md) | How **humans** run the research loop with AI — workflow policy, not implementation truth. |
+| [`GUIDES/latest_brief.md`](../GUIDES/latest_brief.md) | Research **narrative** at milestones — humans update when intent story changes, not on every refactor. |
+| [`GUIDES/original_brief.pdf`](../GUIDES/original_brief.pdf) | Frozen v0.1 baseline. |
+| [`AGENT_FILES/SETUPS/SETUP.md`](SETUPS/SETUP.md) | First-time human deploy (laptop → RunPod) — operator journey, not agent contract. |
+| [`AGENT_FILES/AGENT-BEHAVIOUR/CODE_DESIGN.md`](AGENT-BEHAVIOUR/CODE_DESIGN.md) | Coding conventions — humans set style; agents follow, not redefine. |
+| [`AGENT_FILES/AGENT-BEHAVIOUR/PROTOCOL.md`](AGENT-BEHAVIOUR/PROTOCOL.md) | Agent governance — humans set rules; agents follow §0–§2 here first. |
+| [`KANBAN/PROTOCOL.md`](../KANBAN/PROTOCOL.md) | KANBAN triad rules — humans set record-keeping policy. |
+
+### 2.2 Agent-maintained living docs (you keep these current)
+
+**Rule:** If you change the thing a doc describes, update that doc in the **same session**
+before finishing. Prefer minimal, factual diffs — no drive-by rewrites.
+
+#### A. Implementation truth (code changes)
+
+| Doc | Update when | How to update |
+|---|---|---|
+| **`AGENT_FILES/AGENTS.md`** (this file) | Any change to modules, shapes, training step, defaults, invariants, diagnostics, CLI flags, or gradient routing. | Edit the affected section (§4–§15). Sync tables with `config.py`. Do not paste KANBAN run stories here. |
+| [`GUIDES/CODEBASE_STRUCTURE.md`](../GUIDES/CODEBASE_STRUCTURE.md) | Root files added/removed/renamed; new tests; MLOps scripts; doc paths change. | Update repo tree, file tables, and typical read order. Keep one-line roles accurate. |
+| [`GUIDES/PROBLEMS_METRICS_AND_EXPERIMENTS.md`](../GUIDES/PROBLEMS_METRICS_AND_EXPERIMENTS.md) | New/changed W&B keys; new diagnostics in `diagnostics.py`; renamed metrics; new failure mode worth glossary entry. | Add or edit glossary entry tied to the logging function in code. Note cadence (`log_every` / `diag_every`). Append problem history only when a run conclusion is confirmed (often with KANBAN). |
+| [`GUIDES/READING_EXPERIMENTS.md`](../GUIDES/READING_EXPERIMENTS.md) | Acceptance gates change; a Q1–Q8 panel set changes; new mode flags alter which cycle applies. | Edit the affected question block (metrics table + W&B panel search). Keep full-prediction vs present-only cycles separate. |
+
+#### B. Infrastructure and ops (paths, pod, tooling)
+
+| Doc | Update when | How to update |
+|---|---|---|
+| [`AGENT_FILES/SETUPS/VOLUME_LAYOUT.md`](SETUPS/VOLUME_LAYOUT.md) | `config.py` path defaults change; volume directory contract changes; dataset layout changes. | Update path table, target tree, verification commands. Do not rewrite operator SSH steps (those stay in `SETUP.md`). |
+| [`AGENT_FILES/SETUPS/NEW_POD.md`](SETUPS/NEW_POD.md) | `requirements.txt` changes; bootstrap commands change; default git branch changes; smoke-test commands change. | Update pip install block, verification snippets, and example `train.py` one-liner if defaults shift. |
+| [`GUIDES/MLOPS.md`](../GUIDES/MLOPS.md) | W&B project/name changes; checkpoint naming changes; `run_history.py` / `parse_logs.py` CLI changes; volume layout changes. | Update stack diagram paths, CLI examples, and “what gets logged” tables to match `train.py`. |
+
+#### C. Experiment record (KANBAN)
+
+| Doc | Update when | How to update |
+|---|---|---|
+| [`KANBAN/PHASE_1/README.md`](../KANBAN/PHASE_1/README.md) | A run finishes or status/verdict changes; new investigation opens/closes. | Add row to run index with W&B id, mode, verdict label from `READING_EXPERIMENTS.md`. Update investigation status table. Pull metrics from W&B — never invent values. |
+| **`KANBAN/PHASE_1/investigation_*/…`** | Human asks you to plan, launch, or analyze an experiment (see human workflow in `EXPERIMENT_LIFECYCLE.md`). | Follow triad: `DESCRIPTION.md` before launch; after run: `OBSERVATIONS.md`, `NEXT_STEPS.md`, optional `METRIC_READOUT.md` / `ANALYSIS.md`. Obey [`KANBAN/PROTOCOL.md`](../KANBAN/PROTOCOL.md). Do not delete history. |
+
+**KANBAN checklist after a run analysis:**
+
+1. Run folder triad updated with verdict + W&B link.
+2. Parent investigation `OBSERVATIONS.md` synthesis if the thread moved.
+3. `KANBAN/PHASE_1/README.md` run row and verdict column updated.
+4. If a new metric or failure mode mattered, add glossary entry in `PROBLEMS_METRICS_AND_EXPERIMENTS.md`.
+
+#### What agents must not do to living docs
+
+- Do not edit human-owned docs (§2.1) to “sync” implementation — use §2.2 instead.
+- Do not copy brief prose into `AGENTS.md` or replace code truth with narrative.
+- Do not rewrite KANBAN history; append corrections with dates.
+- Do not update `latest_brief.md` unless the human explicitly asks for a narrative refresh.
+
+### Drift to know
+
+- Old docs often mention 30k Phase-1 steps. Current defaults: `stage1_steps=15000`,
+  `warmup_steps=1500`, `grad_clip=0.5`, `grad_skip_threshold=150.0` (`config.py`).
+- `latest_brief.md` may list experiment CLI overrides (`--horizon-k 12`, `--lambda-var 0.5`)
+  that differ from shipped defaults (`horizon_k=4`, `lambda_var=0.1`).
+- `FineFlow` / Phase 2 is not implemented unless the human explicitly requests it.
 
 ## 3. Repository map
 
@@ -99,6 +181,7 @@ Root implementation files:
 | `train.py` | Stage-0 sanity, Stage-1 training, CLI, optimizer, EMA, checkpoints. |
 | `parse_logs.py` | Parses `step=N {dict}` console logs into JSON. |
 | `run_history.py` | W&B Public API export/report helper for logged metrics. |
+| `drift_probe.py` | Offline within-video temporal drift probe: frozen-encoder drift vs bottleneck-latent drift over a pinned probe set, evaluated from checkpoints. |
 | `requirements.txt` | Runtime and dev dependencies. |
 | `pyproject.toml` | Black and Ruff configuration. |
 | `tests/` | Unit tests for contracts, losses, optimizer grouping, AGC, decoder, modes. |
@@ -109,13 +192,14 @@ Agent and architecture docs:
 |---|---|
 | `AGENT_FILES/AGENT-BEHAVIOUR/PROTOCOL.md` | How agents operate, when to ask, phase discipline. |
 | `AGENT_FILES/AGENT-BEHAVIOUR/CODE_DESIGN.md` | Flat-file layout, naming, docstrings, detach rules. |
+| `AGENT_FILES/AGENT-BEHAVIOUR/WORKFLOW.md` | Redirect → [`GUIDES/EXPERIMENT_LIFECYCLE.md`](../GUIDES/EXPERIMENT_LIFECYCLE.md). |
 | `AGENT_FILES/SETUPS/VOLUME_LAYOUT.md` | RunPod `/workspace` data/checkpoint/cache layout. |
-| `AGENT_FILES/KNOWLEDGE/BRIEF_V0_3.md` | Current architecture brief. |
-| `AGENT_FILES/KNOWLEDGE/UNDERSTANDING.md` | Expanded concept, shape, loss, stage, stop-grad reference. |
-| `AGENT_FILES/PHASES/PHASE_1.md` | Original Phase-1 build spec, partly superseded by code. |
-| `AGENT_FILES/PHASES/PHASE_2.md` | Planned fine-flow work. Has an unresolved geometry decision. |
-| `AGENT_FILES/PHASES/PHASE_3.md` | Planned frame-generator and eval work. |
-| `AGENT_FILES/PHASES/PHASE_4.md` | Deferred multi-horizon extension. |
+| `GUIDES/latest_brief.md` | Architecture narrative (v0.3) — **historical intent, not ground truth**. |
+| `GUIDES/PROBLEMS_METRICS_AND_EXPERIMENTS.md` | Metric glossary + experiment problem history. |
+| `GUIDES/CODEBASE_STRUCTURE.md` | File map: training code, MLOps, docs, KANBAN. |
+| `GUIDES/` | Operator playbooks + project knowledge (see [`GUIDES/README.md`](../GUIDES/README.md)). |
+| `KANBAN/PHASE_1/README.md` | Phase 1 experiment index and W&B run table. |
+| `KANBAN/PROTOCOL.md` | KANBAN update rules (triad, analysis files). |
 
 `KANBAN/` and `AGENT_FILES/KANBAN/` exist, but their contents are not part of
 this living reference. Use them only if the human specifically asks for
@@ -647,10 +731,21 @@ Gradient and stability:
 - `grad_global_norm_postclip`, `grad_has_nan`, `grad_param_count`: diagnostic
   pass gradient health.
 
+Offline probes (not part of the training loop):
+
+- `drift_probe.py` measures WITHIN-video temporal drift on a pinned probe set:
+  `1 - cos(e_t, e_{t+k})` from the frozen encoder (a constant of the dataset,
+  cached after one encoding pass) and `1 - cos(c_t, c_{t+k})` from any
+  checkpoint's bottleneck, plus Spearman faithfulness between the two. It
+  compares windows of the SAME video only — never two different videos. It is
+  an analysis helper like `run_history.py`; training code never imports it and
+  it logs nothing to W&B. See README "Within-video drift probe" for usage.
+
 Future Phase-2/3 diagnostics, not implemented yet:
 
-- shuffled-c test.
-- zero-c condition test.
+- fine-flow shuffled-`c` conditioning test (distinct from reconstruction
+  `L_recon_shuffled_c`, which is implemented).
+- zero-c condition test for `F_e`.
 - teacher-vs-predicted fine-flow gap.
 - decoder dependency test with shuffled `e_hat`.
 - full `eval.py`.
@@ -875,10 +970,17 @@ optimizer grouping, reconstruction, decoder, SIGReg, or present-only mode.
 - If a new loss is added, document exactly which modules it trains and add a
   test for the gradient contract.
 
-`parse_logs.py` and `run_history.py`:
+`parse_logs.py`, `run_history.py`, and `drift_probe.py`:
 
 - Analysis helpers, not training dependencies.
 - Do not couple core training to these scripts.
+- `drift_probe.py` specifics: the probe set is pinned by a manifest JSON and the
+  frozen-encoder features are cached under `--out-dir` (default
+  `logs/drift_probe/`). Never regenerate an existing manifest in place —
+  checkpoint results are only comparable when the manifest is identical. The
+  bottleneck is rebuilt from the config serialized inside the checkpoint;
+  window sampling and transforms reuse `data.py` validation helpers. Pure
+  helpers are unit-tested in `tests/test_drift_probe.py`.
 
 ## 18. Current limitations to keep visible
 

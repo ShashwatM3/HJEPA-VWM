@@ -469,7 +469,7 @@ Those are intentionally inactive or irrelevant in present-only mode.
 ## 8. Read The Results
 
 Use the present-only reading cycle from
-[`../../../README_for_reading_experiments.md`](../../../README_for_reading_experiments.md), with this
+[`../../../../GUIDES/READING_EXPERIMENTS.md`](../../../../GUIDES/READING_EXPERIMENTS.md), with this
 sweep-specific priority order:
 
 1. Include the existing anchor run `hcr2qx19` (`lambda_sigreg=5.0`, `lambda_cov=0.0`) in every W&B

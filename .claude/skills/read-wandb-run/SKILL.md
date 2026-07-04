@@ -13,10 +13,10 @@ description: >-
 ## Mandatory workflow
 
 **Always** use the reading cycle in
-[`KANBAN/README_for_reading_experiments.md`](../../KANBAN/README_for_reading_experiments.md).
+[`GUIDES/READING_EXPERIMENTS.md`](../../GUIDES/READING_EXPERIMENTS.md).
 Do not improvise a generic ML metric tour. Do not list every logged metric.
 
-1. **Read** `KANBAN/README_for_reading_experiments.md` (full Q1–Q8 + Q5′).
+1. **Read** `GUIDES/READING_EXPERIMENTS.md` (full Q1–Q8 + Q5′).
 2. **Fetch run data** (one or more runs):
    - W&B MCP / UI: project `hjepa-vwm`
    - CLI: `python run_history.py --run <id> --report`
@@ -25,7 +25,7 @@ Do not improvise a generic ML metric tour. Do not list every logged metric.
    `lambda_recon`, `horizon_k`, step count, dataset (`ssv2` vs `ssv2_tiny`).
 4. **Apply Q1 → Q8 in order** (or Q1 → Q5′ → Q8 for present-recon-only). Max **four panels**
    per question — only those named in the README.
-5. **Metric semantics** if confused: `AGENT_FILES/KNOWLEDGE/PROBLEMS_METRICS_AND_EXPERIMENTS.md`
+5. **Metric semantics** if confused: `GUIDES/PROBLEMS_METRICS_AND_EXPERIMENTS.md`
    (coarse / copy section: copy loss is **not** a training loss).
 
 ## Single run vs multiple runs

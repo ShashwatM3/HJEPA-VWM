@@ -1,7 +1,9 @@
 # KANBAN — Agent protocol
 
 This folder records **what happened** in Phase 1 research runs. It is not a
-build spec. Authoritative phase definitions live in `AGENT_FILES/PHASES/`.
+build spec. Authoritative implementation reference: `AGENT_FILES/AGENTS.md` and `config.py`.
+
+Operator playbooks (lifecycle, MLOps, W&B reading cycles): [`GUIDES/`](../GUIDES/README.md).
 
 ---
 
@@ -15,9 +17,18 @@ Every **investigation** and every **run** has exactly three markdown files:
 | `OBSERVATIONS.md` | Evidence, belief evolution, conclusions |
 | `NEXT_STEPS.md` | What to do next, or what this spawned |
 
-Do **not** create additional files inside investigation or run folders (no
-`HYPOTHESES.md`, `RUNS.md`, postmortems, charts, etc.). Hypothesis history
-belongs in `OBSERVATIONS.md` as dated sections.
+**Additional allowed files** (see [`GUIDES/EXPERIMENT_LIFECYCLE.md`](../GUIDES/EXPERIMENT_LIFECYCLE.md)):
+
+| File | Level | Role |
+|---|---|---|
+| `PLAN.md` | Run | Implementation + execution plan (before merge) |
+| `GUIDE.md` | Run or investigation | Pod setup + exact launch commands (human reads on pod) |
+| `SWEEP_PLAN_*.md` | Investigation | Design doc — *why* a sweep exists |
+| `METRIC_READOUT.md` | Run | Pure W&B metric narration (no insights) |
+| `ANALYSIS.md` | Run | Insights derived from readout + graphs |
+
+Do **not** create other ad-hoc markdown files (no `HYPOTHESES.md`, `RUNS.md`, postmortems,
+etc.). Hypothesis history belongs in `OBSERVATIONS.md` or `ANALYSIS.md` as dated sections.
 
 ---
 
@@ -34,14 +45,16 @@ belongs in `OBSERVATIONS.md` as dated sections.
 
 1. Create `investigation_NNN/<wandb-run-name>/` (or a short slug if no W&B name).
 2. Fill run `DESCRIPTION.md` **before** launch (hypothesis, command, config delta).
-3. Leave run `OBSERVATIONS.md` empty or placeholder until results arrive.
+3. Fill run `PLAN.md` and `GUIDE.md` before implementation / launch (see `GUIDES/EXPERIMENT_LIFECYCLE.md`).
+4. Leave run `OBSERVATIONS.md` empty or placeholder until results arrive.
 
 ### After a run completes
 
-1. Update the run's `OBSERVATIONS.md` with metrics and interpretation.
-2. Update the run's `NEXT_STEPS.md` (next run, close, or spawn).
-3. Update the parent investigation's `OBSERVATIONS.md` with cross-run synthesis.
-4. Update the parent investigation's `NEXT_STEPS.md`.
+1. Write `METRIC_READOUT.md` and/or `ANALYSIS.md` in the run folder (see `GUIDES/EXPERIMENT_LIFECYCLE.md`).
+2. Update the run's `OBSERVATIONS.md` with verdict and links to analysis.
+3. Update the run's `NEXT_STEPS.md` (next run, close, or spawn).
+4. Update the parent investigation's `OBSERVATIONS.md` with cross-run synthesis.
+5. Update the parent investigation's `NEXT_STEPS.md`.
 
 ### Closing an investigation
 
@@ -60,8 +73,8 @@ When picking up work:
 3. Read the specific run folder being worked on (if any).
 4. Do **not** load other investigations unless cross-linking is required.
 
-For architecture and acceptance gates, read `AGENT_FILES/PHASES/PHASE_1.md` —
-point to it; do not duplicate it here.
+For architecture and acceptance gates, read `AGENT_FILES/AGENTS.md` and
+`GUIDES/READING_EXPERIMENTS.md` — point to them; do not duplicate them here.
 
 ---
 
@@ -82,7 +95,8 @@ point to it; do not duplicate it here.
 
 | Source | Purpose |
 |---|---|
-| `AGENT_FILES/PHASES/PHASE_{1,2,3,4}.md` | What each project phase **is** and what to build |
+| `AGENT_FILES/AGENTS.md` + `config.py` | What Phase 1 **is in code** — modules, defaults, invariants |
+| `GUIDES/latest_brief.md` | Architecture **narrative** and empirical notes (not ground truth) |
 | `KANBAN/PHASE_1/` | What we **tried**, **measured**, and **learned** in Phase 1 so far |
 
 Phase 2 adds fine flow; Phase 3 adds pixels; Phase 4 adds multi-horizon coarse

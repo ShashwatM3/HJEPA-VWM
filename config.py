@@ -1,26 +1,9 @@
-"""Configuration for HJEPA-VWM Phase 1 (v0.2 — frozen encoder).
+"""Configuration for HJEPA-VWM Phase 1 (frozen encoder).
 
-Naming map from AGENT_FILES/AGENT-BEHAVIOUR/CODE_DESIGN.md §3:
-- x        -> context_clip
-- E        -> encoder            (FROZEN pretrained V-JEPA 2 ViT-L/16; shared both branches)
-- e_t      -> detailed           (frozen encoder output, no grad)
-- B        -> bottleneck         (trainable)
-- c_t      -> abstract
-- x_{<=t+k}-> target_clip         (future clip ending at t+k)
-- B_EMA    -> target_bottleneck   (EMA copy of B; the only EMA module)
-- e_plus   -> target_detailed
-- c_plus   -> target_abstract     (= c+_{t+k})
-- F_c      -> coarse_flow
-- F_e      -> fine_flow           (Phase 2)
-- c_hat    -> pred_abstract
-- e_hat    -> pred_detailed
-- D        -> frame_generator     (Phase 3)
-- A        -> vae_encoder         (Phase 3)
-
-All numerical values come from AGENT_FILES/KNOWLEDGE/UNDERSTANDING.md §2.6.
-v0.2: encoder is frozen pretrained V-JEPA 2 ViT-L/16 (D_e=1024); EMA on bottleneck
-only; collapse prevention is a variance floor on c_t (no SIGReg). See the encoder
-note in §4 of AGENT_FILES/PHASES/PHASE_1.md for the repo-id verification fallback.
+Naming map from AGENT_FILES/AGENT-BEHAVIOUR/CODE_DESIGN.md §3.
+Architecture reference: AGENT_FILES/AGENTS.md and GUIDES/latest_brief.md (narrative only).
+Shipped defaults live in this file; empirical CLI overrides (e.g. --horizon-k 12,
+--lambda-var 0.5) are documented in GUIDES/latest_brief.md and KANBAN run folders.
 """
 
 from __future__ import annotations
@@ -38,7 +21,7 @@ ENCODER_IMAGE_STD: tuple[float, float, float] = (0.229, 0.224, 0.225)
 
 @dataclass
 class ModelConfig:
-    """Locked architecture constants from UNDERSTANDING.md §2.6 (v0.2)."""
+    """Locked architecture constants (see AGENT_FILES/AGENTS.md §4, §12)."""
 
     # Frozen encoder (V-JEPA 2 ViT-L/16). Native resolution 256 == our resolution.
     # The ViT-B/16 (D_e=768) checkpoint has no transformers repo (torch.hub only);
@@ -113,7 +96,7 @@ class ModelConfig:
 
 @dataclass
 class TrainConfig:
-    """Phase 1 training and diagnostic constants from UNDERSTANDING.md §2.6."""
+    """Phase 1 training and diagnostic defaults (see AGENT_FILES/AGENTS.md §12)."""
 
     global_batch: int = 64
     # Step counts retuned 2026-06-10 after `peachy-terrain-5` crashed at step

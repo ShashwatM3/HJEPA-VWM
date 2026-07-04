@@ -90,4 +90,4 @@ Phase 1 currently covers coarse dynamics only: frozen V-JEPA 2 encoder, trainabl
 
 ## Reading Rule
 
-Use `KANBAN/README_for_reading_experiments.md` for every run. Full-prediction and present-only runs use different cycles and must not be compared with the same gates.
+Use [`GUIDES/READING_EXPERIMENTS.md`](../GUIDES/READING_EXPERIMENTS.md) for every run. Full-prediction and present-only runs use different cycles and must not be compared with the same gates.

@@ -10,7 +10,7 @@
 > | **[Path A — First time](#path-a--first-time-end-to-end)** | Your situation **right now**: network volume has SSv2 data, **no v0 code on the pod**, **no `ssv2_tiny` yet**, **SSH not set up yet**. You have the project on your laptop and access to the RunPod website. |
 > | **[Path B — After local changes](#path-b--after-local-changes-end-to-end)** | Code already deployed on the pod once; you edited files locally, **have not pushed yet** → want to run again and watch metrics. |
 >
-> **Network volume structure** (current vs target): [`VOLUME_LAYOUT.md`](VOLUME_LAYOUT.md). **RunPod infrastructure** (SSH, troubleshooting): [`SETUP_POD.md`](SETUP_POD.md).
+> **Network volume structure** (current vs target): [`VOLUME_LAYOUT.md`](VOLUME_LAYOUT.md). **RunPod infrastructure** (SSH, troubleshooting): [RunPod docs](https://docs.runpod.io/pods/configuration/use-ssh) and [`GUIDES/MLOPS.md`](../../GUIDES/MLOPS.md).
 
 ---
 
@@ -21,14 +21,14 @@ This guide mixes **three source types**. Nothing below is guesswork without a la
 | Source type | What it covers | How to trust it |
 |---|---|---|
 | **RunPod official docs** | SSH keys, Connect tab, `/workspace` mount, network volume attach rules, stop vs terminate | Verified against [Use SSH](https://docs.runpod.io/pods/configuration/use-ssh), [Network volumes](https://docs.runpod.io/storage/network-volumes), [Manage Pods](https://docs.runpod.io/pods/manage-pods), [Storage types](https://docs.runpod.io/pods/storage/types). Re-checked when this doc was written. |
-| **This project's specs** | Folder layout (`/workspace/data/ssv2`), `make_subset.py`, `train.py` flags, Phase 1 steps, training time **estimates** | From `AGENT_FILES/PHASES/PHASE_1.md`, `AGENT_FILES/KNOWLEDGE/UNDERSTANDING.md`, `AGENT_FILES/AGENT-BEHAVIOUR/PROTOCOL.md`, and the architecture brief — not from RunPod. |
+| **This project's specs** | Folder layout (`/workspace/data/ssv2`), `make_subset.py`, `train.py` flags, Phase 1 steps, training time **estimates** | From `AGENT_FILES/AGENTS.md`, `config.py`, `AGENT_FILES/AGENT-BEHAVIOUR/PROTOCOL.md`, and `GUIDES/latest_brief.md` — not from RunPod. |
 | **Your volume inspection** | Old paths like `something-something-v2`, symlink counts ~168k/25k, `ssv2_raw` layout | From operator notes at setup time — re-verify on the pod in step A7. |
 
 **Rules used in this doc:**
 - RunPod UI labels (Connect tab, Deploy, Network Volume) follow official docs; **always use the exact SSH command your pod shows** — example IPs/ports in this file are illustrations only.
 - **`tmux`** and **`git push/pull`** are standard practice, **not** RunPod product features. RunPod docs do not require tmux; it prevents SSH disconnect from killing long jobs.
 - **W&B** (`wandb login`) is [Weights & Biases](https://docs.wandb.ai/) — third-party, not RunPod.
-- **Training runtime (~4–5 h)** is a **project estimate** from `AGENT_FILES/PHASES/PHASE_1.md` / chat (A100, `ssv2_tiny`, 30k steps) — not a RunPod SLA.
+- **Training runtime (~4–5 h)** is a **project estimate** (`config.py`: 15k steps on `ssv2_tiny`, A100) — not a RunPod SLA.
 
 **Official RunPod constraints you must know:**
 1. Network volumes for Pods are **Secure Cloud only** ([network volumes](https://docs.runpod.io/storage/network-volumes)).
@@ -52,7 +52,7 @@ If anything in RunPod’s console contradicts this file, **the live console wins
 | **SSH** | Terminal connection from laptop → pod. You run training commands here. |
 | **`ssv2`** | Full Something-Something V2 symlink dataset (~169k train videos). **Already on your volume.** |
 | **`ssv2_tiny`** | Small stratified subset (~4k train) for 4–5 hr smoke runs. **Created by `make_subset.py` during first deploy** — not on your volume yet. |
-| **Phase 1** | First implementation milestone: coarse world model, Stage 0 + Stage 1 training. See [`AGENT_FILES/PHASES/PHASE_1.md`](../PHASES/PHASE_1.md). |
+| **Phase 1** | Coarse world model, Stage 0 + Stage 1 training. See [`AGENT_FILES/AGENTS.md`](../AGENTS.md) §13. |
 
 ---
 
@@ -69,7 +69,7 @@ Check each box — this is exactly where you are today:
 - [ ] **SSH:** Not configured yet — expected.
 - [ ] **Goal:** End up watching **Weights & Biases (W&B)** charts and/or terminal logs while `train.py` runs on the GPU.
 
-**Time budget for Path A (first time):** ~30–60 min setup (SSH, clone, deps, subset) + **~4–5 hours** Phase 1 training — **project estimate**, not RunPod official; see [`AGENT_FILES/PHASES/PHASE_1.md`](../PHASES/PHASE_1.md).
+**Time budget for Path A (first time):** ~30–60 min setup (SSH, clone, deps, subset) + **~4–5 hours** Phase 1 training (15k steps on `ssv2_tiny`) — **project estimate**, not RunPod official; see `config.py` `stage1_steps`.
 
 ---
 
@@ -267,7 +267,7 @@ If neither shows symlinks, stop and inspect `/workspace` before continuing.
 
 ## A8 — Pod: One-time data folder layout (project convention — not RunPod)
 
-**Source:** This project's `AGENT_FILES/AGENT-BEHAVIOUR/PROTOCOL.md` / `AGENT_FILES/SETUPS/SETUP_POD.md` — **not** RunPod documentation. RunPod only guarantees a mount at `/workspace`; it does not define `data/ssv2` vs `something-something-v2`.
+**Source:** This project's `AGENT_FILES/AGENT-BEHAVIOUR/PROTOCOL.md` / [`GUIDES/MLOPS.md`](../../GUIDES/MLOPS.md) — **not** RunPod documentation. RunPod only guarantees a mount at `/workspace`; it does not define `data/ssv2` vs `something-something-v2`.
 
 **What this does:** Moves prepared SSv2 from inside the old repo folder to `/workspace/data/ssv2/`. Takes seconds. **Does not copy video files** — only renames/moves a directory of symlinks on your volume.
 
@@ -365,7 +365,7 @@ source ~/.bashrc
 
 ## A12 — Pod: Create `ssv2_tiny` (project script — not RunPod)
 
-**Source:** `AGENT_FILES/PHASES/PHASE_1.md` §5 / `make_subset.py` spec in project docs.
+**Source:** `make_subset.py` and [`AGENT_FILES/AGENTS.md`](../AGENTS.md) §5.
 
 This is the small dataset for ~4–5 hour smoke training. **Your volume does not have it until this runs.**
 
@@ -426,7 +426,7 @@ tmux new -s phase1
 Inside tmux:
 
 ```bash
-python train.py --data ssv2_tiny --steps 30000
+python train.py --data ssv2_tiny --steps 15000
 ```
 
 **Detach** (leave training running): press `Ctrl+B`, then `D`.
@@ -438,12 +438,12 @@ ssh runpod-jepa   # or your Connect tab command
 tmux attach -t phase1
 ```
 
-Expected runtime: **~4–5 hours** on A100 80GB with `ssv2_tiny` — **project estimate** from `AGENT_FILES/PHASES/PHASE_1.md`, not RunPod.
+Expected runtime: **~4–5 hours** on A100 80GB with `ssv2_tiny` at 15k steps — **project estimate** from `config.py`, not RunPod.
 
 To resume after interruption:
 
 ```bash
-python train.py --data ssv2_tiny --steps 30000 --resume /workspace/checkpoints/phase1_stepXXXX.pt
+python train.py --data ssv2_tiny --steps 15000 --resume /workspace/checkpoints/phase1_stepXXXX.pt
 ```
 
 ---
@@ -477,9 +477,9 @@ tail -f /workspace/hierarchal-jepa-flow-world-model/train.log
 
 ### What "done" looks like for Phase 1
 
-- 30,000 steps complete, no OOM/NaN
-- Checkpoint at `/workspace/checkpoints/phase1_step30000.pt`
-- W&B shows `L_c` decreasing; after step 10k+, diagnostics beat copy/batch-mean baselines (see `AGENT_FILES/PHASES/PHASE_1.md` §12)
+- 15,000 steps complete, no OOM/NaN
+- Checkpoint at `/workspace/checkpoints/phase1_step15000.pt`
+- W&B diagnostics: see [`GUIDES/READING_EXPERIMENTS.md`](../../GUIDES/READING_EXPERIMENTS.md) for acceptance gates (`coarse_vs_copy_ratio`, etc.)
 
 **Path A complete.** Future code changes → use [Path B](#path-b--after-local-changes-end-to-end).
 
@@ -596,7 +596,7 @@ python -c "from data import smoke_test_dataloader; smoke_test_dataloader()"
 ```bash
 tmux new -s train
 cd /workspace/hierarchal-jepa-flow-world-model
-python train.py --data ssv2_tiny --steps 30000
+python train.py --data ssv2_tiny --steps 15000
 ```
 
 **Resume from checkpoint:**
@@ -604,10 +604,10 @@ python train.py --data ssv2_tiny --steps 30000
 ```bash
 tmux new -s train
 cd /workspace/hierarchal-jepa-flow-world-model
-python train.py --data ssv2_tiny --steps 30000 --resume /workspace/checkpoints/phase1_step15000.pt
+python train.py --data ssv2_tiny --steps 15000 --resume /workspace/checkpoints/phase1_step15000.pt
 ```
 
-**Phase 2 / 3** (when implemented): adjust `--steps` and `--resume` per `AGENT_FILES/PHASES/PHASE_2.md` / `AGENT_FILES/PHASES/PHASE_3.md`.
+**Later stages** (when implemented): adjust `--steps` and `--resume` per human direction and `GUIDES/latest_brief.md`.
 
 Detach: `Ctrl+B`, then `D`.
 
@@ -641,7 +641,7 @@ Same as **A16**:
 [ ] A12 make_subset.py → ssv2_tiny
 [ ] A13 stage0-only
 [ ] A14 500-step smoke
-[ ] A15 tmux → 30k steps
+[ ] A15 tmux → 15k steps
 [ ] A16 watch wandb
 ```
 
@@ -664,10 +664,10 @@ Same as **A16**:
 | Doc | Role |
 |---|---|
 | [`VOLUME_LAYOUT.md`](VOLUME_LAYOUT.md) | Current vs target volume tree, path contract |
-| [`SETUP_POD.md`](SETUP_POD.md) | SSH, troubleshooting |
-| [`../PHASES/PHASE_1.md`](../PHASES/PHASE_1.md) | What the agent builds; acceptance gates |
+| [`GUIDES/MLOPS.md`](../../GUIDES/MLOPS.md) | RunPod SSH, W&B, checkpoints |
+| [`../AGENTS.md`](../AGENTS.md) | Architecture, defaults, acceptance context |
 | [`../AGENT-BEHAVIOUR/PROTOCOL.md`](../AGENT-BEHAVIOUR/PROTOCOL.md) | Agent operating rules |
-| [`../PHASES/PHASE_2.md`](../PHASES/PHASE_2.md) / [`../PHASES/PHASE_3.md`](../PHASES/PHASE_3.md) | Later training stages |
+| [`GUIDES/latest_brief.md`](../../GUIDES/latest_brief.md) | Architecture narrative and empirical notes (not ground truth) |
 
 ---
 
