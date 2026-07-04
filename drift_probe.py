@@ -367,9 +367,17 @@ def build_manifest(
     span = overlap_boundary(t_ctx, stride) + max_offset
     videos: list[dict] = []
     skipped = 0
+    unreadable = 0
     for rel_path in select_probe_order(paths, seed):
-        reader = _open_video_reader(root / rel_path)
-        num_frames = len(reader)
+        # Skip corrupt/unreadable candidates instead of killing the whole scan:
+        # SSv2 occasionally ships bad VP9 packets and decord raises on open.
+        try:
+            reader = _open_video_reader(root / rel_path)
+            num_frames = len(reader)
+        except Exception as exc:  # noqa: BLE001 - decord raises non-specific errors.
+            unreadable += 1
+            print(f"WARN: skipping unreadable probe candidate {rel_path}: {exc}")
+            continue
         if num_frames < span + 1:
             skipped += 1
             continue
@@ -398,6 +406,7 @@ def build_manifest(
         "frame_stride": stride,
         "max_offset": max_offset,
         "skipped_too_short": skipped,
+        "skipped_unreadable": unreadable,
         "videos": videos,
     }
 
@@ -425,6 +434,14 @@ def load_or_build_manifest(
             raise RuntimeError(
                 f"Manifest {manifest_path} supports offsets up to {manifest.get('max_offset')}, "
                 f"but {max_offset} was requested. Delete it or pass --manifest for a new file."
+            )
+        # The pinned manifest wins over CLI probe-set knobs by design; surface any
+        # disagreement so tag-derived filenames are not read as the probe definition.
+        if manifest.get("n_videos") != n_videos or manifest.get("seed") != seed:
+            print(
+                f"WARN: manifest {manifest_path} pins n_videos={manifest.get('n_videos')}, "
+                f"seed={manifest.get('seed')}; CLI asked n={n_videos}, seed={seed}. "
+                "The manifest wins — consider a matching --tag for output filenames."
             )
         return manifest
     manifest = build_manifest(cfg, split, n_videos, max_offset, seed)
@@ -486,7 +503,13 @@ def compute_encoder_features(
     _require_torch()
     features: dict[str, Tensor] = {}
     if cache_path.exists():
-        features = torch.load(cache_path, map_location="cpu")
+        try:
+            features = torch.load(cache_path, map_location="cpu")
+        except Exception as exc:
+            raise RuntimeError(
+                f"Feature cache {cache_path} is unreadable (corrupt or wrong format). "
+                "Delete it and re-run; the probe will re-encode from the manifest."
+            ) from exc
     needed: list[tuple[dict, int]] = []
     for video in manifest["videos"]:
         for end in [video["anchor_end"]] + [video["anchor_end"] + k for k in offsets]:
@@ -518,7 +541,11 @@ def compute_encoder_features(
                 features[feature_key(video["path"], end)] = tokens.detach().to("cpu", torch.float16)
             print(f"  encoded {min(i + encoder_batch, len(needed))}/{len(needed)} windows")
     cache_path.parent.mkdir(parents=True, exist_ok=True)
-    torch.save(features, cache_path)
+    # Atomic write: an interrupted save must not leave a truncated cache that
+    # poisons every later invocation. Write to a sibling temp file, then rename.
+    tmp_path = cache_path.with_suffix(cache_path.suffix + ".tmp")
+    torch.save(features, tmp_path)
+    tmp_path.replace(cache_path)
     print(f"Wrote feature cache: {cache_path}")
     return features
 
@@ -547,6 +574,10 @@ def load_bottleneck_from_checkpoint(ckpt_path: Path, use_ema: bool = False):
     model_cfg = model_config_from_checkpoint_dict((ckpt.get("config") or {}).get("model", {}))
     bottleneck = Bottleneck(model_cfg)
     if use_ema:
+        if "target_bottleneck" not in ckpt:
+            raise RuntimeError(
+                f"--use-ema requested but {ckpt_path} has no 'target_bottleneck' state."
+            )
         state = {
             key[len("bottleneck.") :]: value
             for key, value in ckpt["target_bottleneck"].items()
@@ -637,13 +668,18 @@ def plot_graph1(
         checkpoint_curves: `(label, summarize_per_offset output)` per checkpoint.
         boundary: `overlap_boundary` — the shaded window-overlap region ends here.
     """
+    if encoder_summary is None and not checkpoint_curves:
+        print("Nothing to plot for Graph 1 (encoder curve off, no checkpoints); skipping.")
+        return
     plt = _pyplot()
     if plt is None:
         return
     fig, ax = plt.subplots(figsize=(9, 5.5))
-    ax.axvspan(0, boundary, alpha=0.08, color="gray")
-    ax.text(boundary / 2, 0.98, "windows share frames", transform=ax.get_xaxis_transform(),
-            ha="center", va="top", fontsize=8, color="gray")
+    if min(offsets) <= boundary:  # only mark the overlap zone when it is in view
+        ax.axvspan(min(offsets), boundary, alpha=0.08, color="gray")
+        ax.text((min(offsets) + boundary) / 2, 0.98, "windows share frames",
+                transform=ax.get_xaxis_transform(), ha="center", va="top",
+                fontsize=8, color="gray")
     if encoder_summary is not None:
         ax.plot(offsets, encoder_summary["mean"], "o-", color="black", label="V-JEPA e (frozen)")
         ax.fill_between(offsets, encoder_summary["p25"], encoder_summary["p75"],
@@ -725,7 +761,7 @@ def parse_args() -> argparse.Namespace:
                         "computed/cached regardless — the latent side needs them).")
     parser.add_argument("--latent-curve", choices=["on", "off"], default="on",
                         help="Evaluate bottleneck checkpoints (--ckpt) for latent drift.")
-    parser.add_argument("--ckpt", action="append", default=[],
+    parser.add_argument("--ckpt", action="append", default=None,
                         help="Path to a phase1_step*.pt checkpoint; repeatable to compare "
                         "several checkpoints/runs in one invocation.")
     parser.add_argument("--use-ema", action="store_true",
@@ -751,6 +787,7 @@ def main() -> None:
     """Run the drift probe end to end: manifest -> features -> drift -> JSON + plots."""
     args = parse_args()  # before _require_torch so --help works on torch-less machines
     _require_torch()
+    args.ckpt = args.ckpt or []  # append-action default stays None to avoid shared-list state
     offsets = parse_offset_list(args.offsets)
     cfg = Config()
     cfg.data.dataset = args.data
