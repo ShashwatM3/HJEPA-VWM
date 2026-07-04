@@ -191,8 +191,9 @@ def attention_entropy(bottleneck: nn.Module, detailed: Tensor) -> dict[str, floa
 #   * learned coordinate systems — bottleneck/decoder query slots, bottleneck memory
 #     position embeddings, the F_c null condition, and the F_c token-type /
 #     slot-position embeddings (by leaf name);
-#   * the zero-init adaLN-Zero gate (AdaLNBlock.mod[-1]) and residual-output
-#     projection (Bottleneck.out_mlp[-1]), flagged ``is_zero_init`` at construction.
+#   * the zero-init adaLN-Zero gate (AdaLNBlock.mod[-1]) and the bottleneck latent
+#     blocks' residual outputs (SharpCrossAttention.o_proj, self_attn.out_proj,
+#     mlp[-1]), flagged ``is_zero_init`` at construction.
 #     Both are 2-D weights, so neither the ndim nor the name rule catches them — the
 #     marker does. While ||w||≈0 their AGC bound collapses to ~clip_factor·eps, which
 #     would clamp the very gradients that must "wake up" the residual branches; weight
@@ -210,7 +211,7 @@ def _zero_init_param_ids(module: nn.Module) -> set[int]:
 
     Module attributes survive ``.to(device)`` (the Module object is not recreated),
     so the marker is a robust, refactor-proof signal for the zero-init gate/output
-    projections — no brittle ``out_mlp.3.weight`` index strings.
+    projections — no brittle ``mlp.3.weight`` index strings.
     """
     _require_torch()
     ids: set[int] = set()

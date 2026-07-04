@@ -400,6 +400,15 @@ you can see whether `B_EMA` lags behind online `B` after aggressive geometry reg
 Diagnostic flags (`1.0` / `0.0`) confirming which training branch is active. If `prediction_active=0`
 but you expected full prediction, do not read `coarse_*` panels.
 
+#### `whiten_active`
+
+Mode flag (`1.0` / `0.0`) from `train_step`: the frozen V-JEPA features are whitened with fixed
+offline training-set statistics (`--whiten-features`, `models.FeatureWhitener`, stats from
+`whiten_stats.py`) before the bottleneck and all reconstruction targets. When this is `1`, every
+`L_recon_*` readout scores WHITENED features and is NOT comparable to unwhitened runs; `c_*`
+geometry metrics remain comparable in kind (same formulas on `c_t`) but the input space changed,
+so treat cross-run comparisons as different substrates.
+
 ### Regularization Losses
 
 #### `L_var`

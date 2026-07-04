@@ -42,10 +42,18 @@ class ModelConfig:
     bottleneck_mixer_dim: int = 256  # input projection D_e -> mixer width (= d_c)
     bottleneck_convnext_blocks: int = 2
     bottleneck_cross_attn_heads: int = 8
-    # Query/out_mlp init is baked in below (Plan Phase 04, KANBAN/04): orthogonal
-    # queries (Fix 1, fixes the ~0.02-scale near-uniform-attention pathology) and
-    # zero-init out_mlp (Fix 2, identity-residual start). These are fixes, not
-    # switches — the pre-fix v0.2 init lives in git history if ever needed.
+    # Perceiver-style latent processor depth (tmp/changes_bottleneck <1>): each block
+    # runs s += CrossAttn(s, memory); s += SelfAttn(s); s += MLP(s) on the slot stream.
+    # The old single-read bottleneck is depth-1 without slot self-attention; repeated
+    # refinement + slot competition is the recommended 2-4 range. Every residual
+    # branch is zero-init, so identity-at-init (c == norm(queries)) is preserved at
+    # any depth.
+    bottleneck_latent_blocks: int = 3
+    # Query/residual init is baked into models.py (Plan Phase 04, KANBAN/04):
+    # orthogonal queries (Fix 1, fixes the ~0.02-scale near-uniform-attention
+    # pathology) and zero-init residual branches in every latent block (Fix 2,
+    # identity-residual start). These are fixes, not switches — earlier inits
+    # live in git history if ever needed.
 
     # Coarse flow F_c
     f_c_blocks: int = 6
@@ -233,6 +241,25 @@ class TrainConfig:
     # zero residual" (copy_loss = ‖Δ‖²), so coarse_vs_copy_ratio stays directly comparable
     # to the full-latent runs. Default False -> full-latent prediction, byte-identical.
     predict_residual: bool = False
+    # Fixed offline whitening of the frozen V-JEPA features (investigation_014 /
+    # tmp/changes_bottleneck <2>). The rank probe showed `e` is strongly anisotropic
+    # (pooled entropy rank ~193/1024 with a long low-energy tail), so the bottleneck
+    # and decoder otherwise compress dominant-direction energy AND tail noise with the
+    # same weighting. When True, every encoder output (context AND future clip) is
+    # mapped e_w = (e - mu) @ W with W = U (Lambda + eps I)^{-1/2} U^T computed ONCE
+    # offline over the training set (whiten_stats.py) — B, B_EMA, F_c targets, and D
+    # all live in whitened space; unwhitening exists only for readouts that need raw
+    # V-JEPA space. NEVER per-batch whitening: mu/U/Lambda are fixed training-set
+    # statistics reused for train/val/inference. Default False -> byte-identical
+    # baseline (whitener never built).
+    whiten_features: bool = False
+    # Path to the stats file written by whiten_stats.py ({"mean","eigvals","eigvecs"}).
+    # Required (and validated in finalize_training_config) when whiten_features=True.
+    whiten_stats_path: str = ""
+    # Eigenvalue floor added to Lambda before the inverse square root so tiny-variance
+    # tail directions do not explode to huge whitened coordinates. Applied at whitener
+    # build time, so eps can be swept without recomputing the offline stats.
+    whiten_eps: float = 1e-4
     horizon_k: int = 4  # single fixed horizon for Phases 1-3 (Phase 4: multi-horizon)
     frame_stride: int = 2
     precision: str = "bf16"

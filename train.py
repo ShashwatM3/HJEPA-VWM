@@ -250,6 +250,7 @@ def _coarse_forward(
     target_bottleneck: nn.Module,
     context_clip: Tensor,
     target_clip: Tensor,
+    whitener: nn.Module | None = None,
 ) -> tuple[Tensor, Tensor, Tensor, Tensor]:
     """Compute the online `c_t`, the detached target `c_plus`, and both detailed tensors.
 
@@ -259,17 +260,27 @@ def _coarse_forward(
         target_bottleneck: EMA bottleneck B_EMA.
         context_clip: (B, 8, 3, 256, 256) encoder-normalized context window.
         target_clip: (B, 8, 3, 256, 256) encoder-normalized future window.
+        whitener: Optional `models.FeatureWhitener`. When given, BOTH encoder
+            outputs are mapped to whitened space here, at the single seam where
+            frozen features enter the trainable stack — so `B`, `B_EMA`, the flow
+            targets, the reconstruction targets, and every diagnostic downstream
+            all see the same (whitened) feature space consistently.
     Returns:
         (abstract, target_abstract, detailed, target_detailed): c_t (grad), c_plus
-        (stop-grad), and the two frozen detailed tensors e_t / e_plus (no-grad). The
-        detailed tensors are returned (not just c_t) so the reconstruction anchor and
-        diagnostics can reuse them without a second frozen-encoder forward.
+        (stop-grad), and the two frozen detailed tensors e_t / e_plus (no-grad,
+        whitened when a whitener is given). The detailed tensors are returned (not
+        just c_t) so the reconstruction anchor and diagnostics can reuse them
+        without a second frozen-encoder forward.
     """
     with torch.no_grad():
         detailed = encoder(context_clip)
+        if whitener is not None:
+            detailed = whitener.whiten(detailed)
     abstract = bottleneck(detailed)
     with torch.no_grad():
         target_detailed = encoder(target_clip)
+        if whitener is not None:
+            target_detailed = whitener.whiten(target_detailed)
     target_abstract = target_bottleneck(target_detailed)  # B_EMA + as_target inside
     return abstract, target_abstract, detailed, target_detailed
 
@@ -278,6 +289,7 @@ def _present_forward(
     encoder: nn.Module,
     bottleneck: nn.Module,
     context_clip: Tensor,
+    whitener: nn.Module | None = None,
 ) -> tuple[Tensor, Tensor]:
     """Compute only the present detailed and abstract latents for recon-only runs.
 
@@ -288,11 +300,15 @@ def _present_forward(
         encoder: Frozen V-JEPA 2 encoder E.
         bottleneck: Trainable bottleneck B.
         context_clip: (B, 8, 3, 256, 256) encoder-normalized context window.
+        whitener: Optional `models.FeatureWhitener`; same seam as `_coarse_forward`.
     Returns:
-        (abstract, detailed): c_t (grad) and frozen e_t (no-grad).
+        (abstract, detailed): c_t (grad) and frozen e_t (no-grad, whitened when a
+        whitener is given).
     """
     with torch.no_grad():
         detailed = encoder(context_clip)
+        if whitener is not None:
+            detailed = whitener.whiten(detailed)
     abstract = bottleneck(detailed)
     return abstract, detailed
 
@@ -305,6 +321,7 @@ def train_step(
     cfg: Config,
     device: torch.device,
     mean_tracker: nn.Module | None = None,
+    whitener: nn.Module | None = None,
 ) -> dict[str, float]:
     """Run one Stage 1 coarse-dynamics training step.
 
@@ -318,6 +335,11 @@ def train_step(
         mean_tracker: `models.FeatureMeanTracker` for the residual reconstruction
             target. Required when `cfg.train.recon_residual_target` is True; unused
             (may be None) otherwise.
+        whitener: `models.FeatureWhitener` with fixed offline training-set stats.
+            Required when `cfg.train.whiten_features` is True; unused (may be
+            None) otherwise. Whitening happens inside the forward helpers, so
+            every downstream tensor (c_t, c_plus, recon targets, tracker mean)
+            lives in the same whitened space.
     Returns:
         Scalar metrics for logging.
     """
@@ -334,17 +356,33 @@ def train_step(
             "cfg.train.recon_residual_target is True but no mean_tracker was passed to "
             "train_step; construct a models.FeatureMeanTracker and pass it explicitly."
         )
+    # Whitening (tmp/changes_bottleneck <2>): gated by the config flag, never by the
+    # mere presence of the module, so the default path stays byte-identical.
+    whiten_active = cfg.train.whiten_features
+    if whiten_active and whitener is None:
+        raise RuntimeError(
+            "cfg.train.whiten_features is True but no whitener was passed to train_step; "
+            "build one via train._build_whitener (offline stats from whiten_stats.py)."
+        )
+    step_whitener = whitener if whiten_active else None
     context_clip = batch[0].to(device, non_blocking=True)
     target_clip = None if cfg.train.present_recon_only else batch[1].to(device, non_blocking=True)
     optimizer.zero_grad(set_to_none=True)
     with autocast_context(device, cfg):
         if cfg.train.present_recon_only:
-            abstract, detailed = _present_forward(encoder, bottleneck, context_clip)
+            abstract, detailed = _present_forward(
+                encoder, bottleneck, context_clip, whitener=step_whitener
+            )
             flow_loss = abstract.new_zeros(())
         else:
             assert target_clip is not None
             abstract, target_abstract, detailed, target_detailed = _coarse_forward(
-                encoder, bottleneck, target_bottleneck, context_clip, target_clip
+                encoder,
+                bottleneck,
+                target_bottleneck,
+                context_clip,
+                target_clip,
+                whitener=step_whitener,
             )
             if cfg.train.predict_residual:
                 # investigation_009: predict the temporal residual Δ = c_{t+k} - c_t
@@ -513,6 +551,7 @@ def train_step(
         ),
         "present_recon_only": float(cfg.train.present_recon_only),
         "prediction_active": float(not cfg.train.present_recon_only),
+        "whiten_active": float(whiten_active),
         "grad_norm": grad_norm_f,
         "grad_skipped": float(grad_skipped),
         "instability_warn": float(instability_warn),
@@ -528,6 +567,7 @@ def save_checkpoint(
     optimizer: torch.optim.Optimizer,
     cfg: Config,
     mean_tracker: nn.Module | None = None,
+    whitener: nn.Module | None = None,
 ) -> None:
     """Save a Phase 1 checkpoint (encoder excluded — reloaded from HF).
 
@@ -540,6 +580,10 @@ def save_checkpoint(
         mean_tracker: Optional `models.FeatureMeanTracker`; its buffers are saved
             under "recon_feature_mean" so a residual-target run resumes with the
             same per-position mean instead of re-warming it.
+        whitener: Optional `models.FeatureWhitener`; its buffers are saved under
+            "feature_whitener" so the checkpoint is self-describing — offline
+            evaluators (drift_probe.py) and resumes reproduce the exact whitened
+            space the bottleneck was trained in without needing the stats file.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     _, bottleneck, target_bottleneck, coarse_flow, decoder = modules
@@ -554,6 +598,8 @@ def save_checkpoint(
     }
     if mean_tracker is not None:
         payload["recon_feature_mean"] = mean_tracker.state_dict()
+    if whitener is not None:
+        payload["feature_whitener"] = whitener.state_dict()
     torch.save(payload, path)
 
 
@@ -562,12 +608,16 @@ def load_checkpoint(
     modules: tuple[nn.Module, nn.Module, nn.Module, nn.Module, nn.Module],
     optimizer: torch.optim.Optimizer | None = None,
     mean_tracker: nn.Module | None = None,
+    whitener: nn.Module | None = None,
 ) -> int:
     """Load a Phase 1 checkpoint and return its global step (encoder untouched).
 
     Checkpoints saved before the residual reconstruction target have no
     "recon_feature_mean" entry; the tracker is then left fresh and re-warms from
     live batches (~1/(1-momentum) steps), which `run_training` reports on resume.
+    Checkpoints saved with whitening carry "feature_whitener"; when a whitener is
+    passed, that saved state overrides the stats-file-derived buffers so a resume
+    reproduces the exact training-time whitened space.
     """
     ckpt = torch.load(path, map_location="cpu")
     _, bottleneck, target_bottleneck, coarse_flow, decoder = modules
@@ -590,6 +640,8 @@ def load_checkpoint(
         decoder.load_state_dict(decoder_state)
     if mean_tracker is not None and "recon_feature_mean" in ckpt:
         mean_tracker.load_state_dict(ckpt["recon_feature_mean"])
+    if whitener is not None and "feature_whitener" in ckpt:
+        whitener.load_state_dict(ckpt["feature_whitener"])
     if optimizer is not None and "optimizer" in ckpt:
         try:
             optimizer.load_state_dict(ckpt["optimizer"])
@@ -623,6 +675,42 @@ def _build_and_init(cfg: Config, device: torch.device, load_encoder: bool = True
     return encoder, bottleneck, target_bottleneck, coarse_flow, decoder
 
 
+def _build_whitener(cfg: Config, device: torch.device) -> nn.Module | None:
+    """Build the fixed-stats feature whitener, or None when whitening is off.
+
+    Loads the offline training-set statistics written by `whiten_stats.py` and
+    applies the config eigenvalue floor. Returns None on the default path so the
+    baseline stays byte-identical (no module built, no checkpoint key written).
+
+    Raises:
+        FileNotFoundError: `cfg.train.whiten_stats_path` does not exist.
+        ValueError: The stats file is malformed or does not match `d_e`.
+    """
+    if not cfg.train.whiten_features:
+        return None
+    from models import FeatureWhitener
+
+    stats_path = Path(cfg.train.whiten_stats_path)
+    if not stats_path.is_file():
+        raise FileNotFoundError(
+            f"whiten_features is on but the stats file {stats_path} does not exist; "
+            "run `python whiten_stats.py --data <dataset>` first and pass its output "
+            "via --whiten-stats-path."
+        )
+    stats = torch.load(stats_path, map_location="cpu")
+    for key in ("mean", "eigvals", "eigvecs"):
+        if key not in stats:
+            raise ValueError(f"Whitening stats file {stats_path} is missing '{key}'.")
+    if stats["mean"].shape[0] != cfg.model.d_e:
+        raise ValueError(
+            f"Whitening stats in {stats_path} are for d_e={stats['mean'].shape[0]}, "
+            f"but the model uses d_e={cfg.model.d_e}."
+        )
+    whitener = FeatureWhitener(cfg.model.d_e)
+    whitener.configure(stats["mean"], stats["eigvals"], stats["eigvecs"], cfg.train.whiten_eps)
+    return whitener.to(device)
+
+
 def _build_mean_tracker(cfg: Config, device: torch.device) -> nn.Module:
     """Construct the per-position feature-mean tracker on the training device.
 
@@ -647,13 +735,16 @@ def run_stage0(cfg: Config) -> None:
     assert sum(p.numel() for p in encoder.parameters() if p.requires_grad) == 0, "E not frozen"
     optimizer = make_optimizer(bottleneck, coarse_flow, decoder, cfg)
     mean_tracker = _build_mean_tracker(cfg, device)
+    whitener = _build_whitener(cfg, device)
     batch = (
         torch.randn(2, cfg.model.t_ctx, 3, cfg.model.h, cfg.model.w, device=device),
         torch.randn(2, cfg.model.t_ctx, 3, cfg.model.h, cfg.model.w, device=device),
     )
     enc_before = next(encoder.parameters()).detach().clone()
     ema_before = next(target_bottleneck.parameters()).detach().clone()
-    metrics = train_step(batch, modules, optimizer, 0, cfg, device, mean_tracker=mean_tracker)
+    metrics = train_step(
+        batch, modules, optimizer, 0, cfg, device, mean_tracker=mean_tracker, whitener=whitener
+    )
     enc_after = next(encoder.parameters()).detach().clone()
     ema_after = next(target_bottleneck.parameters()).detach().clone()
     assert math.isfinite(metrics["loss"]), metrics
@@ -669,11 +760,15 @@ def run_diagnostics(
     cfg: Config,
     device: torch.device,
     mean_tracker: nn.Module | None = None,
+    whitener: nn.Module | None = None,
 ) -> dict[str, float]:
     """Run Phase 1 diagnostics on a fixed validation batch.
 
     The tracker is READ here (residual reconstruction targets) but never updated:
     the fixed validation batch must not leak into the per-position feature mean.
+    The whitener (when active) is applied inside the forward helpers, so every
+    readout — variance/rank/cosine on c_t, flow baselines, reconstruction — is
+    measured in the same whitened space the training step optimizes.
     """
     encoder, bottleneck, target_bottleneck, coarse_flow, decoder = modules
     residual_recon_active = cfg.train.recon_residual_target and (
@@ -685,10 +780,20 @@ def run_diagnostics(
             "cfg.train.recon_residual_target is True but no mean_tracker was passed to "
             "run_diagnostics; the readouts would silently score the wrong target."
         )
+    whiten_active = cfg.train.whiten_features
+    if whiten_active and whitener is None:
+        raise RuntimeError(
+            "cfg.train.whiten_features is True but no whitener was passed to "
+            "run_diagnostics; the readouts would silently score raw features against "
+            "a bottleneck trained in whitened space."
+        )
+    diag_whitener = whitener if whiten_active else None
     context_clip = batch[0].to(device, non_blocking=True)
     if cfg.train.present_recon_only:
         with torch.no_grad():
-            abstract, detailed = _present_forward(encoder, bottleneck, context_clip)
+            abstract, detailed = _present_forward(
+                encoder, bottleneck, context_clip, whitener=diag_whitener
+            )
         metrics: dict[str, float] = {}
         metrics.update(variance_stats(abstract))
         metrics.update(cross_video_cosine(abstract))
@@ -726,7 +831,12 @@ def run_diagnostics(
     target_clip = batch[1].to(device, non_blocking=True)
     with torch.no_grad():
         abstract, target_abstract, detailed, target_detailed = _coarse_forward(
-            encoder, bottleneck, target_bottleneck, context_clip, target_clip
+            encoder,
+            bottleneck,
+            target_bottleneck,
+            context_clip,
+            target_clip,
+            whitener=diag_whitener,
         )
         if cfg.train.predict_residual:
             target_present = target_bottleneck(detailed)
@@ -880,8 +990,11 @@ def run_training(cfg: Config, steps: int, resume: str | None = None) -> None:
     _, bottleneck, target_bottleneck, coarse_flow, decoder = modules
     optimizer = make_optimizer(bottleneck, coarse_flow, decoder, cfg)
     mean_tracker = _build_mean_tracker(cfg, device)
+    whitener = _build_whitener(cfg, device)
     start_step = (
-        load_checkpoint(resume, modules, optimizer, mean_tracker=mean_tracker) if resume else 0
+        load_checkpoint(resume, modules, optimizer, mean_tracker=mean_tracker, whitener=whitener)
+        if resume
+        else 0
     )
     # Peak LRs always come from config/CLI — not checkpoint param_group["lr"], which
     # stores the *scheduled* LR at save time and would double-apply cosine decay on resume.
@@ -917,12 +1030,26 @@ def run_training(cfg: Config, steps: int, resume: str | None = None) -> None:
                 break
             lr_mult = apply_lr_schedule(optimizer, base_lrs, step, cfg)
             metrics = train_step(
-                batch, modules, optimizer, step, cfg, device, mean_tracker=mean_tracker
+                batch,
+                modules,
+                optimizer,
+                step,
+                cfg,
+                device,
+                mean_tracker=mean_tracker,
+                whitener=whitener,
             )
             metrics["lr_mult"] = lr_mult
             if step % cfg.train.diag_every == 0:
                 metrics.update(
-                    run_diagnostics(val_batch, modules, cfg, device, mean_tracker=mean_tracker)
+                    run_diagnostics(
+                        val_batch,
+                        modules,
+                        cfg,
+                        device,
+                        mean_tracker=mean_tracker,
+                        whitener=whitener,
+                    )
                 )
             if step % cfg.train.log_every == 0:
                 print(f"step={step} {metrics}")
@@ -936,6 +1063,7 @@ def run_training(cfg: Config, steps: int, resume: str | None = None) -> None:
                     optimizer,
                     cfg,
                     mean_tracker=mean_tracker,
+                    whitener=whitener,
                 )
             step += 1
     save_checkpoint(
@@ -945,6 +1073,7 @@ def run_training(cfg: Config, steps: int, resume: str | None = None) -> None:
         optimizer,
         cfg,
         mean_tracker=mean_tracker,
+        whitener=whitener,
     )
 
 
@@ -1070,6 +1199,31 @@ def parse_args() -> argparse.Namespace:
         "future prediction, residual prediction, and lambda_recon_pred.",
     )
     parser.add_argument(
+        "--whiten-features",
+        action="store_true",
+        help="Whiten every frozen V-JEPA feature tensor with FIXED offline training-set "
+        "statistics before the bottleneck / reconstruction targets "
+        "(cfg.train.whiten_features, tmp/changes_bottleneck <2> / investigation_014). "
+        "Requires --whiten-stats-path (output of whiten_stats.py). B, B_EMA, F_c "
+        "targets, and D then all operate in whitened space; L_recon_* readouts score "
+        "whitened features and are NOT comparable to unwhitened runs.",
+    )
+    parser.add_argument(
+        "--whiten-stats-path",
+        type=str,
+        default=None,
+        help="Path to the whitening stats file written by whiten_stats.py "
+        "(cfg.train.whiten_stats_path). Required with --whiten-features.",
+    )
+    parser.add_argument(
+        "--whiten-eps",
+        type=float,
+        default=None,
+        help="Eigenvalue floor added before the inverse square root "
+        "(cfg.train.whiten_eps, default 1e-4). Larger = tail directions amplified "
+        "less; sweepable without recomputing the offline stats.",
+    )
+    parser.add_argument(
         "--predict-residual",
         action="store_true",
         help="investigation_009: predict the temporal residual Δ = c_{t+k} - c_t (EMA both "
@@ -1141,6 +1295,16 @@ def parse_args() -> argparse.Namespace:
         "Capacity-floor sweep axis (depth probe).",
     )
     parser.add_argument(
+        "--bottleneck-latent-blocks",
+        type=int,
+        default=None,
+        help="Perceiver-style latent-processor depth in the bottleneck "
+        "(cfg.model.bottleneck_latent_blocks, default 3; recommended range 2-4). "
+        "Each block is a zero-init residual read/compete/refine slot update, so any "
+        "depth preserves identity-at-init. Architecture knob: checkpoints are "
+        "shape-incompatible across values — do NOT --resume across it.",
+    )
+    parser.add_argument(
         "--n-c",
         type=int,
         default=None,
@@ -1187,6 +1351,15 @@ def finalize_training_config(cfg: Config) -> None:
                 "cfg.train.recon_mean_momentum must be in (0, 1); "
                 f"got {cfg.train.recon_mean_momentum}"
             )
+    if cfg.train.whiten_features:
+        if not cfg.train.whiten_stats_path:
+            raise ValueError(
+                "--whiten-features requires --whiten-stats-path (the offline stats "
+                "file written by whiten_stats.py); per-batch whitening is deliberately "
+                "not supported."
+            )
+        if cfg.train.whiten_eps <= 0.0:
+            raise ValueError(f"cfg.train.whiten_eps must be > 0; got {cfg.train.whiten_eps}")
 
 
 def main() -> None:
@@ -1226,6 +1399,12 @@ def main() -> None:
         cfg.train.present_recon_only = True
     if args.predict_residual:
         cfg.train.predict_residual = True
+    if args.whiten_features:
+        cfg.train.whiten_features = True
+    if args.whiten_stats_path is not None:
+        cfg.train.whiten_stats_path = args.whiten_stats_path
+    if args.whiten_eps is not None:
+        cfg.train.whiten_eps = args.whiten_eps
     if args.recon_warmup_steps is not None:
         cfg.train.recon_warmup_steps = args.recon_warmup_steps
     if args.lr_bottleneck is not None:
@@ -1245,6 +1424,8 @@ def main() -> None:
         cfg.model.decoder_dim = args.decoder_dim
     if args.decoder_blocks is not None:
         cfg.model.decoder_blocks = args.decoder_blocks
+    if args.bottleneck_latent_blocks is not None:
+        cfg.model.bottleneck_latent_blocks = args.bottleneck_latent_blocks
     if args.n_c is not None:
         cfg.model.n_c = args.n_c
     if args.checkpoint_dir is not None:

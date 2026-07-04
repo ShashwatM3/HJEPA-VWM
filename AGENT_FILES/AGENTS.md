@@ -183,6 +183,7 @@ Root implementation files:
 | `run_history.py` | W&B Public API export/report helper for logged metrics. |
 | `drift_probe.py` | Offline within-video temporal drift probe: frozen-encoder drift vs bottleneck-latent drift over a pinned probe set, evaluated from checkpoints. |
 | `rank_probe.py` | Offline frozen-encoder effective-rank probe: applies the `c_effective_rank` covariance-rank formula to cached V-JEPA `e` tokens over the drift-probe manifest. |
+| `whiten_stats.py` | Offline whitening statistics for frozen V-JEPA features: single-pass fp64 mean/covariance over training-set encoder tokens, saved as the eigendecomposition consumed by `train.py --whiten-features`. |
 | `requirements.txt` | Runtime and dev dependencies. |
 | `pyproject.toml` | Black and Ruff configuration. |
 | `tests/` | Unit tests for contracts, losses, optimizer grouping, AGC, decoder, modes. |
@@ -319,21 +320,32 @@ Pipeline:
 1. `in_proj`: linear `D_e=1024 -> bottleneck_mixer_dim=256`.
 2. Reshape temporal-major tokens into `(B * 4, 256, 16, 16)`.
 3. Apply two shared `ConvNeXtBlock`s per temporal slot.
-4. Flatten back to `(B, 1024, 256)`.
-5. `to_kv`: linear `256 -> D_c=256`.
-6. Cross-attention from `N_c=32` learned query slots to all 1024 memory tokens.
-7. Residual output MLP and final LayerNorm.
+4. Flatten back to `(B, 1024, 256)` and add the learned `pos_emb` memory tags.
+5. `to_kv`: linear `256 -> D_c=256` produces the memory tokens.
+6. A Perceiver-style latent processor of `bottleneck_latent_blocks=3`
+   `BottleneckLatentBlock`s refines the `N_c=32` learned query slots. Each
+   block runs three zero-init residual updates on the slot stream:
+   sharpened-cosine cross-attention read from the 1024 memory tokens
+   (`SharpCrossAttention`, zero-init `o_proj`), slot self-attention for slot
+   competition (zero-init `out_proj`), and a per-slot MLP (zero-init last
+   layer).
+7. Final LayerNorm.
 
 Important current initialization:
 
 - Query slots are initialized with `nn.init.orthogonal_`.
-- The last layer of `out_mlp` is zero-initialized and tagged
-  `is_zero_init = True`.
+- Every latent-block residual output (`cross_attn.o_proj`,
+  `self_attn.out_proj`, `mlp[-1]`) is zero-initialized and tagged
+  `is_zero_init = True`, so at step 0 the module returns
+  `LayerNorm(queries)` for EVERY input (identity-at-init), and all
+  input-dependence grows in through training. Tests enforce this at several
+  depths.
 - Zero-init and learned geometry parameters are excluded from AGC and weight
   decay by predicates in `diagnostics.py`.
 
-`Bottleneck(..., return_attn=True)` returns per-head attention weights for
-diagnostics: `(B, heads, N_c, N_ctx)`.
+`Bottleneck(..., return_attn=True)` returns per-head attention weights of the
+FINAL latent block's cross-attention read for diagnostics:
+`(B, heads, N_c, N_ctx)`.
 
 ### TargetBottleneck
 
@@ -425,6 +437,29 @@ a buffer and that zero latent cannot emit position-specific content.
 - It travels outside the five-module bundle as an optional keyword argument and
   is checkpointed under the optional `recon_feature_mean` key; old checkpoints
   load fine and the mean re-warms.
+
+### FeatureWhitener
+
+`FeatureWhitener` supports fixed offline whitening of the frozen V-JEPA
+features (`cfg.train.whiten_features`, motivated by investigation_014's finding
+that `e` has pooled entropy rank ~193/1024 with a long low-energy tail):
+
+- Buffers only (`mean`, `whiten_mat`, `unwhiten_mat` fp32, `initialized` flag),
+  zero parameters — it can never enter the optimizer, AGC, weight decay, or EMA.
+- Statistics come from ONE offline pass over the training set
+  (`whiten_stats.py`); `configure` builds the ZCA pair
+  `W = U (Lambda + eps I)^{-1/2} U^T` and its inverse. Never per-batch
+  whitening.
+- `whiten`/`unwhiten` run the 1024x1024 matmul in fp32 with autocast disabled
+  (the SIGReg WALK_FIXES F2 precision rule) and return the input dtype.
+- It is applied at ONE seam — inside `train._coarse_forward` /
+  `train._present_forward`, right after each frozen-encoder call — so `B`,
+  `B_EMA`, the flow targets, the reconstruction targets, the mean tracker, and
+  every diagnostic all live in the same whitened space.
+- It travels outside the five-module bundle as an optional keyword argument and
+  is checkpointed under the optional `feature_whitener` key so checkpoints are
+  self-describing; `drift_probe.py` rebuilds it from the checkpoint and refuses
+  to evaluate a whitened-space checkpoint on raw features.
 
 ## 7. Flow math and implemented loss functions
 
@@ -565,9 +600,11 @@ Normal prediction mode:
 2. `optimizer.zero_grad(set_to_none=True)`.
 3. Enter CUDA bf16 autocast when available and configured.
 4. `_coarse_forward`:
-   - with no grad: `detailed = encoder(context_clip)`.
+   - with no grad: `detailed = encoder(context_clip)`; when whitening is
+     active, `detailed = whitener.whiten(detailed)`.
    - trainable: `abstract = bottleneck(detailed)`.
-   - with no grad: `target_detailed = encoder(target_clip)`.
+   - with no grad: `target_detailed = encoder(target_clip)`, whitened the same
+     way.
    - target branch: `target_abstract = target_bottleneck(target_detailed)`.
 5. Build flow target:
    - full-latent: `flow_target = target_abstract`, `eps_c = randn_like`.
@@ -676,7 +713,9 @@ target does not move.
 Checkpoints:
 
 - `save_checkpoint` writes `global_step`, `bottleneck`, `target_bottleneck`,
-  `coarse_flow`, `decoder`, `optimizer`, and serialized config.
+  `coarse_flow`, `decoder`, `optimizer`, and serialized config, plus the
+  optional `recon_feature_mean` (mean tracker) and `feature_whitener`
+  (whitening buffers) keys when those modules are active.
 - The frozen encoder is never checkpointed; reload it from Hugging Face.
 - `load_checkpoint` supports older checkpoints without decoder state.
 - It rejects checkpoints from the old learned-query decoder architecture.
@@ -740,7 +779,10 @@ Offline probes (not part of the training loop):
   checkpoint's bottleneck, plus Spearman faithfulness between the two. It
   compares windows of the SAME video only — never two different videos. It is
   an analysis helper like `run_history.py`; training code never imports it and
-  it logs nothing to W&B. See README "Within-video drift probe" for usage.
+  it logs nothing to W&B. Checkpoints trained with `whiten_features` carry
+  their whitener; the probe applies it to the cached raw features before the
+  bottleneck (the cache itself always stores raw V-JEPA features). See README
+  "Within-video drift probe" for usage.
 - `rank_probe.py` measures the entropy effective rank of frozen V-JEPA `e`
   features over the same pinned manifest/cache namespace as `drift_probe.py`.
   Its pooled-token metric is the direct `e`-side analog of
@@ -773,6 +815,7 @@ Model defaults:
 | `n_ctx`, `n_tgt` | properties, both `1024` |
 | `n_c`, `d_c`, `d_e` | `32`, `256`, `1024` |
 | bottleneck blocks / heads | `2` ConvNeXt blocks, `8` cross-attn heads |
+| `bottleneck_latent_blocks` | `3` Perceiver-style latent blocks |
 | `f_c_blocks`, `f_c_dim`, `f_c_heads` | `6`, `256`, `8` |
 | `condition_dropout` | `0.10` |
 | reconstruction decoder dim / blocks / heads | `256`, `2`, `8` |
@@ -796,6 +839,7 @@ Training defaults:
 | `recon_loss_mode`, `recon_warmup_steps` | `cosine`, `2000` |
 | `recon_residual_target`, `recon_mean_momentum` | `False`, `0.99` |
 | `present_recon_only`, `predict_residual` | `False`, `False` |
+| `whiten_features`, `whiten_stats_path`, `whiten_eps` | `False`, `""`, `1e-4` |
 | `horizon_k`, `frame_stride` | `4`, `2` |
 | `precision` | `bf16` |
 | `log_every`, `diag_every`, `checkpoint_every` | `50`, `500`, `2500` |
@@ -978,7 +1022,8 @@ optimizer grouping, reconstruction, decoder, SIGReg, or present-only mode.
 - If a new loss is added, document exactly which modules it trains and add a
   test for the gradient contract.
 
-`parse_logs.py`, `run_history.py`, `drift_probe.py`, and `rank_probe.py`:
+`parse_logs.py`, `run_history.py`, `drift_probe.py`, `rank_probe.py`, and
+`whiten_stats.py`:
 
 - Analysis helpers, not training dependencies.
 - Do not couple core training to these scripts.
@@ -989,6 +1034,10 @@ optimizer grouping, reconstruction, decoder, SIGReg, or present-only mode.
   bottleneck is rebuilt from the config serialized inside the checkpoint;
   window sampling and transforms reuse `data.py` validation helpers. Pure
   helpers are unit-tested in `tests/test_drift_probe.py`.
+- `whiten_stats.py` specifics: single-pass fp64 mean/covariance over training
+  split encoder tokens; saves raw eigenvalues so `cfg.train.whiten_eps` can be
+  swept at load time without recomputing. Training never imports the script —
+  `train._build_whitener` only reads its `.pt` artifact.
 - `rank_probe.py` specifics: it shares the drift-probe manifest/cache naming by
   default, encodes only anchor windows, and builds manifests compatible with the
   default drift offset ladder so a rank-only first run does not poison later

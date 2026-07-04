@@ -30,6 +30,8 @@ Phase 1 currently covers coarse dynamics only: frozen V-JEPA 2 encoder, trainabl
 | [investigation_010](investigation_010/) | CLOSED | 036, 037 | Run 037 proved a key negative: c_t can be high-rank, video-specific, and stable while F_c still fails the copy gate. That is the canonical healthy-representation/no-predictor result. |
 | [investigation_011](investigation_011/) | CLOSED | 038, 039, 040, 041, 042, 043, 044, 045, 046, 047, 048, 049, 050, 051 | Present reconstruction can be strong, and SIGReg plus small covariance can raise c_effective_rank above 100 while preserving video specificity. But those are present-side wins; no full-prediction run has inherited them and passed the Phase 1 copy/batch-mean gates. |
 | [investigation_012](investigation_012/) | RUNNING | 052 | Live W&B through step 5600 shows strong reconstruction progress but not healthy representation geometry: c_std_mean is still far below 1, cross-video cosine remains high, and rank has fallen into the low 20s. The run is still active, so the final verdict remains provisional. |
+| [investigation_014](investigation_014/) | OPEN | none | Offline rank probe shows frozen V-JEPA `e` is already anisotropic: pooled-token entropy rank is 192.7/1024, with within-video rank around 75.7 and a long low-energy tail. This reframes `e -> c` as selective compression/denoising rather than simple full-rank preservation. |
+| [investigation_015](investigation_015/) | OPEN | 054 (planned) | Run-053 AE-only recipe on the Perceiver latent-stack bottleneck with fixed offline feature whitening (the inv014-motivated hypothesis). Single combined run; per-change attribution framework in the investigation README. Launch guide includes the one-time `whiten_stats.py` prerequisite. |
 
 ## Complete W&B Run Index
 

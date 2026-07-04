@@ -41,10 +41,13 @@ def test_make_optimizer_keeps_geometry_and_zero_init_out_of_weight_decay():
         for param in group["params"]:
             weight_decay_by_id[id(param)] = group["weight_decay"]
 
+    first_block = bottleneck.latent_blocks[0]
     assert len(optimizer.param_groups) == 6
     assert id(bottleneck.in_proj.weight) in weight_decay_by_id
     assert weight_decay_by_id[id(bottleneck.in_proj.weight)] == cfg.train.weight_decay
-    assert weight_decay_by_id[id(bottleneck.cross_attn.q_proj.weight)] == cfg.train.weight_decay
+    assert weight_decay_by_id[id(first_block.cross_attn.q_proj.weight)] == cfg.train.weight_decay
+    assert weight_decay_by_id[id(first_block.self_attn.in_proj_weight)] == cfg.train.weight_decay
+    assert weight_decay_by_id[id(first_block.mlp[1].weight)] == cfg.train.weight_decay
     assert weight_decay_by_id[id(coarse_flow.time_mlp[0].weight)] == cfg.train.weight_decay
     assert weight_decay_by_id[id(decoder.kv_proj.weight)] == cfg.train.weight_decay
 
@@ -53,11 +56,14 @@ def test_make_optimizer_keeps_geometry_and_zero_init_out_of_weight_decay():
         bottleneck.pos_emb,
         bottleneck.in_proj.bias,
         bottleneck.norm.weight,
-        bottleneck.cross_attn.logit_scale,
-        bottleneck.cross_attn.o_proj.weight,
-        bottleneck.cross_attn.o_proj.bias,
-        bottleneck.out_mlp[-1].weight,
-        bottleneck.out_mlp[-1].bias,
+        first_block.cross_attn.logit_scale,
+        first_block.cross_attn.o_proj.weight,
+        first_block.cross_attn.o_proj.bias,
+        first_block.self_attn.out_proj.weight,
+        first_block.self_attn.out_proj.bias,
+        first_block.mlp[-1].weight,
+        first_block.mlp[-1].bias,
+        bottleneck.latent_blocks[-1].mlp[-1].weight,
         coarse_flow.null_condition,
         coarse_flow.slot_pos,
         coarse_flow.z_type,

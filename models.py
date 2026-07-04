@@ -183,22 +183,95 @@ class SharpCrossAttention(nn.Module):
         return self.o_proj(out), (attn if need_weights else None)
 
 
+class BottleneckLatentBlock(nn.Module):
+    """One Perceiver-style latent refinement block for the bottleneck slot stream.
+
+    Implements the recommended latent-processor step (tmp/changes_bottleneck <1>):
+
+    ```text
+    s = s + CrossAttn(s, memory)   # read new evidence from the 1024 memory tokens
+    s = s + SelfAttn(s)            # slot competition / de-duplication
+    s = s + MLP(s)                 # per-slot refinement
+    ```
+
+    Every residual branch starts as an exact no-op — the sharp cross-attention
+    zero-inits its `o_proj`, and this block zero-inits the self-attention output
+    projection and the MLP's last layer (all tagged `is_zero_init` so AGC and
+    weight decay hold them out, matching the adaLN-Zero convention). Stacking any
+    number of blocks therefore preserves the bottleneck's identity-at-init
+    contract: `c == LayerNorm(queries)` for every input at step 0.
+
+    Args:
+        slots: (B, N_c, D) current slot stream.
+        memory: (B, N_kv, D) mixed/position-tagged detailed tokens.
+    Returns:
+        Tuple `(slots, attn)` — updated slots (B, N_c, D) and the per-head
+        cross-attention weights (B, num_heads, N_c, N_kv) or `None`.
+    """
+
+    def __init__(self, dim: int, num_heads: int, mlp_ratio: int = 4):
+        """Initialize the cross-attention read, slot self-attention, and MLP."""
+        _require_torch()
+        super().__init__()
+        self.norm_cross = nn.LayerNorm(dim)
+        self.cross_attn = SharpCrossAttention(dim, num_heads)  # o_proj zero-init inside
+        self.norm_self = nn.LayerNorm(dim)
+        self.self_attn = nn.MultiheadAttention(dim, num_heads, batch_first=True)
+        # Identity start for the slot-competition branch (mirrors SharpCrossAttention's
+        # zero o_proj): only out_proj is zeroed/tagged — the in-projections stay live so
+        # gradient can open the branch, and they remain ordinary decayed/AGC'd weights.
+        nn.init.zeros_(self.self_attn.out_proj.weight)
+        nn.init.zeros_(self.self_attn.out_proj.bias)
+        self.self_attn.out_proj.is_zero_init = True
+        self.mlp = nn.Sequential(
+            nn.LayerNorm(dim),
+            nn.Linear(dim, dim * mlp_ratio),
+            nn.GELU(),
+            nn.Linear(dim * mlp_ratio, dim),
+        )
+        # Identity start for the refinement MLP (Plan Phase 04 Fix 2 convention).
+        nn.init.zeros_(self.mlp[-1].weight)
+        nn.init.zeros_(self.mlp[-1].bias)
+        self.mlp[-1].is_zero_init = True
+
+    def forward(self, slots: Tensor, memory: Tensor, *, need_weights: bool = False):
+        """Run one read/compete/refine slot update.
+
+        Args:
+            slots: (B, N_c, D) slot stream entering the block.
+            memory: (B, N_kv, D) detailed memory tokens (keys/values).
+            need_weights: Return this block's per-head cross-attention map.
+        Returns:
+            `(slots, attn)` with attn (B, num_heads, N_c, N_kv) when requested.
+        """
+        attended, attn = self.cross_attn(self.norm_cross(slots), memory, need_weights=need_weights)
+        slots = slots + attended
+        h = self.norm_self(slots)
+        competed, _ = self.self_attn(h, h, h, need_weights=False)
+        slots = slots + competed
+        slots = slots + self.mlp(slots)
+        return slots, attn
+
+
 class Bottleneck(nn.Module):
     """Compress detailed tokens into the low-bandwidth abstract latent `c_t`.
 
     Projects the frozen `e_t` from `D_e` to the mixer width, mixes each of the 4
     temporal-slot 16x16 grids with shared ConvNeXt blocks, adds learned memory
-    position tags, then uses sharpened cosine cross-attention from 32 orthogonal
-    slot identities into the mixed tokens. The attention/refinement branches are
-    residual updates to those slot identities, so slot identity survives into
-    `c_t`. The same module (and its EMA copy) is applied identically to `e_t`
-    (-> `c_t`) and `e_plus` (-> `c_plus`); both clips share the encoder's
-    `N_ctx=1024` temporal-major geometry, so there is no separate target path and
-    no kept-mask in v0.2.
+    position tags, then runs a small Perceiver-style latent processor: 32
+    orthogonal slot identities are repeatedly updated by sharpened cosine
+    cross-attention reads from the 1024 memory tokens, slot self-attention
+    (competition), and a per-slot MLP (`bottleneck_latent_blocks` rounds,
+    tmp/changes_bottleneck <1>). All updates are zero-init residuals on the slot
+    identities, so slot identity survives into `c_t` and the module starts as
+    exactly `LayerNorm(queries)` for every input. The same module (and its EMA
+    copy) is applied identically to `e_t` (-> `c_t`) and `e_plus` (-> `c_plus`);
+    both clips share the encoder's `N_ctx=1024` temporal-major geometry, so there
+    is no separate target path and no kept-mask in v0.2.
     """
 
     def __init__(self, cfg: ModelConfig):
-        """Initialize input projection, ConvNeXt mixing, queries, and cross-attention."""
+        """Initialize input projection, ConvNeXt mixing, queries, and latent blocks."""
         _require_torch()
         super().__init__()
         self.cfg = cfg
@@ -217,24 +290,19 @@ class Bottleneck(nn.Module):
         q = torch.empty(cfg.n_c, cfg.d_c)
         nn.init.orthogonal_(q)
         self.queries = nn.Parameter(q)
-        self.q_norm = nn.LayerNorm(mix)
-        self.cross_attn = SharpCrossAttention(cfg.d_c, cfg.bottleneck_cross_attn_heads)
-        self.out_mlp = nn.Sequential(
-            nn.LayerNorm(cfg.d_c),
-            nn.Linear(cfg.d_c, cfg.d_c * 4),
-            nn.GELU(),
-            nn.Linear(cfg.d_c * 4, cfg.d_c),
+        if cfg.bottleneck_latent_blocks < 1:
+            raise ValueError(
+                f"bottleneck_latent_blocks must be >= 1; got {cfg.bottleneck_latent_blocks}"
+            )
+        # The latent-block pre-norms operate on the D_c slot stream (this also fixes
+        # the old `q_norm = nn.LayerNorm(mix)` bug, which only worked because
+        # mix == d_c == 256 — tmp/changes_bottleneck <1> small code issue).
+        self.latent_blocks = nn.ModuleList(
+            [
+                BottleneckLatentBlock(cfg.d_c, cfg.bottleneck_cross_attn_heads)
+                for _ in range(cfg.bottleneck_latent_blocks)
+            ]
         )
-        # Fix 2 (Plan Phase 04): adaLN-Zero-style identity start for the residual
-        # MLP — the block begins as a pass-through so early training isn't
-        # destabilized by random residual contributions.
-        nn.init.zeros_(self.out_mlp[-1].weight)
-        nn.init.zeros_(self.out_mlp[-1].bias)
-        # Issue 1/9: flag this zero-init residual-output projection so it is held out
-        # of AGC and weight decay (diagnostics.is_geometry_or_gate_param). While ||w||≈0
-        # its AGC bound collapses to ~clip_factor·eps, which would throttle the gradients
-        # that must open the residual branch; decaying it just re-pins identity.
-        self.out_mlp[-1].is_zero_init = True
         self.norm = nn.LayerNorm(cfg.d_c)
 
     def forward(self, detailed: Tensor, *, return_attn: bool = False):
@@ -244,9 +312,10 @@ class Bottleneck(nn.Module):
             detailed: (B, N_ctx=1024, D_e=1024) frozen-encoder tokens (context or
                 future clip — identical geometry).
             return_attn: When True, also return the PER-HEAD cross-attention
-                weights (B, num_heads, N_c, N_ctx) for diagnostics. Per-head
-                (not head-averaged) matters: 8 sharp-but-different heads average
-                out to look uniform, so head-averaged entropy masks real
+                weights (B, num_heads, N_c, N_ctx) of the FINAL latent block's
+                read (the most refined attention pattern) for diagnostics.
+                Per-head (not head-averaged) matters: 8 sharp-but-different heads
+                average out to look uniform, so head-averaged entropy masks real
                 selectivity. The training path leaves this False so the fast
                 (no-weights) attention kernel is used.
         Returns:
@@ -266,9 +335,12 @@ class Bottleneck(nn.Module):
         mixed = mixed + self.pos_emb
         memory = self.to_kv(mixed)
         slots = self.queries[None].expand(b, -1, -1)
-        attended, attn = self.cross_attn(self.q_norm(slots), memory, need_weights=return_attn)
-        slots = slots + attended
-        slots = slots + self.out_mlp(slots)
+        attn = None
+        last = len(self.latent_blocks) - 1
+        for i, block in enumerate(self.latent_blocks):
+            slots, block_attn = block(slots, memory, need_weights=(return_attn and i == last))
+            if block_attn is not None:
+                attn = block_attn
         abstract = self.norm(slots)
         if return_attn:
             return abstract, attn
@@ -706,6 +778,108 @@ class FeatureMeanTracker(nn.Module):
         return features - self.mean.to(device=features.device, dtype=features.dtype)
 
 
+class FeatureWhitener(nn.Module):
+    """Fixed offline ZCA whitening of the frozen V-JEPA features (no parameters).
+
+    Implements tmp/changes_bottleneck <2>, motivated by investigation_014: the
+    frozen `e` token cloud is strongly anisotropic (pooled entropy rank ~193/1024
+    with a long low-energy tail), so `e -> c` compression otherwise weighs
+    dominant-direction energy and tail noise with the same metric. Whitening with
+    FIXED training-set statistics equalizes the retained directions:
+
+    ```text
+    e_w  = (e - mu) @ W        W     = U (Lambda + eps I)^{-1/2} U^T
+    e    = e_w @ W_inv + mu    W_inv = U (Lambda + eps I)^{1/2}  U^T
+    ```
+
+    Contracts:
+
+    - Buffers only, NO trainable parameters — it can never enter the optimizer,
+      AGC, weight decay, or the EMA schedule.
+    - Statistics are computed ONCE offline over the training set
+      (`whiten_stats.py`) and reused unchanged for train/val/inference. Never
+      per-batch whitening.
+    - `whiten`/`unwhiten` compute in fp32 regardless of autocast (the 1024x1024
+      matmul is precision-sensitive in bf16) and return the input dtype.
+    - The eigenvalue floor `eps` is applied at `configure` time, so it can be
+      swept from config without recomputing the offline stats.
+    - Applied to frozen no-grad encoder outputs only; no new gradient path exists.
+
+    Args:
+        d_e: Frozen encoder feature dimension (1024 for ViT-L).
+    """
+
+    def __init__(self, d_e: int):
+        """Register fp32 mean/whiten/unwhiten buffers and the initialized flag."""
+        _require_torch()
+        super().__init__()
+        self.register_buffer("mean", torch.zeros(d_e, dtype=torch.float32))
+        self.register_buffer("whiten_mat", torch.eye(d_e, dtype=torch.float32))
+        self.register_buffer("unwhiten_mat", torch.eye(d_e, dtype=torch.float32))
+        self.register_buffer("initialized", torch.zeros((), dtype=torch.bool))
+
+    @torch.no_grad()
+    def configure(self, mean: Tensor, eigvals: Tensor, eigvecs: Tensor, eps: float) -> None:
+        """Build the whitening pair from offline covariance eigen-statistics.
+
+        Args:
+            mean: (D_e,) training-set feature mean `mu`.
+            eigvals: (D_e,) covariance eigenvalues `Lambda` (ascending or any order).
+            eigvecs: (D_e, D_e) matching orthonormal eigenvectors `U` (columns).
+            eps: Eigenvalue floor added before the +/-1/2 powers.
+        """
+        if eps <= 0.0:
+            raise ValueError(f"whiten eps must be > 0; got {eps}")
+        d = self.mean.shape[0]
+        if mean.shape != (d,) or eigvals.shape != (d,) or eigvecs.shape != (d, d):
+            raise ValueError(
+                f"Whitening stats shapes {tuple(mean.shape)}/{tuple(eigvals.shape)}/"
+                f"{tuple(eigvecs.shape)} do not match d_e={d}."
+            )
+        lam = eigvals.double().clamp_min(0.0) + eps
+        u = eigvecs.double()
+        self.mean.copy_(mean.float())
+        self.whiten_mat.copy_((u @ torch.diag(lam.pow(-0.5)) @ u.t()).float())
+        self.unwhiten_mat.copy_((u @ torch.diag(lam.pow(0.5)) @ u.t()).float())
+        self.initialized.fill_(True)
+
+    def _require_initialized(self) -> None:
+        """Fail fast if the whitener is used before stats are loaded."""
+        if not bool(self.initialized):
+            raise RuntimeError(
+                "FeatureWhitener used before configure(); load offline stats "
+                "(whiten_stats.py output) via train._build_whitener or a checkpoint."
+            )
+
+    def whiten(self, features: Tensor) -> Tensor:
+        """Map raw frozen features into whitened space, `(e - mu) @ W`.
+
+        Args:
+            features: (..., D_e) frozen detailed features (no-grad).
+        Returns:
+            whitened: (..., D_e) whitened features in the input dtype.
+        """
+        self._require_initialized()
+        # Autocast would downcast even an fp32 @ fp32 matmul to bf16 (the SIGReg
+        # WALK_FIXES F2 trap); the 1024x1024 whitening product must stay fp32.
+        with torch.autocast(device_type=features.device.type, enabled=False):
+            out = (features.float() - self.mean) @ self.whiten_mat
+        return out.to(dtype=features.dtype)
+
+    def unwhiten(self, features: Tensor) -> Tensor:
+        """Map whitened-space features back to raw V-JEPA space, `e_w @ W^-1 + mu`.
+
+        Args:
+            features: (..., D_e) whitened-space features (e.g. a decoded e_hat_w).
+        Returns:
+            raw: (..., D_e) features in the original V-JEPA space, input dtype.
+        """
+        self._require_initialized()
+        with torch.autocast(device_type=features.device.type, enabled=False):
+            out = features.float() @ self.unwhiten_mat + self.mean
+        return out.to(dtype=features.dtype)
+
+
 def build_phase1_modules(
     cfg: Config, *, load_encoder: bool = True
 ) -> tuple[nn.Module | None, Bottleneck, TargetBottleneck, CoarseFlow, Decoder]:
@@ -854,13 +1028,27 @@ def smoke_test_models() -> None:
     assert any(p.grad is not None for p in bottleneck.parameters())
     assert all(p.grad is None for p in coarse_flow.parameters())
     assert all(p.grad is None for p in target_bottleneck.parameters())
+    # Fixed offline whitening (tmp/changes_bottleneck <2>): parameter-free, exact
+    # whiten/unwhiten round-trip, and the whitened features feed the bottleneck with
+    # unchanged shapes. Whitening applies to no-grad encoder outputs only, so it can
+    # never add a gradient path.
+    whitener = FeatureWhitener(cfg.model.d_e)
+    assert sum(1 for _ in whitener.parameters()) == 0
+    stats_rows = torch.randn(4096, cfg.model.d_e)
+    eigvals_w, eigvecs_w = torch.linalg.eigh(torch.cov(stats_rows.t()))
+    whitener.configure(stats_rows.mean(dim=0), eigvals_w, eigvecs_w, eps=1e-4)
+    whitened = whitener.whiten(detailed)
+    assert whitened.shape == detailed.shape
+    assert torch.allclose(whitener.unwhiten(whitened), detailed, atol=1e-3)
+    assert bottleneck(whitened).shape == (2, cfg.model.n_c, cfg.model.d_c)
     from diagnostics import attention_entropy, slot_diversity_rank
 
     attn = attention_entropy(bottleneck, detailed)
     slot = slot_diversity_rank(abstract)
     print(
         f"Phase 1 model smoke test passed (synthetic e_t) | "
-        f"queries=orthogonal out_mlp=zero-init | {attn} {slot}"
+        f"queries=orthogonal latent_blocks={cfg.model.bottleneck_latent_blocks} "
+        f"(zero-init residuals) | {attn} {slot}"
     )
 
 

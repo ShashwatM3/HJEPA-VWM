@@ -24,6 +24,7 @@ HJEPA-VWM/
 ├── run_history.py         # W&B Public API export + reports
 ├── drift_probe.py         # Offline within-video drift probe (V-JEPA vs latent)
 ├── rank_probe.py          # Offline effective-rank probe for frozen V-JEPA embeddings
+├── whiten_stats.py        # Offline whitening stats for frozen V-JEPA features
 ├── tests/                 # Contract and gradient-routing tests
 ├── requirements.txt
 ├── pyproject.toml         # Black + Ruff
@@ -46,7 +47,7 @@ These flat files are the entire Phase 1 implementation. There is no `src/` packa
 |---|---|---|
 | `config.py` | `ModelConfig`, `TrainConfig`, `Config`; path defaults; locked dimensions | CLI parsing (that is `train.py`) |
 | `data.py` | `SSV2Dataset`, clip windows, encoder normalization | Model forward passes |
-| `models.py` | `FrozenEncoder`, `Bottleneck`, `TargetBottleneck`, `CoarseFlow`, `Decoder`, `FeatureMeanTracker` | Loss math, optimizer |
+| `models.py` | `FrozenEncoder`, `Bottleneck` (+ `BottleneckLatentBlock`), `TargetBottleneck`, `CoarseFlow`, `Decoder`, `FeatureMeanTracker`, `FeatureWhitener` | Loss math, optimizer |
 | `losses.py` | `flow_matching_loss`, `variance_floor`, `reconstruction_loss`, `as_target`, … | Any `nn.Parameter` |
 | `diagnostics.py` | `variance_stats`, `coarse_baselines`, `reconstruction_readouts`, AGC/decay grouping | Training loop |
 | `train.py` | `train_step`, `run_diagnostics`, EMA, checkpoints, `argparse`, `wandb.init` | New module architectures |
@@ -96,7 +97,7 @@ Important CLI groups (full list in `train.py` `parse_args()`):
 - **Data:** `--data`, `--horizon-k`, `--seed`
 - **Schedule:** `--steps`, `--resume`, `--log-every`, `--diag-every`, `--checkpoint-dir`
 - **Losses:** `--lambda-var`, `--lambda-recon`, `--lambda-recon-pred`, `--lambda-sigreg`, …
-- **Modes:** `--present-recon-only`, `--predict-residual`, `--recon-residual-target`, `--recon-loss-mode`
+- **Modes:** `--present-recon-only`, `--predict-residual`, `--recon-residual-target`, `--recon-loss-mode`, `--whiten-features` (+ `--whiten-stats-path`, `--whiten-eps`)
 - **Optimizer:** `--lr-bottleneck`, `--lr-coarse-flow`, `--no-agc`, `--grad-skip-threshold`
 
 Checkpoints write to `checkpoint_dir` (default `/workspace/checkpoints`). The frozen encoder is
@@ -115,6 +116,7 @@ KANBAN evidence.
 | `run_history.py` | Pulls full metric history from W&B Public API; `--report` for Phase 1 summaries |
 | `drift_probe.py` | Within-video temporal drift: frozen V-JEPA embedding drift vs bottleneck latent drift (loaded from checkpoints) on a pinned probe set; writes JSON + PNGs, no W&B logging |
 | `rank_probe.py` | Frozen-encoder effective rank: applies the `c_effective_rank` covariance-rank formula to cached V-JEPA `e` tokens over the drift-probe manifest; writes JSON + optional PNG, no W&B logging |
+| `whiten_stats.py` | Offline whitening statistics (mean + covariance eigendecomposition) of frozen V-JEPA training-set features; `train.py --whiten-features` consumes its `.pt` output (never imports the script), no W&B logging |
 
 W&B project: **`smahalanobis-uc-davis/hjepa-vwm`**.
 
@@ -151,9 +153,10 @@ Prefer the **W&B MCP server** in Cursor for interactive metric pulls (see
 | `tests/test_residual_recon_target.py` | `FeatureMeanTracker` + shuffled-c readouts |
 | `tests/test_present_recon_only.py` | Present-only mode gradient routing |
 | `tests/test_sigreg.py` | SIGReg loss and logging RNG isolation |
-| `tests/test_bottleneck_attention.py` | Bottleneck cross-attention diagnostics |
+| `tests/test_bottleneck_attention.py` | Bottleneck latent-stack identity-at-init + sharp-attention diagnostics |
 | `tests/test_drift_probe.py` | Drift-probe pure helpers: offsets, windows, drift matrices, Spearman, checkpoint-config rebuild |
 | `tests/test_rank_probe.py` | Rank-probe pure helpers: covariance spectrum, entropy-rank formula, energy ranks, report validation |
+| `tests/test_whitening.py` | `FeatureWhitener` round-trip/stats contracts and train-step/checkpoint whitening wiring |
 
 Quick local checks (no encoder download):
 

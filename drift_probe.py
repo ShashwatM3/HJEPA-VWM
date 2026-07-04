@@ -137,7 +137,9 @@ def default_graph2_offsets(offsets: list[int], t_ctx: int, frame_stride: int) ->
     return non_overlapping if non_overlapping else list(offsets)
 
 
-def window_frame_indices(end_frame: int, t_ctx: int, frame_stride: int, num_frames: int) -> list[int]:
+def window_frame_indices(
+    end_frame: int, t_ctx: int, frame_stride: int, num_frames: int
+) -> list[int]:
     """Frame indices for one window ending at `end_frame` (training contract).
 
     Mirrors `data.SSV2Dataset._window_indices`: `t_ctx` frames at `frame_stride`
@@ -153,9 +155,7 @@ def window_frame_indices(end_frame: int, t_ctx: int, frame_stride: int, num_fram
         List of `t_ctx` frame indices, non-decreasing.
     """
     last = num_frames - 1
-    return [
-        max(0, min(last, end_frame - (t_ctx - 1 - i) * frame_stride)) for i in range(t_ctx)
-    ]
+    return [max(0, min(last, end_frame - (t_ctx - 1 - i) * frame_stride)) for i in range(t_ctx)]
 
 
 def select_probe_order(paths: list[str], seed: int) -> list[str]:
@@ -339,9 +339,7 @@ def spearman_correlation(a: Tensor, b: Tensor) -> float:
 # ---------------------------------------------------------------------------
 
 
-def build_manifest(
-    cfg: Config, split: str, n_videos: int, max_offset: int, seed: int
-) -> dict:
+def build_manifest(cfg: Config, split: str, n_videos: int, max_offset: int, seed: int) -> dict:
     """Select the fixed probe set and pin it to a manifest dict.
 
     Walks the split's videos in `select_probe_order`, keeps the first `n_videos`
@@ -556,17 +554,21 @@ def compute_encoder_features(
 
 
 def load_bottleneck_from_checkpoint(ckpt_path: Path, use_ema: bool = False):
-    """Rebuild the checkpointed bottleneck for latent-drift evaluation.
+    """Rebuild the checkpointed bottleneck (and its whitener) for latent-drift evaluation.
 
     Args:
         ckpt_path: A `phase1_step*.pt` checkpoint saved by `train.save_checkpoint`.
         use_ema: Load `target_bottleneck` (B_EMA) weights instead of the online B.
     Returns:
-        `(bottleneck, label, step)`: eval-mode, grad-free Bottleneck; a plot label
-        derived from the checkpoint path; and the saved global step.
+        `(bottleneck, label, step, whitener)`: eval-mode, grad-free Bottleneck; a
+        plot label derived from the checkpoint path; the saved global step; and a
+        `models.FeatureWhitener` rebuilt from the checkpoint's "feature_whitener"
+        buffers when the run trained with `whiten_features` (else None). A
+        whitened-space bottleneck fed raw features would produce meaningless
+        latents, so the whitener must travel with the module.
     """
     _require_torch()
-    from models import Bottleneck
+    from models import Bottleneck, FeatureWhitener
 
     ckpt = torch.load(ckpt_path, map_location="cpu")
     if "bottleneck" not in ckpt:
@@ -590,16 +592,27 @@ def load_bottleneck_from_checkpoint(ckpt_path: Path, use_ema: bool = False):
     except RuntimeError as exc:
         raise RuntimeError(
             f"Bottleneck state in {ckpt_path} does not match the current architecture. "
-            "Checkpoints from before the sharp-slot attention change (commit cc0e318) "
-            "need the matching code checkout to evaluate."
+            "Checkpoints from an older bottleneck era (pre-sharp-slot cc0e318, or "
+            "pre-latent-stack) need the matching code checkout to evaluate."
         ) from exc
     bottleneck.eval()
     for param in bottleneck.parameters():
         param.requires_grad_(False)
+    whitener = None
+    train_cfg = (ckpt.get("config") or {}).get("train", {}) or {}
+    if train_cfg.get("whiten_features"):
+        if "feature_whitener" not in ckpt:
+            raise RuntimeError(
+                f"{ckpt_path} was trained with whiten_features but has no "
+                "'feature_whitener' state; latent drift in raw feature space would "
+                "be meaningless for this checkpoint."
+            )
+        whitener = FeatureWhitener(model_cfg.d_e)
+        whitener.load_state_dict(ckpt["feature_whitener"])
     step = int(ckpt.get("global_step", -1))
     suffix = "-ema" if use_ema else ""
     label = f"{ckpt_path.parent.name}/step{step}{suffix}"
-    return bottleneck, label, step
+    return bottleneck, label, step, whitener
 
 
 def compute_latent_unit_vectors(
@@ -608,25 +621,35 @@ def compute_latent_unit_vectors(
     keys: list[str],
     device: torch.device,
     latent_batch: int,
+    whitener=None,
 ) -> dict[str, Tensor]:
     """Run the bottleneck over cached windows and return flattened unit latents.
 
     Args:
         bottleneck: Eval-mode Bottleneck from `load_bottleneck_from_checkpoint`.
-        features: Cached `feature_key -> (N_ctx, D_e)` fp16 tensors.
+        features: Cached `feature_key -> (N_ctx, D_e)` fp16 tensors (always RAW
+            V-JEPA space — the cache is a dataset constant shared by all
+            checkpoints; whitening is a per-checkpoint transform applied here).
         keys: Which cached windows to embed (probe order).
         device: Device for bottleneck forwards.
         latent_batch: Windows per bottleneck forward.
+        whitener: Optional `models.FeatureWhitener` from the checkpoint; applied
+            to each cached window before the bottleneck so whitened-space
+            checkpoints see the same input space they were trained on.
     Returns:
         `feature_key -> (N_c * D_c,)` fp32 CPU unit vectors.
     """
     _require_torch()
     bottleneck = bottleneck.to(device).eval()  # measurement is always eval-mode, no-grad
+    if whitener is not None:
+        whitener = whitener.to(device)
     units: dict[str, Tensor] = {}
     with torch.no_grad():
         for i in range(0, len(keys), latent_batch):
             chunk = keys[i : i + latent_batch]
             detailed = torch.stack([features[k].float() for k in chunk]).to(device)
+            if whitener is not None:
+                detailed = whitener.whiten(detailed)
             abstract = bottleneck(detailed)
             for key, latent in zip(chunk, abstract, strict=True):
                 units[key] = flat_unit_vector(latent).cpu()
@@ -677,13 +700,21 @@ def plot_graph1(
     fig, ax = plt.subplots(figsize=(9, 5.5))
     if min(offsets) <= boundary:  # only mark the overlap zone when it is in view
         ax.axvspan(min(offsets), boundary, alpha=0.08, color="gray")
-        ax.text((min(offsets) + boundary) / 2, 0.98, "windows share frames",
-                transform=ax.get_xaxis_transform(), ha="center", va="top",
-                fontsize=8, color="gray")
+        ax.text(
+            (min(offsets) + boundary) / 2,
+            0.98,
+            "windows share frames",
+            transform=ax.get_xaxis_transform(),
+            ha="center",
+            va="top",
+            fontsize=8,
+            color="gray",
+        )
     if encoder_summary is not None:
         ax.plot(offsets, encoder_summary["mean"], "o-", color="black", label="V-JEPA e (frozen)")
-        ax.fill_between(offsets, encoder_summary["p25"], encoder_summary["p75"],
-                        color="black", alpha=0.12)
+        ax.fill_between(
+            offsets, encoder_summary["p25"], encoder_summary["p75"], color="black", alpha=0.12
+        )
     for label, summary in checkpoint_curves:
         ax.plot(offsets, summary["mean"], "s--", label=f"latent c — {label}")
     ax.set_xlabel("temporal offset k (original frames)")
@@ -745,41 +776,90 @@ def parse_args() -> argparse.Namespace:
         description="Within-video temporal drift probe (V-JEPA embeddings vs bottleneck latents)."
     )
     parser.add_argument("--data", choices=["ssv2", "ssv2_tiny"], default="ssv2_tiny")
-    parser.add_argument("--split", default="validation", choices=["train", "validation"],
-                        help="Dataset split the probe set is drawn from (default: validation).")
-    parser.add_argument("--probe-videos", type=int, default=64,
-                        help="Probe set size; only used when building a new manifest.")
-    parser.add_argument("--seed", type=int, default=42,
-                        help="Probe-selection seed; only used when building a new manifest.")
-    parser.add_argument("--offsets", default=",".join(str(k) for k in DEFAULT_OFFSETS),
-                        help="Comma-separated temporal offsets in ORIGINAL frames.")
-    parser.add_argument("--graph2-offsets", default=None,
-                        help="Offsets averaged into Graph 2's per-video points "
-                        "(default: the non-overlapping offsets, k > 14).")
-    parser.add_argument("--encoder-curve", choices=["on", "off"], default="on",
-                        help="Include the V-JEPA drift curve in Graph 1 (features are "
-                        "computed/cached regardless — the latent side needs them).")
-    parser.add_argument("--latent-curve", choices=["on", "off"], default="on",
-                        help="Evaluate bottleneck checkpoints (--ckpt) for latent drift.")
-    parser.add_argument("--ckpt", action="append", default=None,
-                        help="Path to a phase1_step*.pt checkpoint; repeatable to compare "
-                        "several checkpoints/runs in one invocation.")
-    parser.add_argument("--use-ema", action="store_true",
-                        help="Load the EMA bottleneck (B_EMA) instead of the online B.")
-    parser.add_argument("--out-dir", default="logs/drift_probe",
-                        help="Output directory for manifest, cache, JSON, and PNGs.")
-    parser.add_argument("--manifest", default=None,
-                        help="Probe manifest path (default: derived inside --out-dir).")
-    parser.add_argument("--feature-cache", default=None,
-                        help="Encoder feature cache path (default: derived inside --out-dir).")
-    parser.add_argument("--tag", default=None,
-                        help="Filename tag for outputs (default: dataset/probe/seed derived).")
-    parser.add_argument("--encoder-batch", type=int, default=4,
-                        help="Windows per frozen-encoder forward.")
-    parser.add_argument("--latent-batch", type=int, default=16,
-                        help="Windows per bottleneck forward.")
-    parser.add_argument("--device", default=None, choices=["cuda", "cpu"],
-                        help="Override device (default: cuda if available).")
+    parser.add_argument(
+        "--split",
+        default="validation",
+        choices=["train", "validation"],
+        help="Dataset split the probe set is drawn from (default: validation).",
+    )
+    parser.add_argument(
+        "--probe-videos",
+        type=int,
+        default=64,
+        help="Probe set size; only used when building a new manifest.",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="Probe-selection seed; only used when building a new manifest.",
+    )
+    parser.add_argument(
+        "--offsets",
+        default=",".join(str(k) for k in DEFAULT_OFFSETS),
+        help="Comma-separated temporal offsets in ORIGINAL frames.",
+    )
+    parser.add_argument(
+        "--graph2-offsets",
+        default=None,
+        help="Offsets averaged into Graph 2's per-video points "
+        "(default: the non-overlapping offsets, k > 14).",
+    )
+    parser.add_argument(
+        "--encoder-curve",
+        choices=["on", "off"],
+        default="on",
+        help="Include the V-JEPA drift curve in Graph 1 (features are "
+        "computed/cached regardless — the latent side needs them).",
+    )
+    parser.add_argument(
+        "--latent-curve",
+        choices=["on", "off"],
+        default="on",
+        help="Evaluate bottleneck checkpoints (--ckpt) for latent drift.",
+    )
+    parser.add_argument(
+        "--ckpt",
+        action="append",
+        default=None,
+        help="Path to a phase1_step*.pt checkpoint; repeatable to compare "
+        "several checkpoints/runs in one invocation.",
+    )
+    parser.add_argument(
+        "--use-ema",
+        action="store_true",
+        help="Load the EMA bottleneck (B_EMA) instead of the online B.",
+    )
+    parser.add_argument(
+        "--out-dir",
+        default="logs/drift_probe",
+        help="Output directory for manifest, cache, JSON, and PNGs.",
+    )
+    parser.add_argument(
+        "--manifest", default=None, help="Probe manifest path (default: derived inside --out-dir)."
+    )
+    parser.add_argument(
+        "--feature-cache",
+        default=None,
+        help="Encoder feature cache path (default: derived inside --out-dir).",
+    )
+    parser.add_argument(
+        "--tag",
+        default=None,
+        help="Filename tag for outputs (default: dataset/probe/seed derived).",
+    )
+    parser.add_argument(
+        "--encoder-batch", type=int, default=4, help="Windows per frozen-encoder forward."
+    )
+    parser.add_argument(
+        "--latent-batch", type=int, default=16, help="Windows per bottleneck forward."
+    )
+    parser.add_argument(
+        "--device",
+        default=None,
+        choices=["cuda", "cpu"],
+        help="Override device (default: cuda if available).",
+    )
     return parser.parse_args()
 
 
@@ -798,15 +878,17 @@ def main() -> None:
         else default_graph2_offsets(offsets, t_ctx, stride)
     )
     if not set(graph2_offsets).issubset(offsets):
-        raise SystemExit(f"--graph2-offsets {graph2_offsets} must be a subset of --offsets {offsets}")
+        raise SystemExit(
+            f"--graph2-offsets {graph2_offsets} must be a subset of --offsets {offsets}"
+        )
     if args.latent_curve == "on" and not args.ckpt:
-        raise SystemExit("--latent-curve on requires at least one --ckpt "
-                         "(or pass --latent-curve off for a V-JEPA-only probe).")
+        raise SystemExit(
+            "--latent-curve on requires at least one --ckpt "
+            "(or pass --latent-curve off for a V-JEPA-only probe)."
+        )
     if args.latent_curve == "off" and args.ckpt:
         print("WARN: --latent-curve off; ignoring --ckpt arguments.")
-    device = torch.device(
-        args.device or ("cuda" if torch.cuda.is_available() else "cpu")
-    )
+    device = torch.device(args.device or ("cuda" if torch.cuda.is_available() else "cpu"))
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     tag = args.tag or f"{args.data}_{args.split}_n{args.probe_videos}_seed{args.seed}"
@@ -854,9 +936,11 @@ def main() -> None:
     if args.latent_curve == "on":
         for ckpt_arg in args.ckpt:
             ckpt_path = Path(ckpt_arg)
-            bottleneck, label, step = load_bottleneck_from_checkpoint(ckpt_path, args.use_ema)
+            bottleneck, label, step, whitener = load_bottleneck_from_checkpoint(
+                ckpt_path, args.use_ema
+            )
             latent_units = compute_latent_unit_vectors(
-                bottleneck, features, window_keys, device, args.latent_batch
+                bottleneck, features, window_keys, device, args.latent_batch, whitener=whitener
             )
             c_drift = drift_matrix(latent_units, videos, offsets)
             c_offset_summary = summarize_per_offset(c_drift)
@@ -867,7 +951,9 @@ def main() -> None:
                 str(k): spearman_correlation(e_drift[:, j], c_drift[:, j])
                 for j, k in enumerate(offsets)
             }
-            print(f"{label}: spearman(all pairs)={rho_all:.3f}  spearman(per-video)={rho_video:.3f}")
+            print(
+                f"{label}: spearman(all pairs)={rho_all:.3f}  spearman(per-video)={rho_video:.3f}"
+            )
             results["checkpoints"].append(
                 {
                     "path": str(ckpt_path),
