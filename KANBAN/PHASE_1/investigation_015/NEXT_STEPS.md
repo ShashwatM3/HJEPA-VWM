@@ -19,3 +19,15 @@
 - Both collapse -> rerun with inv011-style geometry terms (`lambda_var`, small
   `lambda_cov`) on top, keeping whitening + residual target; the ambiguity tiebreaker is
   one bottleneck-only control run (drop the two `--whiten-*` flags, ~6 h).
+
+## 2026-07-05 — after run 054 ("neither delta sufficient" cell; see ANALYSIS_054.md)
+
+1. **Run 055 planned (human-directed):**
+   [`run_055_ae_latent_stack_whiten_abs_recon/`](run_055_ae_latent_stack_whiten_abs_recon/)
+   — run 054's exact recipe minus the residual reconstruction target. Tests whether
+   whitening alone blocks the run-052 template shortcut (fills the absolute/whitened
+   cell of the target x space 2x2). Not the §4 bottleneck-only control.
+2. Still queued from ANALYSIS_054, unchanged priority: the bottleneck-only control
+   (drop `--whiten-*`, keep residual target — load-bearing for 053->054 attribution),
+   then the "neither sufficient" follow-up (whitening + residual + `lambda_var` +
+   small `lambda_cov`).
