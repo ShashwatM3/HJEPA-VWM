@@ -741,16 +741,24 @@ def run_stage0(cfg: Config) -> None:
         torch.randn(2, cfg.model.t_ctx, 3, cfg.model.h, cfg.model.w, device=device),
     )
     enc_before = next(encoder.parameters()).detach().clone()
-    ema_before = next(target_bottleneck.parameters()).detach().clone()
+    # Snapshot ALL target params, not just the first: at identity-init the first
+    # bottleneck param (in_proj, input pathway) gets zero gradient because every
+    # residual branch is zero-init (c == norm(queries)), so a step-0 gradient that
+    # reaches only `queries` (e.g. lambda_cov before the recon/sigreg warmups ramp
+    # in) legitimately moves B_EMA without touching in_proj. Checking any param
+    # keeps the "B_EMA tracked B" invariant without the first-param false negative.
+    ema_before = [p.detach().clone() for p in target_bottleneck.parameters()]
     metrics = train_step(
         batch, modules, optimizer, 0, cfg, device, mean_tracker=mean_tracker, whitener=whitener
     )
     enc_after = next(encoder.parameters()).detach().clone()
-    ema_after = next(target_bottleneck.parameters()).detach().clone()
+    ema_after = [p.detach().clone() for p in target_bottleneck.parameters()]
     assert math.isfinite(metrics["loss"]), metrics
     assert torch.equal(enc_before, enc_after), "Frozen encoder params changed"
     if metrics["grad_norm"] > 0.0 and metrics["grad_skipped"] == 0.0:
-        assert not torch.equal(ema_before, ema_after), "B_EMA did not update"
+        assert any(
+            not torch.equal(b, a) for b, a in zip(ema_before, ema_after)
+        ), "B_EMA did not update"
     print(f"Stage 0 sanity passed: {metrics}")
 
 
