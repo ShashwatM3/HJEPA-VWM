@@ -2,7 +2,10 @@
 
 ## Status
 
-PLANNED (not launched)
+FINISHED — W&B `nzz64pl6` (group `inv015_ae_latent_stack_whiten`), full 15k-step
+schedule, analyzed 2026-07-05 in [`ANALYSIS.md`](ANALYSIS.md). Verdict: low-rank
+decodable, ~86% video-conditioned honesty (down from run 054's 92%), geometry identical
+to run 054 — `--recon-residual-target` stays in the recipe.
 
 ## Hypothesis
 

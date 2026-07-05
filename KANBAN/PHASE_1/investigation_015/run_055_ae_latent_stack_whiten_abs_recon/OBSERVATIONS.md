@@ -27,3 +27,29 @@ easier than the residual target, so compare honesty shares and geometry curves, 
 loss values. Never compare loss values to 052/053 (raw space).
 
 *(Per PROTOCOL: append dated sections for measured data; do not rewrite the above.)*
+
+---
+
+## 2026-07-05 — measured data (W&B `nzz64pl6`, full 15k schedule)
+
+Full reading in [`ANALYSIS.md`](ANALYSIS.md). Summary of the pre-registered priors:
+
+- **P1 (honesty) confirmed in its main-body form.** The absolute target reopened a
+  small template channel: `L_recon_shuffled_c` dipped to 0.940 at step ~2,000 and
+  settled at 0.953 (run 054 pinned 0.969–0.975), and the video-conditioned share of the
+  decoder's improvement landed at ~86% (run 054: 92%, run 053: 77%, run 052: 15%).
+  Neither extreme held — whitening alone is not fully sufficient, but it is far from
+  useless. The residual target buys ~6 points of honesty by removing the per-position
+  mean that survives whitening.
+- **P2 (geometry) confirmed.** Terminal geometry is indistinguishable from run 054:
+  effective rank 21.48 (054: 21.93), centered slot rank 12.08 (12.13), cross-video
+  cosine 0.824 (0.820), spread 0.397 (0.397), dead-dim frac 0. Same
+  expansion-then-contraction arc; the residual target contributes no defended
+  directions.
+- **P3 (stability) passed.** Zero skips/NaNs, AGC never bit (max ratios ~0.0006 B /
+  ~0.0016 D), `whiten_active=1`, `recon_target_residual=0`, `recon_mean_norm=0`
+  throughout.
+
+Verdict label (Cycle B): **low-rank decodable** (same as run 054). Recipe decision:
+keep `--recon-residual-target`. This run does NOT resolve whitening-vs-architecture
+attribution — the bottleneck-only control remains open.
