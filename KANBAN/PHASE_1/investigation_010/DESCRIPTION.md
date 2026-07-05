@@ -28,3 +28,13 @@ Run 037 proved a key negative: c_t can be high-rank, video-specific, and stable 
 ## Evidence Standard
 
 The run entries above were reconciled against W&B API/export data on 2026-07-02. For run 052, the newest active run, the evidence was additionally refreshed live with `python run_history.py --run 662hfy3c --report`, which showed the run still `running` through step 5600.
+
+## Original Notes Preserved
+
+This investigation is the clean-plumbing rerun of the investigation_009 residual arm. After
+inv009 showed residual prediction made c temporally dynamic and dropped copy ratio ~6x (to ~1.08)
+but tied-by-zero, and after an optimizer/regularization plumbing fix (commit 230096d: decay/no-decay
+param groups, AGC exclusions for geometry and zero-init gates, orthogonal bottleneck queries,
+SIGReg warmup, clearer gradient metrics), the question was whether that same residual config trains
+more cleanly to a full 15k and finally beats copy. Two runs: 036 (aborted ~step 250, infrastructure
+only) and 037 (`soft-universe-37`, the full run). See [`GUIDE.md`](GUIDE.md) for the launch procedure.

@@ -20,3 +20,12 @@ The representation is good enough that the next question is predictor conditioni
 - Compare only compatible modes: full-prediction to full-prediction, present-only to present-only.
 - Preserve the exact config deltas, checkpoint path, and W&B run id so later investigations can trace the branch without relying on memory.
 - Do not use this run as evidence for a later-stage component that was inactive in its config.
+
+## Original Notes Preserved
+
+**Connection:** the saturation bookend that made the inv008 conclusion unimpeachable — SIGReg can
+drive rank arbitrarily high (73) and prediction only gets worse, so the disease is temporal. This
+run's config (SIGReg substrate) is the direct parent of investigation_009 run 034 (`sigreg-only`,
+lambda_sigreg=6, full latent, no recon), which reproduced the "rank up, prediction down" law
+without any recon confound and drove rho(c_t,c_{t+k}) to ~0.92 (c frozen). The residual-prediction
+arm (run 035) then attacked the temporal axis directly.

@@ -68,3 +68,18 @@ It is testing whether bottleneck architecture alone can replace explicit geometr
 - `L_flow` going down is not Phase 1 success unless the baseline gates pass.
 - Present-only runs prove or disprove present bottleneck quality, not forecasting.
 - In residual mode, the copy baseline means predicting zero residual.
+
+## Original Notes Preserved
+
+**Mechanism read (W&B `662hfy3c`, finished 15k) — the template-collapse discovery.** Reconstruction
+got the best number of the present-only set (`L_recon_present` 1.013 -> 0.293) while the representation
+collapsed: `c_effective_rank` fell 31 -> 13.4 (the 31 at init is mechanical — the 32 fixed orthogonal
+slot identities before any video information enters; std=0 at step 0), cross-video cosine rose to
+0.906, std sank to 0.295, and `L_cov` climbed 6.7 -> 30.3 (feature correlation worsening, the exact
+thing covariance pressure is meant to prevent). The decoder learned a shared, video-independent
+TEMPLATE (the fixed-position queries can still drive a nonzero shared output from a mostly-shared c),
+estimated ~85% of the reconstruction improvement; only ~15% routed video-specific information through
+c. Attention did sharpen (entropy 0.76 -> 0.54), so the failure is not "attention uniform" — it is
+that a reconstruction-only objective does not force the sharp reads to be spread, decorrelated, or
+video-specific. Falsified: sharp slots can replace geometry regularizers. Full read:
+[`../ANALYSIS_052_live_diagnosis.md`](../ANALYSIS_052_live_diagnosis.md).

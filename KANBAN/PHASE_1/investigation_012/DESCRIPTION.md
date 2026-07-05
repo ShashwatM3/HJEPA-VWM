@@ -27,3 +27,13 @@ Live W&B through step 5600 shows strong reconstruction progress but not healthy 
 ## Evidence Standard
 
 The run entries above were reconciled against W&B API/export data on 2026-07-02. For run 052, the newest active run, the evidence was additionally refreshed live with `python run_history.py --run 662hfy3c --report`, which showed the run still `running` through step 5600.
+
+## Original Notes Preserved
+
+Status update (run 052 finished after this file's auto-generation): the run completed its full 15k
+schedule and the verdict is confirmed **Collapsed rep**. Final diagnostics (W&B `662hfy3c`, step
+14500): `c_effective_rank` 13.37, `c_cross_video_cosine` 0.9055, `c_std_mean` 0.2948, `L_recon_present`
+0.293, `L_cov` 30.32. The provisional live read (rank low-20s, cosine high, std low) held and worsened.
+The investigation's answer is a clean NO: sharpened slot attention does not let pure reconstruction
+train a healthy bottleneck without geometry regularizers. See
+[`ANALYSIS_052_live_diagnosis.md`](ANALYSIS_052_live_diagnosis.md).

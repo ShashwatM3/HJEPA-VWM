@@ -72,3 +72,19 @@ Use `KANBAN/README_for_reading_experiments.md`. This run uses the **Full Predict
 | W&B run files | `artifact/3076056390/wandb_manifest.json` (0 bytes), `config.yaml` (5050 bytes), `output.log` (243343 bytes), `requirements.txt` (3821 bytes), `wandb-metadata.json` (1689 bytes), `wandb-summary.json` (1557 bytes) |
 | Logged artifacts | `run-2vbo6pbm-history:v0` (wandb-history) |
 | API/group fetch caveats | none |
+
+## Original Notes Preserved
+
+**Command** (the clean 15k residual run with SIGReg warmup on the fixed plumbing):
+
+```bash
+python train.py --data ssv2 --steps 15000 --horizon-k 12 --lr-coarse-flow 1e-4 \
+  --lambda-var 0.5 --lambda-sigreg 5.0 --sigreg-warmup-steps 2000 \
+  --lambda-recon 0.05 --lambda-recon-pred 0.05 --recon-warmup-steps 2000 --predict-residual \
+  --decoder-dim 512 --decoder-blocks 4 --n-c 32 \
+  --checkpoint-dir /workspace/ckpt/inv010_residual_230096d --log-every 50 --diag-every 500
+```
+
+**What it tested / config delta:** same residual recipe as inv009 run 035 (graceful-river-35)
+but run cleanly to a full 15k on the fixed optimizer/regularization plumbing. The controlled
+question: does the residual recipe, given a clean full run, produce a predictor that beats copy?

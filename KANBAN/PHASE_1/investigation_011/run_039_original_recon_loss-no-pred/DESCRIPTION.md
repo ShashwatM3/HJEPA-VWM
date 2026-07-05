@@ -81,3 +81,19 @@ Use `KANBAN/README_for_reading_experiments.md`. This run uses the **Present Reco
 | W&B run files | `artifact/3078183479/wandb_manifest.json` (0 bytes), `config.yaml` (5302 bytes), `output.log` (234433 bytes), `requirements.txt` (3821 bytes), `wandb-metadata.json` (1859 bytes), `wandb-summary.json` (1154 bytes) |
 | Logged artifacts | `run-kttd1fib-history:v0` (wandb-history) |
 | API/group fetch caveats | none |
+
+## Original Notes Preserved
+
+**Command** (present-only autoencoder control, legacy relative_mse loss, no geometry regularizers):
+
+```bash
+python train.py --data ssv2 --steps 15000 --horizon-k 12 --present-recon-only \
+  --recon-loss-mode relative_mse --lambda-recon 0.05 \
+  --lambda-var 0 --lambda-sigreg 0 --lambda-cov 0 --lambda-slot 0 \
+  --decoder-dim 512 --decoder-blocks 4 --n-c 32 \
+  --checkpoint-dir /workspace/ckpt/inv011_original_recon_nopred --log-every 50 --diag-every 500
+```
+
+**What it tested / config delta:** disables prediction entirely (`--present-recon-only`) and trains
+only D(B(e_t)) -> e_t under the legacy relative_mse loss with every geometry regularizer off. The
+purest question: can present reconstruction ALONE, with no geometry pressure, make c information-rich?

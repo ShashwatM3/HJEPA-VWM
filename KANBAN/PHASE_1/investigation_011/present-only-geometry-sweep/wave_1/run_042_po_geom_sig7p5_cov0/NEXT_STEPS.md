@@ -20,3 +20,13 @@ Treat reconstruction as real but under-constrained. The next run should target r
 - Compare only compatible modes: full-prediction to full-prediction, present-only to present-only.
 - Preserve the exact config deltas, checkpoint path, and W&B run id so later investigations can trace the branch without relying on memory.
 - Do not use this run as evidence for a later-stage component that was inactive in its config.
+
+## Original Notes Preserved
+
+**Connection:** one arm of the 10-run present-only geometry sweep (waves 1-2). The sweep's
+collective finding — SIGReg + a small covariance penalty drives rank far past 100 (up to ~150 at
+sig5/cov0.01, run 047) while keeping videos distinct — proves B+D CAN carry a very rich present
+representation, but only with geometry regularizers ON. No full-prediction run has yet inherited
+this geometry and passed the copy/batch-mean gates. This directly raised the next question
+(investigation_012): can a sharper bottleneck ARCHITECTURE reach this WITHOUT external geometry
+regularizers? Run 052 tested that and collapsed, confirming the regularizers are load-bearing.

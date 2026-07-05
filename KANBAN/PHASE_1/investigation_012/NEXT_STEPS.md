@@ -22,3 +22,14 @@ This is the current frontier in the canonical KANBAN sequence.
 - Do not cite a low `L_flow` as success without the copy and batch-mean gates.
 - Do not compare residual-mode copy ratios against full-latent copy ratios without naming the mode difference.
 - When reviving this branch, start from the exact run folder and W&B id, not a remembered nickname.
+
+## Original Notes Preserved
+
+Final follow-up (run finished): sharp slots alone are NOT enough; geometry pressure is required. Two
+threads spawned. (1) The narrow fixable failure — the decoder template shortcut — went to
+investigation_013 run 053 (residual reconstruction target), which fixed honesty but not geometry.
+(2) The broader "recon cannot hold geometry" (H2) confirmation drove the feature-space attack:
+investigation_014 (measure the encoder rank budget) and investigation_015 run 054 (whitening +
+latent-stack bottleneck on the residual recipe). The clean controlled question for any sharp-slot
+follow-up is "does the sharp bottleneck IMPROVE the already-successful geometry recipe (runs 043-051)?",
+not "can it replace it?".

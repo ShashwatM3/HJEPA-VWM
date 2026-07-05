@@ -75,3 +75,20 @@ Use `KANBAN/README_for_reading_experiments.md`. This run uses the **Full Predict
 | W&B run files | `artifact/3074501123/wandb_manifest.json` (0 bytes), `config.yaml` (5050 bytes), `output.log` (6340 bytes), `requirements.txt` (3821 bytes), `wandb-metadata.json` (1689 bytes), `wandb-summary.json` (1563 bytes) |
 | Logged artifacts | `run-b4lf89if-history:v0` (wandb-history) |
 | API/group fetch caveats | none |
+
+## Original Notes Preserved
+
+**Command** (first launch of the clean residual recipe against the fixed optimizer/regularization
+plumbing, commit 230096d; aborted early):
+
+```bash
+python train.py --data ssv2 --steps 15000 --horizon-k 12 --lr-coarse-flow 1e-4 \
+  --lambda-var 0.5 --lambda-sigreg 5.0 --sigreg-warmup-steps 2000 \
+  --lambda-recon 0.05 --lambda-recon-pred 0.05 --recon-warmup-steps 2000 --predict-residual \
+  --decoder-dim 512 --decoder-blocks 4 --n-c 32 \
+  --checkpoint-dir /workspace/ckpt/inv010_residual_230096d --log-every 50 --diag-every 500
+```
+
+**What it tested / config delta:** identical experiment to run 037 — the inv009 residual arm
+(graceful-river-35) rerun against the cleaned optimizer plumbing (decay/no-decay groups, AGC
+geometry exclusions, orthogonal queries, SIGReg warmup). Only records launch state; killed ~step 250.

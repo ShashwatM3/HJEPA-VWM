@@ -67,3 +67,12 @@ It separated present representation quality from forecasting. A present-only win
 - `L_flow` going down is not Phase 1 success unless the baseline gates pass.
 - Present-only runs prove or disprove present bottleneck quality, not forecasting.
 - In residual mode, the copy baseline means predicting zero residual.
+
+## Original Notes Preserved
+
+**Mechanism read (W&B `kttd1fib`):** it collapsed. `c_effective_rank` ~10.5, cross-video cosine
+~0.86, std ~0.35 — a video-independent, low-rank code — even though present reconstruction still
+improved to ~0.515. Verdict Collapsed-rep. This is the precursor to run 052: present-only
+reconstruction with NO geometry regularizers produces a template-like code. It establishes that
+the strong present representations seen later in this investigation (runs 042-051) come from the
+GEOMETRY REGULARIZERS, not from reconstruction alone.

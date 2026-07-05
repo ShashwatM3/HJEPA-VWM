@@ -74,3 +74,25 @@ It became the canonical negative result: a healthy, high-rank, video-specific re
 - `L_flow` going down is not Phase 1 success unless the baseline gates pass.
 - Present-only runs prove or disprove present bottleneck quality, not forecasting.
 - In residual mode, the copy baseline means predicting zero residual.
+
+## Original Notes Preserved
+
+**Mechanism read (W&B `2vbo6pbm`) — THE CANONICAL NEGATIVE RESULT.** This run produced the
+healthiest representation of the whole full-prediction line and still failed the gate, which is
+exactly why it is the reference point for "representation health is not the bottleneck."
+
+- Representation: `c_effective_rank` 9.47 -> 61.08 (first full-prediction run to clear the >60
+  gate; c_plus rank 60.4 tracks it, so the EMA target is genuinely rich too), cross-video cosine
+  0.72 -> 0.16, std -> 1.005, dead-dim 0. By every representation measure this c is healthy.
+- Prediction: `coarse_vs_copy_ratio` 1.063 and `coarse_vs_batch_mean_ratio` 1.140 — both ABOVE 1,
+  i.e. F_c ties (marginally loses to) the zero-residual and batch-mean baselines. `coarse_copy_loss`
+  ROSE 0.05 -> 1.56 over the run: in residual mode this means c became strongly dynamic (a big
+  ||Delta|| to predict), yet F_c's model loss (1.66) sits just above copy loss (1.56), i.e. it is
+  predicting Delta_hat ~ 0. This is the tie-by-zero the inv009 residual arm foreshadowed, now at a
+  much richer, cleaner representation.
+- Recon readouts stayed blind (present 0.571, cplus 0.568, chat 0.580; chat-cplus gap 0.012) — the
+  decoder cannot tell a good predicted future from the true future, consistent with the recon-capacity
+  floor. Attention sharpened hard (entropy 1.0 -> 0.57, one slot fully sharp). Stability spotless
+  (0 skips, 0 NaN, grad_norm ~1.8-2.9).
+
+The lesson: the failure is squarely F_c / the dynamics, not c. Do not chase rank further.

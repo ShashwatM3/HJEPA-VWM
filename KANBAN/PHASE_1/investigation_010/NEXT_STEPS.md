@@ -22,3 +22,13 @@ This investigation feeds into `investigation_011`: cosine reconstruction, fixed-
 - Do not cite a low `L_flow` as success without the copy and batch-mean gates.
 - Do not compare residual-mode copy ratios against full-latent copy ratios without naming the mode difference.
 - When reviving this branch, start from the exact run folder and W&B id, not a remembered nickname.
+
+## Original Notes Preserved
+
+Because run 037 proved a healthy representation is not enough, the research pivoted away from
+rank/collapse fixes and toward reconstruction geometry and decoder honesty. That is
+investigation_011: the cosine reconstruction loss (applied to run 037's exact recipe in run 038,
+halving the recon floor) and the fixed-position decoder (run 040), followed by the present-only
+geometry sweeps that map how rich a bottleneck B can be made when geometry regularizers are active.
+The standing decision metric is unchanged: a stable coarse_vs_copy_ratio < 1 (ideally <= 0.70),
+with rank/rho as corroborating signals, not as the headline.

@@ -93,3 +93,35 @@ Phase 1 currently covers coarse dynamics only: frozen V-JEPA 2 encoder, trainabl
 ## Reading Rule
 
 Use [`GUIDES/READING_EXPERIMENTS.md`](../GUIDES/READING_EXPERIMENTS.md) for every run. Full-prediction and present-only runs use different cycles and must not be compared with the same gates.
+
+---
+
+## Update (2026-07-05, post-auto-generation) — investigations 013-015, runs 053-055
+
+The auto-generated status block and run table above were produced when run 052 was the newest
+run and still running. Current W&B-verified state:
+
+- **55 runs** total in the project (`smahalanobis-uc-davis/hjepa-vwm`). Run 052 finished; runs
+  053 and 054 completed after the auto-generation; run 055 is planned/not launched.
+- No full-prediction run has passed both Phase 1 gates. The canonical negative remains run 037
+  (`soft-universe-37`): rank 61, cross-video cosine 0.16, std 1.0, yet copy ratio 1.06.
+- The frontier has moved to the PRESENT-ONLY autoencoder arc, whose settled conclusion is that
+  reconstruction pressure alone cannot hold representation geometry — an explicit anti-collapse
+  term is required.
+
+Newer investigation index (append to the table above):
+
+| Investigation | Status | Runs | Current conclusion |
+|---|---|---|---|
+| [investigation_012](investigation_012/) | CLOSED | 052 | Sharp-slot reconstruction-only (no geometry regularizers) collapses to a decoder-side video-independent template: reconstruction excellent (0.293) but rank 13.4, cross-video cosine 0.906, std 0.295. Sharp attention cannot replace geometry regularizers. |
+| [investigation_013](investigation_013/) | CLOSED | 053 | The residual reconstruction target (reconstruct e - mean) fixes the template shortcut (video gap +0.433, ~77% video-conditioned) but geometry still collapses (rank 10.5). H1 solved, H2 confirmed: an explicit anti-collapse force is required. |
+| [investigation_014](investigation_014/) | OPEN | none | Offline rank probe: frozen V-JEPA `e` has pooled entropy rank ~193/1024 with a long low-energy tail (rank@90% 333, rank@99% 785). Reframes e->c as selective denoising and motivates whitening. |
+| [investigation_015](investigation_015/) | OPEN | 054 (055 planned) | Whitening + Perceiver latent-stack bottleneck on the residual recipe: strongest honesty yet (~92% video-conditioned, shuffled-c pinned 0.975) at a much better geometry equilibrium (rank 21.9 vs 053's 10.5), but geometry still contracts — "neither delta sufficient." |
+
+Newer run index rows (append to the Complete W&B Run Index above):
+
+| # | Run | ID | State | Investigation | Mode | Verdict |
+|---:|---|---|---|---|---|---|
+| 53 | [`ae_sharp_slots_residual_recon`](investigation_013/run_053_ae_sharp_slots_residual_recon/) | `7teohhwc` | crashed (external) | investigation_013 | present-only | Low-rank decodable |
+| 54 | [`ae_latent_stack_whiten_recon_only`](investigation_015/run_054_ae_latent_stack_whiten_recon_only/) | `lx1b6gw2` | finished | investigation_015 | present-only | Low-rank decodable |
+| 55 | [`ae_latent_stack_whiten_abs_recon`](investigation_015/run_055_ae_latent_stack_whiten_abs_recon/) | (planned) | not launched | investigation_015 | present-only | (planned) |

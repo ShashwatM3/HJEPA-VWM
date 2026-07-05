@@ -54,3 +54,10 @@ Sharpest new fact: over the final 1.5k steps recon gained *nothing* (0.6524 → 
 while rank, cosine, and std all kept degrading — geometry paid with zero content
 benefit, isolating the residual contraction force (unopposed `weight_decay=0.05`) from
 the content objective. Full detail: [`ANALYSIS_054.md`](ANALYSIS_054.md) addendum.
+
+## Original Notes Preserved
+
+Run 054's per-run triad now lives in its own folder:
+[`run_054_ae_latent_stack_whiten_recon_only/`](run_054_ae_latent_stack_whiten_recon_only/)
+(DESCRIPTION / OBSERVATIONS / NEXT_STEPS). The full narrative analysis remains at the
+investigation level in [`ANALYSIS_054.md`](ANALYSIS_054.md).

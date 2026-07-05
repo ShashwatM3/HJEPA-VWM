@@ -72,3 +72,13 @@ It contributed to the SIGReg conclusion: rank can be moved by isotropy pressure,
 - `L_flow` going down is not Phase 1 success unless the baseline gates pass.
 - Present-only runs prove or disprove present bottleneck quality, not forecasting.
 - In residual mode, the copy baseline means predicting zero residual.
+
+## Original Notes Preserved
+
+**Mechanism read (W&B `9jxc8i1q`):** lambda_sigreg=3.0 broke the rank ceiling —
+`c_effective_rank` climbed to ~34.1 (still rising at the cut) — but `coarse_vs_copy_ratio`
+worsened to ~4.7 and L_flow rose to ~0.80. `coarse_copy_loss` FELL with lambda (0.24 -> 0.17),
+i.e. c became more static in time, so the copy baseline got stronger. This is the inv008 law in
+one point: every rank point SIGReg buys costs prediction. Health held (cross-video cosine ~0.34,
+below 0.5; dead-dim 0; no skips/NaNs). Slot diversity dipped hardest here of the sweep (~2.85),
+the sharpest attention-min too — high pooled rank bought partly by slot redundancy.

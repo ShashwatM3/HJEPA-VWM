@@ -75,3 +75,18 @@ Use `KANBAN/README_for_reading_experiments.md`. This run uses the **Full Predict
 | W&B run files | `artifact/3060448214/wandb_manifest.json` (0 bytes), `requirements.txt` (3820 bytes), `wandb-metadata.json` (2223 bytes) |
 | Logged artifacts | `run-x7z6e0ah-history:v0` (wandb-history) |
 | API/group fetch caveats | none |
+
+## Original Notes Preserved
+
+**Command** (one arm of the 4-wide `lambda_sigreg` sweep, eager-plant-22 512x4 background):
+
+```bash
+python train.py --data ssv2 --steps 15000 --horizon-k 12 --lr-coarse-flow 1e-4 \
+  --lambda-var 0.5 --lambda-sigreg 0.3 \
+  --lambda-recon 0.05 --lambda-recon-pred 0 --recon-warmup-steps 2000 \
+  --decoder-dim 512 --decoder-blocks 4 --n-c 32 \
+  --checkpoint-dir /workspace/ckpt/sigreg0.3_D512x4_nc32 --log-every 50 --diag-every 500
+```
+
+**What it tested / config delta:** lambda_sigreg=0.3 (mild push) is the only variable. The
+gentlest arm of the ladder.

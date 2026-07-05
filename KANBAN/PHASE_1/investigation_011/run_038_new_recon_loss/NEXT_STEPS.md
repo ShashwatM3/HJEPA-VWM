@@ -20,3 +20,13 @@ The representation is good enough that the next question is predictor conditioni
 - Compare only compatible modes: full-prediction to full-prediction, present-only to present-only.
 - Preserve the exact config deltas, checkpoint path, and W&B run id so later investigations can trace the branch without relying on memory.
 - Do not use this run as evidence for a later-stage component that was inactive in its config.
+
+## Original Notes Preserved
+
+**Connection:** confirmed that better reconstruction geometry (cosine loss) helps the readout but
+not the copy gate — reinforcing run 037's lesson that prediction, not representation, is the wall.
+The cosine loss became a permanent part of the recipe. Next, investigation_011 attacked the OTHER
+half of the reconstruction path: the decoder's ability to store an unconditional content template.
+Run 039 isolated present-only reconstruction under the OLD loss with no geometry regularizers
+(showing it collapses), and run 040 introduced the fixed-position decoder to remove the template
+loophole in a full-prediction run.

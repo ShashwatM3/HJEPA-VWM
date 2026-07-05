@@ -75,3 +75,19 @@ Use `KANBAN/README_for_reading_experiments.md`. This run uses the **Full Predict
 | W&B run files | `artifact/3078561189/wandb_manifest.json` (0 bytes), `config.yaml` (5499 bytes), `output.log` (259693 bytes), `requirements.txt` (3821 bytes), `wandb-metadata.json` (1964 bytes), `wandb-summary.json` (1604 bytes) |
 | Logged artifacts | `run-1u69hpfm-history:v0` (wandb-history) |
 | API/group fetch caveats | none |
+
+## Original Notes Preserved
+
+**Command** (run 037's exact residual recipe with the reconstruction formula switched to cosine):
+
+```bash
+python train.py --data ssv2 --steps 15000 --horizon-k 12 --lr-coarse-flow 1e-4 \
+  --lambda-var 0.5 --lambda-sigreg 5.0 --sigreg-warmup-steps 2000 \
+  --lambda-recon 0.05 --lambda-recon-pred 0.05 --recon-loss-mode cosine --recon-warmup-steps 2000 \
+  --predict-residual --decoder-dim 512 --decoder-blocks 4 --n-c 32 \
+  --checkpoint-dir /workspace/ckpt/inv011_new_recon_loss --log-every 50 --diag-every 500
+```
+
+**What it tested / config delta:** the only change vs run 037 is `--recon-loss-mode cosine`
+(norm-invariant per-tubelet cosine distance, replacing the legacy MSE/Var which let the decoder
+game feature norms). Tests whether the improved recon geometry helps the best full-prediction recipe.

@@ -72,3 +72,10 @@ It contributed to the SIGReg conclusion: rank can be moved by isotropy pressure,
 - `L_flow` going down is not Phase 1 success unless the baseline gates pass.
 - Present-only runs prove or disprove present bottleneck quality, not forecasting.
 - In residual mode, the copy baseline means predicting zero residual.
+
+## Original Notes Preserved
+
+**Mechanism read (W&B `jk8kj7h7`):** at lambda_sigreg=1.0 the term is nearly inert on rank —
+`c_effective_rank` ~13.1, barely above the ~12.7 control and far from the 34/73 the higher arms
+reach. `coarse_vs_copy_ratio` ~2.57, worse than control. So below ~3 SIGReg does little to rank
+but already costs a bit of prediction. Confirms the informative band starts around lambda~3.

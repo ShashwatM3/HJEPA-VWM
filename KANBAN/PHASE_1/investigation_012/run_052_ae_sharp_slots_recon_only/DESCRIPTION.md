@@ -78,3 +78,21 @@ Use `KANBAN/README_for_reading_experiments.md`. This run uses the **Present Reco
 | Logged artifacts | none listed in export |
 | API/group fetch caveats | none |
 | Live refresh | `tmp/wandb_evidence/052_ae_sharp_slots_recon_only_662hfy3c_live.json`; refreshed with `run_history.py --run 662hfy3c --report` |
+
+## Original Notes Preserved
+
+**Command** (sharpened-slot bottleneck, present-recon-only, cosine loss, EVERY geometry regularizer off):
+
+```bash
+python train.py --data ssv2 --steps 15000 --seed 42 --horizon-k 12 \
+  --lr-bottleneck 1e-4 --lr-coarse-flow 1e-4 \
+  --lambda-var 0 --lambda-sigreg 0 --lambda-cov 0 --lambda-slot 0 \
+  --lambda-recon 0.05 --lambda-recon-pred 0 --recon-loss-mode cosine --recon-warmup-steps 2000 \
+  --present-recon-only --decoder-dim 512 --decoder-blocks 4 --n-c 32 \
+  --checkpoint-dir /workspace/ckpt/inv012_sharp_slot_recon_only --log-every 50 --diag-every 500
+```
+
+**What it tested / config delta:** with the new sharpened-slot bottleneck (orthogonal query slots,
+sharp cosine cross-attention, zero-init residual output), test whether reconstruction ALONE — every
+geometry regularizer at 0 — now makes c healthy, i.e. whether the architecture can replace the
+regularizers that the investigation_011 sweep needed.

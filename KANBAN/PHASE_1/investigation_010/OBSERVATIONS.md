@@ -22,3 +22,13 @@ Verdict distribution: Healthy rep, no predictor=1, Smoke / inconclusive=1.
 ## What Changed The Research Direction
 
 The research moved to reconstruction geometry and decoder honesty, because prediction failure could no longer be blamed only on rank collapse.
+
+## Original Notes Preserved
+
+Run 037 is the decisive datapoint and the canonical negative result of the project: with the clean
+plumbing the residual recipe reached rank 61.08 (>60 gate cleared), cross-video cosine 0.16, std
+1.005 — a genuinely healthy, high-rank, video-specific c — yet `coarse_vs_copy_ratio` sat at 1.063
+and `coarse_vs_batch_mean_ratio` at 1.140, both above the gates. F_c ties by predicting ~zero
+residual even though c now moves a lot (`coarse_copy_loss` rose 0.05 -> 1.56). Representation health
+is therefore NOT the limiting factor; the predictor/dynamics is. Run 036 carries no result (aborted).
+Full per-run reads: [`run_037_soft-universe-37/OBSERVATIONS.md`](run_037_soft-universe-37/OBSERVATIONS.md).

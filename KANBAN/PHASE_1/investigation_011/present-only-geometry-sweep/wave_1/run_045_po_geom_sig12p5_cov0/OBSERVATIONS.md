@@ -67,3 +67,12 @@ It separated present representation quality from forecasting. A present-only win
 - `L_flow` going down is not Phase 1 success unless the baseline gates pass.
 - Present-only runs prove or disprove present bottleneck quality, not forecasting.
 - In residual mode, the copy baseline means predicting zero residual.
+
+## Original Notes Preserved
+
+**Mechanism read (grid point sig=12.5, cov=0.0):** reached `c_effective_rank` ~83.4 with
+cross-video cosine ~0.06-0.10, std ~0.96-0.98, and `L_recon_present` ~0.345 — a decodable, spread,
+video-specific present code. Read against the rest of the sweep, the dominant lever on rank is the
+COVARIANCE penalty: the cov=0.01 rows reach 139-151, cov=0.003 rows 90-106, and cov=0 rows only
+57-83; SIGReg alone (cov=0) tops out ~83, and raising SIGReg helps only modestly on top of cov.
+This is a strong PRESENT representation, but F_c is off, so it is not a prediction result.

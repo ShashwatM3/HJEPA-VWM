@@ -75,3 +75,19 @@ Use `KANBAN/README_for_reading_experiments.md`. This run uses the **Full Predict
 | W&B run files | `artifact/3060451749/wandb_manifest.json` (0 bytes), `requirements.txt` (3820 bytes), `wandb-metadata.json` (2225 bytes) |
 | Logged artifacts | `run-fbqgix1x-history:v0` (wandb-history) |
 | API/group fetch caveats | none |
+
+## Original Notes Preserved
+
+**Command** (the saturation-bookend arm of the 4-wide `lambda_sigreg` sweep, eager-plant-22 512x4 background):
+
+```bash
+python train.py --data ssv2 --steps 15000 --horizon-k 12 --lr-coarse-flow 1e-4 \
+  --lambda-var 0.5 --lambda-sigreg 10.0 \
+  --lambda-recon 0.05 --lambda-recon-pred 0 --recon-warmup-steps 2000 \
+  --decoder-dim 512 --decoder-blocks 4 --n-c 32 \
+  --checkpoint-dir /workspace/ckpt/sigreg10.0_D512x4_nc32 --log-every 50 --diag-every 500
+```
+
+**What it tested / config delta:** lambda_sigreg=10.0 forces isotropy hard — the "can rank move
+at all?" bookend. This is the run whose result was reused as the SIGReg substrate reference in
+investigation_009.

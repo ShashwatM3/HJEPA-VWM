@@ -72,3 +72,13 @@ It contributed to the SIGReg conclusion: rank can be moved by isotropy pressure,
 - `L_flow` going down is not Phase 1 success unless the baseline gates pass.
 - Present-only runs prove or disprove present bottleneck quality, not forecasting.
 - In residual mode, the copy baseline means predicting zero residual.
+
+## Original Notes Preserved
+
+**Mechanism read (W&B `fbqgix1x`):** the decisive point of the sweep. Rank rocketed to ~73.3
+(still rising at the cut) — proof the rank-13 ceiling is a regularizer choice, not architectural.
+But `coarse_vs_copy_ratio` worsened to ~8.2 (the worst of the sweep) and L_flow rose to ~0.93,
+while `coarse_copy_loss` fell to ~0.11 (c froze hardest in time). Verdict Healthy-rep-no-predictor:
+a rich, high-rank c that F_c cannot forecast. The variance floor was continuously active here
+(L_var ~0.03-0.05, std pinned ~0.90 below the 1.0 target because SIGReg flattens the spectrum) —
+which is why investigation_009 kept lambda_var=0.5 as load-bearing, not redundant.

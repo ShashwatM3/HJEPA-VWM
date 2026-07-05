@@ -20,3 +20,13 @@ Treat reconstruction as real but under-constrained. The next run should target r
 - Compare only compatible modes: full-prediction to full-prediction, present-only to present-only.
 - Preserve the exact config deltas, checkpoint path, and W&B run id so later investigations can trace the branch without relying on memory.
 - Do not use this run as evidence for a later-stage component that was inactive in its config.
+
+## Original Notes Preserved
+
+**Connection:** run 041 is the present-only anchor (control) for the SIGReg x covariance geometry
+sweep: fixed-position decoder + cosine + var 0.5 + SIGReg 5, no future branch, reaching rank ~49.6,
+cross-video cosine 0.09, L_recon_present 0.345 — a decodable, spread, video-specific present code
+(verdict Low-rank decodable; rank still near the slot-bounded band). It directly spawned the 10-run
+present-only geometry sweep (runs 042-051) that added covariance pressure and pushed rank past 100
+(up to ~150). Full analysis:
+[`ANALYSIS_inv011_fixed_position_present_recon.md`](ANALYSIS_inv011_fixed_position_present_recon.md).

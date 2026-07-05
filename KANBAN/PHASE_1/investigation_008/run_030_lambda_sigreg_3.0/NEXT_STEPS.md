@@ -20,3 +20,12 @@ The next controlled axis should target latent utilization or bottleneck geometry
 - Compare only compatible modes: full-prediction to full-prediction, present-only to present-only.
 - Preserve the exact config deltas, checkpoint path, and W&B run id so later investigations can trace the branch without relying on memory.
 - Do not use this run as evidence for a later-stage component that was inactive in its config.
+
+## Original Notes Preserved
+
+**Connection:** one arm of the 4-wide lambda_sigreg sweep {0.3, 1.0, 3.0, 10.0}. Read together
+with the other arms, not alone. The wave conclusion — rank rises monotonically with lambda
+(13 -> 34 -> 73) while copy ratio worsens monotonically (2.2 -> 4.7 -> 8.2) — is decisive
+evidence the disease is TEMPORAL, not utilization, and forced the residual-prediction pivot in
+investigation_009 (run 034 SIGReg substrate, run 035 residual). Do not build prediction on this
+config: its c is rich but static.

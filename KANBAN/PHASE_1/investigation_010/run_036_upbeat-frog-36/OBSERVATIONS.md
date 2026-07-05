@@ -74,3 +74,11 @@ The research moved to reconstruction geometry and decoder honesty, because predi
 - `L_flow` going down is not Phase 1 success unless the baseline gates pass.
 - Present-only runs prove or disprove present bottleneck quality, not forecasting.
 - In residual mode, the copy baseline means predicting zero residual.
+
+## Original Notes Preserved
+
+**Mechanism read (W&B `b4lf89if`):** reached only ~step 250, so all diagnostics are step-0
+init values (rank 9.47, cross-video cosine 0.72, std 0.50, copy ratio 22.9). No learning signal —
+this is an infrastructure record confirming the residual + plumbing launch is well-formed
+(predict_residual in config, sigreg_scale ramping, finite losses), not a result. Relaunched
+as run 037.

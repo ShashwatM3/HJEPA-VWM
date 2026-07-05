@@ -36,3 +36,16 @@ Verdict distribution: Collapsed rep=1, Healthy rep, no predictor=1, Low-rank dec
 ## What Changed The Research Direction
 
 The next question is whether sharper slot attention or a different bottleneck geometry can retain content without needing external geometry regularizers, then transfer that geometry back into full prediction.
+
+## Original Notes Preserved
+
+This investigation split cleanly into three findings. (1) The cosine reconstruction loss (run 038)
+halved the recon floor (~0.585 -> ~0.346) but did not move the copy gate — better readout geometry,
+not better forecasting. (2) The fixed-position decoder (runs 040/041) removed the decoder's
+unconditional template loophole; run 040 reached the best sustained copy ratio in the project (0.97,
+still short of 0.70), and run 041 gave a clean present-only anchor at rank ~50. (3) The present-only
+geometry sweep (runs 042-051) proved B+D can carry a very rich present code — rank up to ~150 at
+sig5/cov0.01 (run 047), covariance the dominant lever — while keeping videos distinct. The negative
+control run 039 (present-only, legacy loss, no geometry) collapsed, confirming those wins come from
+the geometry regularizers, not reconstruction alone. The unifying caveat: every strong result here
+is PRESENT-side; no full-prediction run has inherited this geometry and passed the Phase 1 gates.

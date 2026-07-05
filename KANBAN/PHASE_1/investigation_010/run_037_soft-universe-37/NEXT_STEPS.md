@@ -20,3 +20,15 @@ The representation is good enough that the next question is predictor conditioni
 - Compare only compatible modes: full-prediction to full-prediction, present-only to present-only.
 - Preserve the exact config deltas, checkpoint path, and W&B run id so later investigations can trace the branch without relying on memory.
 - Do not use this run as evidence for a later-stage component that was inactive in its config.
+
+## Original Notes Preserved
+
+**Connection:** this run reframed the whole program. Because a fully healthy, rank-61,
+video-specific c STILL only ties copy, the next branch (investigation_011) stopped trying to
+improve the representation and instead attacked reconstruction GEOMETRY and decoder HONESTY: it
+introduced the cosine reconstruction loss (which the very next run 038 applied to this exact
+recipe, dropping L_recon_present from ~0.585 to ~0.346) and the fixed-position decoder (removes
+the decoder's template loophole). The deeper open question it left — is the copy gate even
+reconstruction-fixable, or is it a task/horizon property (c barely moves in the predictable
+band)? — is the thread the residual/rho analysis (inv009) and the present-only arc keep circling.
+Watch on any follow-up: coarse_vs_copy_ratio decisively < 1, not just c rank.

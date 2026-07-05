@@ -74,3 +74,13 @@ The next question is whether sharper slot attention or a different bottleneck ge
 - `L_flow` going down is not Phase 1 success unless the baseline gates pass.
 - Present-only runs prove or disprove present bottleneck quality, not forecasting.
 - In residual mode, the copy baseline means predicting zero residual.
+
+## Original Notes Preserved
+
+**Mechanism read (W&B `1u69hpfm`):** the cosine loss is a real reconstruction improvement — it
+drove `L_recon_present` down to ~0.346, roughly half the ~0.585 relative_mse floor that had held
+across investigations 006-010, because it removes magnitude as an escape route and forces angular
+alignment. But it did NOT move prediction: rank held ~60, cross-video cosine ~0.15, std ~1.01, and
+`coarse_vs_copy_ratio` stayed ~1.06 with batch-mean ~1.15 — the identical healthy-rep-no-predictor
+wall as run 037. Verdict Healthy-rep-no-predictor. The recon-geometry lever improves the decoder
+readout, not the forecaster.

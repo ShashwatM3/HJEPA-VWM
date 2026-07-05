@@ -20,3 +20,9 @@ The next controlled axis should target latent utilization or bottleneck geometry
 - Compare only compatible modes: full-prediction to full-prediction, present-only to present-only.
 - Preserve the exact config deltas, checkpoint path, and W&B run id so later investigations can trace the branch without relying on memory.
 - Do not use this run as evidence for a later-stage component that was inactive in its config.
+
+## Original Notes Preserved
+
+**Connection:** one arm of the 4-wide sweep. Its role is the low-middle anchor showing SIGReg is
+near-inert on rank below lambda~3. The wave (not this point) drove the temporal pivot to
+investigation_009.

@@ -76,3 +76,17 @@ Use `KANBAN/README_for_reading_experiments.md`. This run uses the **Present Reco
 | W&B run files | `artifact/3087327176/wandb_manifest.json` (0 bytes), `requirements.txt` (3821 bytes), `wandb-metadata.json` (2640 bytes) |
 | Logged artifacts | `run-bg7ennr5-history:v0` (wandb-history) |
 | API/group fetch caveats | none |
+
+## Original Notes Preserved
+
+**Command** (present-only geometry-sweep member; grid point lambda_sigreg=7.5 x lambda_cov=0.003 over the fixed-position/cosine present-only bottleneck; anchor/control = run 041 sig5/cov0):
+
+```bash
+python train.py --data ssv2 --steps 15000 --present-recon-only --recon-loss-mode cosine --lambda-recon 0.05 --lambda-var 0.5 --sigreg-warmup-steps 2000 --decoder-dim 512 --decoder-blocks 4 --n-c 32 --horizon-k 12 --log-every 50 --diag-every 500 \
+  --lambda-sigreg 7.5 --lambda-cov 0.003 \
+  --checkpoint-dir /workspace/ckpt/inv011_present_only_geometry_sweep/run_048_po_geom_sig7p5_cov0p003
+```
+
+**What it tested / config delta:** one point in the lambda_sigreg {5,7.5,10,12.5} x lambda_cov
+{0,0.003,0.01} grid. All non-swept knobs are held at the run-041 background so the two geometry
+weights are the only variables. Present-only: F_c is inactive.

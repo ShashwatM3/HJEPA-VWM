@@ -21,3 +21,12 @@ Verdict distribution: Collapsed rep=1.
 ## What Changed The Research Direction
 
 Continue monitoring the late diagnostic window. If the same pattern holds, sharpened slots alone are not enough; geometry regularization or a stronger bottleneck design remains necessary.
+
+## Original Notes Preserved
+
+Final (run finished): the sharp-slot reconstruction-only run collapsed to a video-independent
+template — reconstruction excellent (0.293) but `c_effective_rank` 13.4, cross-video cosine 0.906,
+std 0.295, `L_cov` rising to 30.3. Matched against the investigation_011 geometry-on runs, which by
+step 8000 were already at rank 78-139 with std ~0.97 and cosine ~0.08, run 052 was diverging the
+opposite way. The template mechanism (~85% of recon improvement is video-independent) is what
+investigation_013's residual target then removed. Verdict: Collapsed rep, hypothesis falsified.

@@ -22,3 +22,13 @@ This investigation feeds into `investigation_012`: sharp-slot bottleneck reconst
 - Do not cite a low `L_flow` as success without the copy and batch-mean gates.
 - Do not compare residual-mode copy ratios against full-latent copy ratios without naming the mode difference.
 - When reviving this branch, start from the exact run folder and W&B id, not a remembered nickname.
+
+## Original Notes Preserved
+
+The open question this investigation handed forward: can a sharper bottleneck ARCHITECTURE retain
+this rich present geometry WITHOUT the external SIGReg/covariance regularizers, so it could later be
+transferred cheaply into prediction? That is exactly investigation_012's run 052 (sharpened slot
+attention, reconstruction-only, all geometry regularizers off). The two durable code artifacts from
+this investigation — the cosine reconstruction loss and the fixed-position decoder — carry into every
+run afterward (052, 053, 054). The standing transfer goal remains: take a geometry-holding present-only
+bottleneck into a full-prediction run and beat the copy/batch-mean gates.

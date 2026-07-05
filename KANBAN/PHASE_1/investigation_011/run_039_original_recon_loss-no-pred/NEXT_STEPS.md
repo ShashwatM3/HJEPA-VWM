@@ -20,3 +20,12 @@ Do not transfer this config directly into prediction. First add or restore geome
 - Compare only compatible modes: full-prediction to full-prediction, present-only to present-only.
 - Preserve the exact config deltas, checkpoint path, and W&B run id so later investigations can trace the branch without relying on memory.
 - Do not use this run as evidence for a later-stage component that was inactive in its config.
+
+## Original Notes Preserved
+
+**Connection:** the negative control proving present-only reconstruction needs geometry pressure.
+It motivates two threads: (a) the fixed-position decoder (run 040/041) to remove the decoder-side
+template loophole, and (b) the present-only geometry sweep (runs 042-051) to map which SIGReg x
+covariance recipe makes a rich present bottleneck. Much later, run 052 revisits this exact "no
+geometry" setup on the sharpened bottleneck (still collapses), and run 053 adds the residual target
+to fix the template shortcut specifically.
