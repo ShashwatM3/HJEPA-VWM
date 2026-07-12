@@ -173,8 +173,11 @@ Root implementation files:
 | Path | Role |
 |---|---|
 | `config.py` | Dataclass configuration, path contract, dimensions, optimizer/loss knobs. |
-| `data.py` | SSv2 video dataset and dataloader. Produces context/target clip pairs. |
+| `data.py` | Clip-per-file video dataset and dataloader. Produces context/target clip pairs from SSv2 `.webm` symlinks or EGO4D `.mp4` chunks. |
 | `make_subset.py` | Builds `ssv2_tiny` as symlinks plus `manifest.json`. |
+| `select_ego4d_uids.py` | Selects scenario-diverse EGO4D source-video UIDs, train/validation split, and download batches from `ego4d.json`. |
+| `chunk_ego4d.py` | Chunks downloaded EGO4D 540ss videos into 4-second, 12 FPS, 256px-shorter-side H.264 `.mp4` clips under `data/ego4d`. |
+| `make_ego4d_subset.py` | Builds `ego4d_tiny` as symlinks into `data/ego4d` plus `manifest.json`. |
 | `models.py` | All `nn.Module` classes currently implemented. |
 | `losses.py` | Pure tensor losses and detach helper. No parameters. |
 | `diagnostics.py` | Collapse metrics, baseline comparisons, AGC, weight-decay grouping. |
@@ -247,7 +250,10 @@ Runtime assets live outside the repo under `/workspace` on RunPod:
 /workspace/hierarchal-jepa-flow-world-model/  # git repo, code only
 /workspace/data/ssv2/                         # full SSv2 symlink layout
 /workspace/data/ssv2_tiny/                    # symlink smoke subset
+/workspace/data/ego4d/                        # EGO4D chunk corpus, real .mp4 files
+/workspace/data/ego4d_tiny/                   # symlink smoke subset
 /workspace/ssv2_raw/                          # raw .webm backing files
+/workspace/ego4d_raw/                         # transient EGO4D CLI raw downloads + kept manifests
 /workspace/checkpoints/                       # training checkpoints
 /workspace/hf_cache/                          # Hugging Face / diffusers cache
 ```
@@ -263,9 +269,24 @@ auto-detection.
 4. Creates idempotent symlinks in `<data_root>/ssv2_tiny`.
 5. Writes `manifest.json`.
 
+EGO4D build helpers:
+
+1. `select_ego4d_uids.py` reads `/workspace/ego4d_raw/v2/ego4d.json`, filters
+   unsuitable source videos, selects ~210 source hours, splits train/validation
+   by source UID, and writes four balanced batch UID files plus
+   `selection_manifest.json`.
+2. `chunk_ego4d.py` processes the raw `.mp4` files currently present in
+   `/workspace/ego4d_raw/v2/video_540ss`, writes real 4-second H.264 `.mp4`
+   chunks to `/workspace/data/ego4d/{train,validation}`, and rebuilds a
+   cumulative `chunk_manifest.json` by rescanning the output tree.
+3. `make_ego4d_subset.py` creates symlink-only `/workspace/data/ego4d_tiny`
+   from the chunk corpus, capped per source video for diversity.
+
 `data.py`:
 
-1. `SSV2Dataset` indexes `.webm` files in the selected split.
+1. `SSV2Dataset` indexes the sorted union of `.webm` and `.mp4` files in the
+   selected split. The class name is historical; the contract is a dataset root
+   with `train/` and `validation/` clip files.
 2. `_open_video_reader` opens decord `VideoReader(..., num_threads=1)`. The
    single-thread setting avoids known VP9/decord packet errors while dataloader
    workers still parallelize across videos.
@@ -849,7 +870,7 @@ Data/path defaults:
 | Field | Default |
 |---|---|
 | `data_root` | `os.environ["JEPA_DATA_ROOT"]` or `/workspace/data` |
-| `dataset` | `ssv2_tiny` |
+| `dataset` | `ssv2_tiny` (choices: `ssv2`, `ssv2_tiny`, `ego4d`, `ego4d_tiny`) |
 | `num_workers`, `pin_memory` | `8`, `True` |
 | `checkpoint_dir` | `/workspace/checkpoints` |
 | `hf_cache_dir` | `/workspace/hf_cache` |
@@ -957,7 +978,7 @@ For any code change, trace the relevant path in this order:
 Useful local checks:
 
 ```bash
-python -m py_compile config.py data.py models.py losses.py diagnostics.py train.py make_subset.py
+python -m py_compile config.py data.py models.py losses.py diagnostics.py train.py make_subset.py select_ego4d_uids.py chunk_ego4d.py make_ego4d_subset.py
 pytest -q
 python -c "from models import smoke_test_models; smoke_test_models()"
 python -c "from diagnostics import smoke_test_diagnostics; smoke_test_diagnostics()"
@@ -986,7 +1007,8 @@ optimizer grouping, reconstruction, decoder, SIGReg, or present-only mode.
 
 `data.py`:
 
-- Owns only SSv2 loading and preprocessing.
+- Owns only clip-per-file video loading and preprocessing for SSv2 and EGO4D
+  chunk roots.
 - Keep context/target transforms shared where intended.
 - Do not change video sampling semantics without updating docs and tests.
 
@@ -995,6 +1017,14 @@ optimizer grouping, reconstruction, decoder, SIGReg, or present-only mode.
 - Symlink-only. Never copy or re-encode video bytes.
 - Idempotent reruns should be safe.
 - Keep manifest output deterministic.
+
+`select_ego4d_uids.py`, `chunk_ego4d.py`, `make_ego4d_subset.py`:
+
+- Offline dataset-preparation helpers, not training dependencies.
+- Keep UID selection deterministic and source-video-level train/validation
+  splitting intact.
+- Keep EGO4D chunking idempotent and batch-friendly; raw downloads are
+  transient, but manifests and `ego4d.json` are provenance.
 
 `models.py`:
 

@@ -358,9 +358,14 @@ def build_manifest(cfg: Config, split: str, n_videos: int, max_offset: int, seed
     """
     _require_torch()
     root = Path(cfg.data.dataset_root())
-    paths = sorted(str(p.relative_to(root)) for p in (root / split).glob("*.webm"))
+    split_dir = root / split
+    # Same webm+mp4 union as data.SSV2Dataset so probe manifests cover EGO4D chunks too.
+    paths = sorted(
+        str(p.relative_to(root))
+        for p in [*split_dir.glob("*.webm"), *split_dir.glob("*.mp4")]
+    )
     if not paths:
-        raise FileNotFoundError(f"No .webm files found in {root / split}")
+        raise FileNotFoundError(f"No .webm or .mp4 files found in {split_dir}")
     t_ctx, stride = cfg.model.t_ctx, cfg.train.frame_stride
     span = overlap_boundary(t_ctx, stride) + max_offset
     videos: list[dict] = []
@@ -775,7 +780,9 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Within-video temporal drift probe (V-JEPA embeddings vs bottleneck latents)."
     )
-    parser.add_argument("--data", choices=["ssv2", "ssv2_tiny"], default="ssv2_tiny")
+    parser.add_argument(
+        "--data", choices=["ssv2", "ssv2_tiny", "ego4d", "ego4d_tiny"], default="ssv2_tiny"
+    )
     parser.add_argument(
         "--split",
         default="validation",

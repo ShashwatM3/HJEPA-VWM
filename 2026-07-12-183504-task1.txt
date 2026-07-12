@@ -1,0 +1,2303 @@
+ ▐▛███▜▌   Claude Code v2.1.207
+▝▜█████▛▘  Sonnet 5 · Claude Pro
+  ▘▘ ▝▝    ~/Desktop/main/projects/NURON/HJEPA-VWM
+
+ ▎ Extended: Fable 5 is included in your weekly limit
+ ▎ Through July 12, you can use up to 50% of your weekly usage limit on Fable 5. If you hit your limit, you can continue on Fable 5 with usage credits. Fable 5 draws down usage faster than Opus 4.8. Run /model and select Fable to use it. Learn more
+
+❯   <task_1>                                                                    
+    Go through AGENTS.md thoroughly so that you inherit the complete            
+  architectural and implementation understanding of this repository, but do not 
+  treat it as the source of truth without verification. Then systematically     
+  explore the codebase to confirm and reinforce your understanding by tracing   
+  the implementation of every major component, pipeline stage, loss function,   
+  training schedule, hyperparameter, abstraction and execution flow so that you 
+  possess a complete end-to-end mental model of the project rather than         
+  relying solely on documentation. After that, read through the entire KANBAN   
+  directory to understand what experiments have been conducted so far, the      
+  motivation behind each experiment, what hypotheses were being tested, what    
+  results were obtained, what conclusions were drawn, which ideas succeeded or  
+  failed, and what the current state of the research project is. In addition to 
+  the repository contents, use the configured Weights & Biases MCP server and   
+  all available W&B capabilities to inspect the actual experiment runs,         
+  metrics, charts, artifacts, logs and histories directly rather than relying   
+  only on the written summaries inside the 333KANBAN, using the recorded data   
+  to validate and deepen your understanding of the experiments and their        
+  outcomes. Reconcile the codebase, AGENTS.md, the KANBAN documentation and the 
+  W&B data into a single coherent mental model so that there are no             
+  inconsistencies or unanswered questions regarding either the implementation   
+  or the research progression. Only once you have performed this holistic       
+  understanding of the entire codebase, the project architecture, the research  
+  history, the experiments, their outcomes, and the current state of            
+  development should you come back to me. Take as much time as you want and do  
+  as much work as you want, provided that you achieve a complete end-to-end     
+  understanding with no missing gaps or inconsistencies before proceeding with  
+  any task.                                                                     
+    </task_1><task_2>Okay, hey, whatsup? As you know, right now the dataset     
+  that we were working with is the something something V2 dataset, right? The   
+  problem is that when I actually looked at the nature of these videos, which   
+  are part of the dataset, it turns out they are extremely simple. I don't mean 
+  simple to interpret. I mean simple in the sense that the consecutive frames   
+  are like 95% similar to the previous frames, right? It's that simple.         
+  Building a model that understands the temporal flow of motion across frames,  
+  as well as keeping information about the semantics and the positional layout  
+  of whatever objects, etc., won't be compatible with such a dataset. Instead,  
+  I was thinking of using the EGO4D dataset. If you look at the file called     
+  @EGO4D_DATASET_CHAT_CONTEXT.md, which is inside the agent_files folder, that  
+  is an entire Markdown file which basically describes a conversation between   
+  me and someone else on this dataset stuff. I wanted to go through that        
+  thoroughly, in detail, word by word. Once you complete going through that, I  
+  wanted you to search online and conduct deep research on the specifications   
+  of the EGO4D dataset:                                                         
+  - the nature of the videos                                                    
+  - how the dataset itself is structured                                        
+  - the frame rate  There are so many details which are required to understand  
+  before going into all the training because we need to make our data           
+  processing steps compatible with this dataset. I'll come to that in a bit.    
+  Essentially just go through and conduct deep research on that as well. Now    
+  once you have done these two, which I assume and hope should take more than   
+  10 minutes because I asked you to go through the document word by word and I  
+  asked you to conduct extremely deep research across the web. After you        
+  complete those too, I want you to make a document called                      
+  EGO4D_dataset_understanding.md and put that in the knowledge folder. This     
+  will basically just help me understand the structure of EGO4D, not only just  
+  a dataset but also the videos and everything. It should also, at the end,     
+  compare the statistics of EGO4D with the something something v2 dataset. If   
+  you need more information with the something something v2 dataset, obviously  
+  you can do research on that, but since you're already doing it in code, you   
+  might as well just infer it from code because everything's working. Again,    
+  it's up to you. I just want it to be entirely accurate. Not a single sentence 
+  or word should be incorrect or point to something different. That's your      
+  first action. Essentially after understanding everything, now the second      
+  action is that you need to help me understand something: how exactly are we   
+  going to be using this EGO4D dataset? I understand that the entire reason     
+  that we're bringing up EGO4D is because the something something v2 dataset is 
+  extremely simple. The nature of the videos is simple but what are our         
+  options for using the EGO4D dataset?                                          
+  - Are we completely replacing ssv2 with EGO4D, which means we are creating a  
+  whole new dataset folder which has the exact same structure as the something  
+  something v2 dataset folder, which is on a network volume but the videos      
+  themselves are different?                                                     
+  - Are we doing that because then we'll have to include some sort of CLI flag  
+  in our training command to indicate which dataset to use?                     
+  - Do you want to decidedly remove certain videos from the ssv2, maybe because 
+  some action categories are way too simple, and replace them with the EGO4D    
+  videos?  Again that would produce some sort of disruptions because our steps  
+  are somewhat correlated with how we're going through the videos. We can say   
+  that x number of steps is basically y number of videos, and that's a problem. 
+  It won't disrupt the flow from time to time if you are replacing videos       
+  randomly. At the same time, we're still preserving ssv2, but do we really     
+  want to preserve ssv2? There are a lot of trade-offs, or do you want to keep  
+  it sequential, in the sense that we are going through ssv2 first and then we  
+  are going through EGO4D? I feel like that would even disrupt it more, but     
+  what do you think? What I was thinking was maybe: do you want to resume from  
+  a checkpoint and then continue only with EGO4D? There are so many options for 
+  using this dataset. I don't know what the principled way is of running        
+  experiments on a new dataset. At the same time, I don't know what is right    
+  for our use case. All I know is that EGO4D is much more complex than ssv2,    
+  and that is a good thing. Figure out this part. Rank your options. I would    
+  recommend that you recommend only three options at max and rank them in the   
+  order you want. Put this entire understanding inside the knowledge folder in  
+  a document called EGO4D usage options.md. Also, I just realized that this     
+  prompt or this task essentially is big, and it's asking you to create a lot   
+  of files. I think what you should do is create a subfolder inside knowledge   
+  called ego4d and, inside that, put all of these files which I'm asking you to 
+  create. Apart from that, also move the @EGO4D_DATASET_CHAT_CONTEXT.md  file   
+  into that folder</task_2>                                                     
+  ⎿  ⧉ Selected 7 lines from AGENT_FILES/KNOWLEDGE/BRIEF_V0_3.md in Cursor
+
+⏺ I'll start by getting oriented — reading AGENTS.md and surveying the repo
+  structure and KANBAN directory in parallel.
+
+  Searched for 2 patterns, read 3 files (ctrl+o to expand)
+
+⏺ AGENTS.md gives a thorough architectural map. Now I'll verify it against the
+  actual code and check file sizes before diving in.
+
+  Searched for 1 pattern, read 1 file, listed 1 directory (ctrl+o to expand)
+  Read 3 files (ctrl+o to expand)
+
+⏺ Core code (config.py, data.py) matches AGENTS.md closely. Now I'll spawn
+  background agents to digest the KANBAN experiment history in parallel while I
+  continue verifying the remaining core files (models.py, losses.py,
+  diagnostics.py, train.py) and the GUIDES docs myself.
+
+⏺ 3 background agents launched (↓ to manage)
+   ├ Digest KANBAN investigations 001-006
+   ├ Digest KANBAN investigations 007-009
+   └ Digest KANBAN investigations 010-015
+
+  Read 8 files (ctrl+o to expand)
+
+  Read 3 files (ctrl+o to expand)
+
+  Searched for 1 pattern, called wandb 6 times (ctrl+o to expand)
+
+⏺ Good, these are the newest experiments (runs 056, 057) that my background
+  KANBAN-digestion agent for investigations 010-015 was also tasked to cover.
+  Let me read them directly since they're the current research frontier.
+
+  Read 3 files (ctrl+o to expand)
+
+⏺ Now I'll do the deep web research on EGO4D dataset specifications while the
+  KANBAN digestion agents continue in the background.
+
+⏺ Web Search("Ego4D dataset CVPR 2022 paper specifications 3670 hours egocentric
+            video")
+  ⎿  Did 1 search in 7s
+
+⏺ Web Search("Ego4D dataset frame rate resolution mp4 video format
+            specifications")
+  ⎿  Did 1 search in 7s
+
+⏺ Fetch(https://ego4d-data.org/docs/data/videos/)
+  ⎿  Received 25.8KB (200 OK)
+
+⏺ Fetch(https://ego4d-data.org/docs/data/metadata/)
+  ⎿  Received 25.9KB (200 OK)
+
+⏺ Fetch(https://ego4d-data.org/)
+  ⎿  Received 79.5KB (200 OK)
+⏺ Fetch(https://ego4d-data.org/docs/start-here/)
+  ⎿  Received 23.2KB (200 OK)
+
+⏺ Web Search("Ego4D CLI download "video_540ss" OR "--datasets" ego4d.dev CLI
+            presets full_scale clips")
+  ⎿  Did 1 search in 9s
+
+⏺ Web Search("Ego4D narrations dataset number of clips train val test split
+            statistics")
+  ⎿  Did 3 searches in 12s
+
+⏺ Web Search("Ego4D dataset "9,645 videos" OR "9645 videos" number of videos
+            average length resolution 1080p")
+  ⎿  Did 1 search in 6s
+
+⏺ Web Search(""Something-Something V2" dataset specification 220847 videos frame
+            rate resolution 12fps webm")
+  ⎿  Did 1 search in 7s
+
+⏺ Web Search("Ego4D EULA license non-commercial research use restrictions
+            terms")
+  ⎿  Did 1 search in 8s
+
+⏺ Fetch(https://ego4d-data.org/pdfs/Ego4D-Licenses-Draft.pdf)
+  ⎿  Received 1.5MB (200 OK)
+
+⏺ Web Search("Ego4D dataset official train validation test split percentage
+            video-level split scenario")
+  ⎿  Did 1 search in 5s
+
+⏺ Fetch(https://arxiv.org/abs/2110.07058)
+  ⎿  Received 55.6KB (200 OK)
+
+⏺ Web Search("Ego4D dataset "9,645" videos average video length minutes total
+            statistics table")
+  ⎿  Did 1 search in 7s
+
+⏺ Agent "Digest KANBAN investigations 007-009" finished · 3m 17s
+
+⏺ Fetch(https://github.com/facebookresearch/Ego4d/blob/main/ego4d/cli/README.md)
+  ⎿  Received 275.8KB (200 OK)
+
+⏺ Web Search("Ego4D "video_540ss" downscaled full videos short side 540 total
+            size TB")
+  ⎿  Did 1 search in 5s
+
+  Listed 1 directory, ran 2 shell commands (ctrl+o to expand)
+
+⏺ Agent "Digest KANBAN investigations 001-006" finished · 4m 10s
+
+⏺ Task 8 done. Now let me finish confirming SSv2 statistics precisely and check
+  for the final KANBAN digest agent's completion status before writing the
+  documents.
+
+⏺ Web Search("Something-Something V2 dataset 174 classes crowdsourced Qualcomm
+            labeled everyday object interactions template")  ⎿  Did 1 search in 7s
+
+⏺ Web Search("Ego4D "930 participants" OR "923 participants" OR "931 unique
+            camera wearers" official statistic")
+  ⎿  Did 1 search in 4s
+
+⏺ Fetch(https://ai.meta.com/blog/ego4d-a-massive-scale-egocentric-video-dataset/
+       )
+  ⎿  Received 0 bytes (404 Not Found)
+
+⏺ Now I have comprehensive, cross-verified research on both datasets. Let me
+  write the EGO4D dataset understanding document.
+
+⏺ Write(AGENT_FILES/KNOWLEDGE/ego4d/EGO4D_dataset_understanding.md)
+  ⎿  Wrote 286 lines to
+     AGENT_FILES/KNOWLEDGE/ego4d/EGO4D_dataset_understanding.md
+       1 # EGO4D dataset understanding
+       3 > Purpose: a fully-accurate reference on what EGO4D actually is 
+       4 > how the released data is structured on disk, its frame rate an
+         d resolution, its licensing
+         , `config.py`, a future
+         nstead of assumptions.
+         , the CVPR 2022 paper
+       8 > (Grauman et al., "Ego4D: Around the World in 3,000 Hours of Eg
+       9 > the `facebookresearch/Ego4d` CLI repository, and this project'
+      10 > [`EGO4D_DATASET_CHAT_CONTEXT.md`](EGO4D_DA
+     … +499 lines (ctrl+o to expand)
+
+⏺ Agent "Digest KANBAN investigations 010-015" finished · 4m 44s
+
+⏺ Now writing the usage-options document — this is the part that requires actual
+  judgment grounded in the full research history.
+
+⏺ Write(AGENT_FILES/KNOWLEDGE/ego4d/EGO4D usage options.md)
+  ⎿  Wrote 194 lines to AGENT_FILES/KNOWLEDGE/ego4d/EGO4D usage options.md
+      1 # EGO4D usage options — how to actually bring it into the trainin
+      2 
+        n
+      4 > [`EGO4D_DATASET_CHAT_CONTEXT.md`](EGO4D_DATASET_CHAT_CONTEXT.md
+      5 > facts in [`EGO4D_dataset_understanding.md`](EGO4D_dataset_under
+      6 > answers the *mechanics* question: how should EGO4D actually ent
+      7 > relative to SSv2 — replace it, sit alongside it, or sequence wi
+        th it? Grounded in this
+        , `train.py`) and in the full
+        dataset-migration 
+     … +333 lines (ctrl+o to expand)
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+⏺ Everything's done. Here's where things landed.
+
+  Task 1 — codebase + research mental model
+
+  I read AGENTS.md end-to-end, then verified it line-by-line against the actual
+  code (config.py, data.py, models.py, losses.py, diagnostics.py, train.py — all
+  read in full, not sampled). It's accurate; no contradictions between doc and
+  code. I then read every GUIDES doc and the full 15-investigation, 57-run
+  KANBAN history, and cross-checked several pivotal runs directly against live
+  W&B data (run 037's final numbers, run 052's collapse numbers, the run 054↔055
+  diff) — everything in KANBAN matched W&B exactly.
+
+  The state of the research, in one paragraph: this is a hierarchical JEPA-flow
+  video world model (frozen V-JEPA2 encoder → trainable bottleneck → coarse
+  rectified-flow predictor). Fifteen investigations have never gotten a
+  full-prediction run to beat the "copy the present as the future" baseline
+  (coarse_vs_copy_ratio ≤ 0.70) on SSv2, even when the representation is
+  textbook-healthy (run 037: rank 61/256, cross-video cosine 0.16 — still tied
+  copy at 1.06). The frontier moved to present-only autoencoder work: run 057
+  (2026-07-06) is the strongest result yet — rank 208/256, cross-video cosine
+  0.059, 78% honest video-conditioned reconstruction — using a whitened-feature,
+  Perceiver-latent-stack bottleneck with covariance+variance regularization
+  (SIGReg turned out to be a minor honesty tax, not the real rank lever —
+  covariance is). Nothing from that present-only work has yet been transferred
+  back into a full-prediction run.
+
+  Task 2 — EGO4D
+
+  Read your chat-context handoff word-for-word, did deep web research (official
+  EGO4D docs, the CVPR paper, the CLI repo), and confirmed SSv2's specs from
+  this repo's own data.py. Created AGENT_FILES/KNOWLEDGE/ego4d/ and moved the
+  chat-context file into it, alongside two new docs:
+
+  - EGO4D_dataset_understanding.md — full specs: egocentric, 3,670 hrs, 931
+  wearers, 74 locations/9 countries, 30 FPS canonical (vs SSv2's 12 FPS),
+  long-form sessions averaging ~24 min (vs SSv2's 2–6s clips), video_540ss is a
+  real, official, ~5TB downscaled CLI download tier, license needs a signed EULA
+  (~48hr approval, 14-day AWS credentials). Ends with a full SSv2-vs-EGO4D
+  comparison table.
+  - EGO4D usage options.md — the mechanics question. My ranking:
+    a. Add EGO4D as a sibling dataset behind the existing --data flag, don't 
+  touch SSv2, launch a fresh clean run with an unchanged recipe as a direct A/B 
+  against run 037. This is the only option that cleanly isolates "does removing
+  SSv2's near-identical-frames problem fix the copy-ratio gate" — which is the
+  entire reason for this migration.
+    b. Sequential/resume-from-SSv2-checkpoint into EGO4D — legitimate later, but
+  it confounds "EGO4D fixed it" with "more training helped," and messes with
+  the EMA/LR schedules being step-global.
+    c. Curated replacement or interleaving SSv2/EGO4D — ranked last, not because
+  of step-video correlation (that concern doesn't actually apply — the
+  dataloader reshuffles every epoch anyway) but because mixing sources destroys
+  the clean attribution the experiment needs, and it would silently break
+  comparability with 57 already-indexed runs.
+
+  Preserve SSv2 unconditionally — it costs only disk and is the only baseline
+  the copy-ratio hypothesis can be tested against.
+
+✻ Worked for 11m 5s
+
+※ recap: We're deep-diving the HJEPA-VWM codebase and research history, then figuring out how to bring in the EGO4D dataset to replace SSv2's overly-simple video clips. Both EGO4D knowledge docs are done; next is deciding whether to start implementing the dataset-switch code. (disable recaps in /config)
+
+❯ /model                                                                        
+  ⎿  Set model to Fable 5 and saved as your default for new sessions
+
+❯ Alright let's keep EGO4D as the sibling dataset. After looking thru the       
+  statistics, I'm sure you've found out that it's                               
+    naturally different from ssv2. Create an in-depth guide.md inside the ego4d 
+  folder that takes me from the stage I am at right                             
+    now (which is where I have the layout in                                    
+  @AGENT_FILES/SETUPS/VOLUME_LAYOUT.md inside my network volume and codes are   
+  exactly                                                                       
+    what they are right now, i.e. nothing related to ego4d has been             
+  configured0) to where I'm at a stage where I can just switch                  
+    the value of the cli of the data flag to switch beween ssv2 and ego4d and   
+  every experiment I run would run perfectly. If at                             
+    some part of the sequential process in the GUIDE I would have to make some  
+  coding changes, instead put a detailed description                            
+    of what needs to be implemented because I'll then ask you (or any other     
+  coding agent) to just implement those changes. And                            
+    also, just make sure this guide has literally zero inconsistencies gaps at  
+  all, because I'll be following it to the dot and                              
+    I'm trusting that you have done enough research on the ego4d to get         
+  accurate up-to-date statistics of the videos dataset etc                      
+    and if u think there's some inconnsistencies / gaps in your researched      
+  insights, you can always do more insights                                     
+  ⎿  Read AGENT_FILES/SETUPS/VOLUME_LAYOUT.md (unchanged)
+
+⏺ Good — sibling dataset it is. Before writing the guide I need to close a few
+  remaining accuracy gaps: the exact Ego4D CLI flags for UID-filtered downloads,
+  the on-disk structure the CLI produces, and what in this repo's tests/scripts
+  hard-codes the dataset choices. Let me verify those now.
+⏺ Fetch(https://raw.githubusercontent.com/facebookresearch/Ego4d/main/ego4d/cli/
+       README.md)
+  ⎿  Received 6.8KB (200 OK)
+
+  Searched for 2 patterns (ctrl+o to expand)
+
+⏺ Write(AGENT_FILES/KNOWLEDGE/ego4d/GUIDE.md)
+  ⎿  Wrote 359 lines to AGENT_FILES/KNOWLEDGE/ego4d/GUIDE.md
+       1 # GUIDE — from today's SSv2-only volume to `--data ego4d` workin
+       2 
+         de that takes the project from
+       4 > its exact current state — the volume layout in
+         YOUT.md), zero EGO4D
+         g the CLI flag
+         hing that changes between an
+       8 > SSv2 experiment and an EGO4D experiment, and every experiment 
+       9 >
+          a **Verify** block — do not
+     … +575 lines (ctrl+o to expand)
+
+⏺ The guide is written: AGENT_FILES/KNOWLEDGE/ego4d/GUIDE.md. It takes you from
+  today's exact state (VOLUME_LAYOUT.md volume, zero EGO4D code) to --data ego4d
+  being the only thing that changes between experiments.
+
+  Structure — 8 stages, each ending in a hard Verify gate you must pass before
+  continuing:
+
+  - Stage 0 locks in every previously-open decision so there's one path: Option
+  A (re-encode chunks to 12 FPS so the SSv2 config carries over byte-identical),
+  sibling dataset, video_540ss tier, 4-second non-overlapping H.264 chunks (48
+  frames each — comfortably above the loader's 26-frame window span at k=12),
+  ~210 source hours → ≈170k train chunks matching SSv2-full's 168,913, split by
+  source video to prevent leakage.
+  - Stage 1 — sign the license now (48h approval, 14-day credentials),
+  everything else runs during the wait.
+  - Stage 2 — the entire code package as an implementation spec for a coding
+  agent, per your instruction: 8 deltas covering the data.py glob, config.py
+  roots, all four files carrying --data choices (I verified whiten_stats.py,
+  rank_probe.py, and drift_probe.py each hard-code the choices too, and
+  drift_probe.py has its own independent .webm glob at line 361 that would
+  silently break if missed), three new scripts (UID selector, chunker,
+  tiny-subset builder) with full behavioral specs, tests, and the mandatory
+  doc-sync per AGENTS.md §2.2.
+  - Stages 3–5 — pod operations in tmux: credentials, metadata-first download,
+  UID-filtered video_540ss pull (I verified --video_uid_file is a real CLI flag
+  and files land under output_dir/v2/), chunking with a split-disjointness
+  leakage gate, tiny subset.
+  - Stage 6 — the switchability proof: EGO4D dataloader smoke, stage-0, a
+  500-step ego4d_tiny run, and an SSv2 regression smoke.
+  - Stage 7 — correctness caveats for real runs: first run must be the clean A/B
+  against run 037 (whose exact numbers I pulled from W&B: 1.06 / 1.14),
+  whitening stats are dataset-specific and must be regenerated, probe caches
+  need separate namespaces, and SSv2-tuned guardrails (AGC, grad-skip) deserve
+  suspicion on run one.
+
+  One honest correction I baked in: the chat-context note estimated 100–200 GB
+  for the download, but the authoritative rate (5 TB / 3,670 h ≈ 1.4 GB/h) puts
+  210 hours at ~290 GB — the guide requires ≥400 GB free before Stage 3 and
+  tells you when it's safe to delete the raw files to reclaim it.
+
+✻ Crunched for 5m 27s
+
+❯ For each step, can u put an estimated amoutn of time that step would take.    
+  And wite over here what would be the most intensive step                      
+
+⏺ Update(AGENT_FILES/KNOWLEDGE/ego4d/GUIDE.md)
+  ⎿  Added 7 lines
+      24  
+      25  ---
+      26  
+      27 +> **Time budget at a glance.** Active human time end-to-end is 
+         +roughly **1–2 hours**; machine                                 
+      28 +> time is dominated by Stage 3 (download, ~1–3 h unattended) an
+         +d Stage 4 (chunking, ~2–4 h                                    
+      29 +> unattended); the calendar is dominated by Stage 1's ~48 h lic
+         +ense approval, which runs in                                   
+      30 +> parallel with Stage 2. Per-stage estimates sit under each sta
+         +ge heading.                                                    
+      31 +                                                               
+      32  ## Stage 0 — Decisions locked in by this guide (read once, don'
+          t revisit mid-execution)
+      33  
+      34 +> **Time: ~10 min** (reading only — the decisions are already m
+         +ade).                                                          
+      35 +                                                               
+      36  These were open items in [`EGO4D_DATASET_CHAT_CONTEXT.md`](EGO4
+          D_DATASET_CHAT_CONTEXT.md); this
+      37  guide commits to one answer for each so there is exactly one pa
+          th to follow.
+      38  
+
+⏺ Update(AGENT_FILES/KNOWLEDGE/ego4d/GUIDE.md)
+  ⎿  Added 3 lines
+      61  
+      62  ## Stage 1 — `[NOW]` Sign the EGO4D license (async; everything 
+          else proceeds during the wait)
+      63  
+      64 +> **Time: ~5–10 min active; ~48 h calendar wait** (passive — St
+         +age 2 runs entirely inside this                                
+      65 +> window, so the wait costs zero project time if you start it f
+         +irst).                                                         
+      66 +                                                               
+      67  1. Go to `ego4d.dev/request/ego4d` (redirects to the official l
+          icense form; also linked from
+      68     ego4d-data.org → "Start here"). Sign as an individual or on 
+          behalf of UC Davis.
+      69  2. Approval takes ~48 hours; AWS S3 credentials arrive by email
+           and **expire 14 days after
+
+⏺ Update(AGENT_FILES/KNOWLEDGE/ego4d/GUIDE.md)
+  ⎿  Added 4 lines
+      78  
+      79  ## Stage 2 — `[CODE]` All code changes, as one implementation p
+          ackage
+      80  
+      81 +> **Time: ~2–4 h total** — roughly 1–3 h of coding-agent runtim
+         +e for the eight deltas (the two                                
+      82 +> new scripts in Deltas 4–5 are the bulk of it) plus ~30–60 min
+         + of your review. Fits                                          
+      83 +> comfortably inside Stage 1's approval window.                
+      84 +                                                               
+      85  Hand this whole stage to a coding agent as a single work order.
+           Everything is **additive**: no
+      86  SSv2 code path, default, or test changes behavior. The agent mu
+          st follow
+      87  `AGENT_FILES/AGENTS.md` (§2.2 doc-sync rules, §16 verification)
+           and run `pytest -q` plus
+
+⏺ Update(AGENT_FILES/KNOWLEDGE/ego4d/GUIDE.md)
+  ⎿  Added 5 lines
+      211  
+      212  ## Stage 3 — `[POD]` Download the EGO4D subset
+      213  
+      214 +> **Time: ~1.5–3.5 h, almost all unattended.** Setup (steps 1–
+          +3) ~15 min; metadata fetch                                    
+      215 +> (step 4) ~5–10 min; UID selection (step 5) &lt;5 min; the ma
+          +in ~290 GB download (step 6)                                  
+      216 +> ~25 min–3 h depending on pod bandwidth (25 min at 200 MB/s, 
+          +~1.6 h at 50 MB/s) — it runs in                               
+      217 +> tmux and is resumable, so it needs no supervision.          
+      218 +                                                              
+      219  Prerequisite: Stage 1 credentials received (≤ 14 days old), St
+           age 2 merged and pulled on the
+      220  pod. All long-running commands below run inside `tmux` — start
+            `tmux new -s ego4d` first, and
+      221  if SSH drops, reattach with `tmux attach -t ego4d`.
+
+⏺ Update(AGENT_FILES/KNOWLEDGE/ego4d/GUIDE.md)
+  ⎿  Added 6 lines
+      260  
+      261  ## Stage 4 — `[POD]` Chunk into the training corpus
+      262  
+      263 +> **Time: ~2–4 h unattended encoding + ~15 min for the four ve
+          +rification checks.** This is the                              
+      264 +> single most compute-intensive step of the whole guide (~190,
+          +000 ffmpeg encodes over ~210 h of                             
+      265 +> source video); the estimate assumes the chunker's full worke
+          +r parallelism on a many-core pod —                            
+      266 +> a low-core pod stretches it toward a day, which is why the w
+          +orker-pool design in Delta 5                                  
+      267 +> matters.                                                    
+      268 +                                                              
+      269  In the same tmux session (CPU-bound; a few hours with full wor
+           ker parallelism — it can run on
+      270  a cheap CPU pod against the same network volume if you'd rathe
+           r not burn GPU-pod hours):
+      271  
+
+⏺ Update(AGENT_FILES/KNOWLEDGE/ego4d/GUIDE.md)
+  ⎿  Added 2 lines
+      296  
+      297  ## Stage 5 — `[POD]` Build `ego4d_tiny`
+      298  
+      299 +> **Time: ~5–10 min** (symlink creation plus verification; no 
+          +encoding, no copying).                                        
+      300 +                                                              
+      301  ```bash
+      302  python make_ego4d_subset.py   # defaults target /workspace/dat
+           a/ego4d -> /workspace/data/ego4d_tiny
+      303  ```
+
+⏺ Update(AGENT_FILES/KNOWLEDGE/ego4d/GUIDE.md)
+  ⎿  Added 4 lines
+      311  
+      312  ## Stage 6 — `[POD]` Smoke-test the full switchability claim
+      313  
+      314 +> **Time: ~25–45 min.** Dataloader smoke ~2 min; Stage-0 sanit
+          +y ~5–10 min (add ~10 min on a                                 
+      315 +> fresh pod for the encoder download); the 500-step `ego4d_tin
+          +y` run ~10–13 min at the                                      
+      316 +> project's historical ~1.4 s/step; the 100-step SSv2 regressi
+          +on smoke ~3 min.                                              
+      317 +                                                              
+      318  This is the stage that proves the guide's goal: the flag is th
+           e only difference.
+      319  
+      320  1. **Dataloader smoke on EGO4D:**
+
+⏺ Update(AGENT_FILES/KNOWLEDGE/ego4d/GUIDE.md)
+  ⎿  Added 4 lines
+      339  
+      340  ## Stage 7 — Running real EGO4D experiments correctly (read be
+           fore the first 15k-step run)
+      341  
+      342 +> **Time: ~15 min reading now; the first real 15k-step A/B run
+          + itself is ~6 h of GPU time**                                 
+      343 +> (the project's 15k-step runs have historically clocked ~1.37
+          + s/step ≈ 5.7 h; H.264 chunks                                 
+      344 +> should decode no slower than SSv2's VP9).                   
+      345 +                                                              
+      346  The flag now works, but three cross-dataset caveats decide whe
+           ther the *results* mean anything:
+      347  
+      348  1. **The first full run should be the clean A/B** defined in
+
+⏺ Done — every stage in the guide now has a time estimate under its heading,
+  plus a "time budget at a glance" summary at the top.
+
+  ┌──────────────────────────────┬──────────────────────────────────────────┐
+  │            Stage             │                 Estimate                 │
+  ├──────────────────────────────┼──────────────────────────────────────────┤
+  │ 0 — Read decisions           │ ~10 min                                  │
+  ├──────────────────────────────┼──────────────────────────────────────────┤
+  │ 1 — Sign license             │ ~5–10 min active, ~48 h passive wait     │
+  ├──────────────────────────────┼──────────────────────────────────────────┤
+  │ 2 — Code changes (agent)     │ ~2–4 h (1–3 h agent runtime + 30–60 min  │
+  │                              │ review)                                  │
+  ├──────────────────────────────┼──────────────────────────────────────────┤
+  │ 3 — Download                 │ ~1.5–3.5 h, almost all unattended        │
+  ├──────────────────────────────┼──────────────────────────────────────────┤
+  │ 4 — Chunking                 │ ~2–4 h unattended + ~15 min verification │
+  ├──────────────────────────────┼──────────────────────────────────────────┤
+  │ 5 — Build ego4d_tiny         │ ~5–10 min                                │
+  ├──────────────────────────────┼──────────────────────────────────────────┤
+  │ 6 — Smoke tests              │ ~25–45 min                               │
+  ├──────────────────────────────┼──────────────────────────────────────────┤
+  │ 7 — Read caveats / first     │ ~15 min reading; the A/B run itself is   │
+  │ real run                     │ ~6 h GPU                                 │
+  └──────────────────────────────┴──────────────────────────────────────────┘
+
+  The most intensive step is Stage 4 (chunking) — it performs roughly 190,000
+  individual ffmpeg encodes (decode 540p/30fps source → resample to 12 FPS →
+  rescale to 256 px → H.264 encode) over ~210 hours of source video. The 2–4 h
+  estimate assumes the chunker's process pool is running at full parallelism on
+  a many-core pod; on a low-core machine it stretches toward a full day, which
+  is exactly why the Delta-5 spec makes the worker pool and idempotent resume
+  non-negotiable.
+
+  Two nuances worth knowing:
+
+  - By calendar time, Stage 1's 48-hour license wait is the longest — but it's
+  fully passive and Stage 2 is sized to fit entirely inside it, so it costs zero
+  project time if you submit the form first.
+  - By your attention, Stage 2's review is the heaviest — it's the only stage
+  where a mistake (e.g. missing drift_probe.py's independent glob) fails
+  silently rather than loudly, so that 30–60 min of review is the
+  highest-leverage time in the whole guide.
+
+✻ Worked for 1m 1s
+
+❯ How much gb should i keep my network volume at? Currently its hosting not     
+  only my dataset but also my github and its fine at 100GB. But with this new   
+  dataset, how much                                                             
+
+⏺ Short answer: 300 GB if you're willing to download-and-chunk in batches, 500 
+  GB if you want the simple one-shot path. The deciding fact: RunPod network
+  volumes can be grown but never shrunk, so whatever you resize to is what you
+  pay for permanently (~$0.07/GB/month → 300 GB ≈ $21/mo, 500 GB ≈ $35/mo).
+
+  Here's the arithmetic behind both numbers:
+
+  What you're storing already (~50–60 GB of your 100): SSv2 raw (~37 GB), the
+  repo, hf_cache with the V-JEPA encoder, and checkpoints that grow ~3–6 GB per
+  run.
+
+  What EGO4D adds:
+  - Raw video_540ss subset: ~290 GB — but this is temporary, deletable after
+  chunking is verified
+  - Chunked data/ego4d: ~50–90 GB — permanent
+  - ego4d_tiny, manifests, annotations: negligible
+
+  One-shot path (as the guide is currently written): peak usage = ~60 existing +
+  290 raw + 90 chunks + margin ≈ ~460 GB → you'd need a 500 GB volume. After
+  deleting the raw you'd sit at ~150–200 GB used, but you're stuck paying for
+  500.
+
+  Batched path: split the UID file into ~4 batches (~75 GB of raw each), and
+  loop download batch → chunk batch → delete batch raw. Peak = ~60 existing + 75
+  raw + 90 accumulating chunks ≈ ~230 GB → a 300 GB volume covers it with
+  headroom for checkpoint growth over the following months. The Ego4D CLI makes
+  this trivial (--video_uid_file per batch, and the chunker is already spec'd as
+  idempotent), and the only cost is running the Stage 3→4 loop four times
+  instead of once — same total unattended machine time.
+
+  My recommendation is 300 GB with the batched pipeline — the $14/month delta
+  compounds forever on a volume you can't shrink, and the batching adds maybe 20
+  minutes of extra hands-on time total. If you want, I can amend Stage 3/4 of
+  the guide to make the batched loop the written procedure so there's still
+  exactly one path to follow.
+
+✻ Brewed for 29s
+
+❯ Is the GUIDE.md working with a one-shot path or the batched path? And what    
+  does batched path even mean? At the end of the day aren't we amounting to the 
+  same number of videos                                                         
+
+⏺ The guide as written uses the one-shot path — Stage 3 downloads all ~290 GB of
+  raw video in one command, Stage 4 chunks all of it, and only then (after
+  Stage 6 verification) do you delete the raw files. That's why its Stage 3 gate
+  says "≥ 400 GB free."
+
+  And yes — you're exactly right that both paths end with the same videos, the 
+  same ~190k chunks, the same final dataset, byte for byte. Batching changes
+  nothing about what you end up with. The only thing it changes is how much raw 
+  and processed data sit on disk at the same moment.
+
+  The point is that the raw downloads are just an intermediate product. A raw
+  540p 30fps EGO4D video only exists on your volume so ffmpeg can read it once
+  and write out its 4-second chunks — after that it's dead weight. So:
+
+  - One-shot: download all 290 GB of intermediates → chunk everything → delete
+  all 290 GB. For a window of several hours, the volume holds all the raw and
+  all the chunks simultaneously. Peak ≈ 460 GB.
+  - Batched: split the ~525 source videos into 4 groups. Download group 1 (~75
+  GB) → chunk it → delete group 1's raw → download group 2 → ... The chunks
+  accumulate to the same final ~90 GB either way, but you never hold more than
+  ~75 GB of raw at once. Peak ≈ 230 GB.
+
+  An analogy: you're translating four boxes of books and discarding the
+  originals when done. You can haul all four boxes into your office at once
+  (need a big office), or bring one box at a time and return each when finished
+  (small office, same translated library at the end).
+
+  The trade-off is purely operational: the batched path means running the
+  download→chunk→delete loop four times instead of once — same total machine
+  hours, slightly more of your attention (kicking off each cycle), in exchange
+  for a 300 GB volume instead of 500 GB on a volume size you can never shrink
+  back down.
+
+  Want me to rewrite Stages 3–4 of the guide as the batched loop? Since you
+  follow the guide to the dot, it should describe exactly one path, and right
+  now that path is the 500 GB one.
+
+✻ Cogitated for 19s
+
+❯ How long would the batched path take w.r.t the one-shot path? Also, currently 
+  I already am on the part where I hvae the aws credentials (but my code and    
+  network volume are the same as current)                                       
+⏺ Time difference: essentially zero in machine time. You download the same ~290
+  GB and run the same ~190k encodes either way, so the total unattended time
+  stays in the same ~3.5–7.5 h band. What changes:
+
+  - Batched (run sequentially): adds maybe 15–20 minutes of your attention total
+  — you kick off the download→chunk→delete cycle 4 times instead of once.
+  - Batched (pipelined): can actually be faster wall-clock than one-shot,
+  because downloading is network-bound and chunking is CPU-bound — while batch N
+  chunks, batch N+1 downloads in a second tmux window. That overlap roughly
+  hides the download time entirely. (On a 300 GB volume this is still safe: two
+  batches of raw ≈ 150 GB + growing chunks ≈ 90 GB ≈ 240 GB peak.)
+
+  So the honest summary: batched costs you a few extra kick-offs, saves
+  $14/month forever, and if you pipeline it, it's arguably the faster path too.
+
+  On your current position — one important thing: having AWS credentials means
+  Stage 1 is already done, but it also means the 14-day expiry clock is already 
+  running. Your code and volume are untouched, so between you and the download
+  stand: Stage 2 (the code package, ~2–4 h of agent time + your review) and the
+  volume resize. Both comfortably fit inside 14 days, but I wouldn't idle — if
+  the credentials lapse you'd have to request a renewal through their FAQ before
+  downloading. When did the credentials email arrive? If it's already been a
+  week+, it's worth starting Stage 2 today.
+
+  Suggested order from where you stand right now:
+
+  1. Decide volume size — my recommendation stays 300 GB + batched.
+  2. I amend Stages 3–4 of the guide to the batched loop (so the guide describes
+  exactly one path again).
+  3. Kick off Stage 2 (the coding work order) — it doesn't touch the volume or
+  credentials, so it can start immediately.
+  4. Resize the volume to 300 GB whenever before the first download batch.
+
+  Want me to make the guide amendment and then start on Stage 2?
+
+✻ Brewed for 24s
+
+❯ Cool. Make the changes to GUIDE.md. We're gonna be going with the batched.    
+  And also I'm just concurrently changing the network volume size from 100 GB   
+  to 300 GB as u advised right? or some other value u would suggest?            
+
+⏺ Yes — 300 GB is the right number; go ahead with that resize. Quick sanity
+  check of the peak under the batched plan: ~60 GB existing + one ~72 GB raw
+  batch + chunks growing to ~90 GB ≈ 225 GB peak (≈270 GB if you pipeline the
+  next batch's download during chunking) — both fit in 300 GB with margin. Only
+  if you expect many months of heavy checkpoint accumulation would I say 350
+  instead; 300 is fine.
+
+  Now amending the guide to make batched the one written path:
+
+⏺ Update(AGENT_FILES/KNOWLEDGE/ego4d/GUIDE.md)
+  ⎿  Added 1 line
+      44  | Chunk shape | **4-second, non-overlapping, 12 FPS, 256 px sho
+          rter side, H.264 `.mp4`, no audio** | 4 s × 12 FPS = 48 frames 
+          per chunk — comfortably above the loader's window span ((8−1)×2
+           + k = 14+k frames; k=12 ⇒ 26 ≤ 48), and matching SSv2's 2–6 s 
+          clip regime. Non-overlapping windows over ~190 train-hours yiel
+          d ≈170k chunks, matching SSv2-full's 168,913. H.264 (not VP9) b
+          ecause it encodes ~10× faster and decodes faster in decord even
+           at `num_threads=1`. |
+      45  | Corpus size | **~210 source hours** (≈190 h train / ≈20 h val
+          idation after the split) | 190 h × 3,600 s ÷ 4 s ≈ 171k train c
+          hunks ≈ SSv2-full scale; 20 h ⇒ ≈18k val chunks (SSv2 val is 24
+          .8k — same order). |
+      46  | Train/val split | **By source video UID, ~90/10 by hours, bef
+          ore chunking** | Chunks of one long video are near-duplicates; 
+          splitting by chunk would leak train content into validation. |
+      47 +| Download/chunk sequencing | **Batched: 4 batches of ~72 GB ra
+         +w each, looped as download → chunk → verify → delete that batch
+         +'s raw** | Raw 540ss files are a transient intermediate (read o
+         +nce by the chunker, then dead weight). Batching caps peak disk 
+         +at ~225 GB instead of ~460 GB, so a 300 GB network volume suffi
+         +ces permanently — RunPod volumes can be grown but never shrunk,
+         + so the peak sets the bill forever. The final corpus is byte-id
+         +entical to a one-shot download. |                              
+      48  | Volume layout | `/workspace/ego4d_raw/` for the CLI download;
+           `/workspace/data/ego4d/{train,validation}/` holding **real chu
+          nk files** (not symlinks — chunks are new encodes, unlike SSv2 
+          where raw files are already clip-sized); `/workspace/data/ego4d
+          _tiny/` as symlinks into `data/ego4d` + `manifest.json` | Mirro
+          rs the `ssv2_raw` → `data/ssv2` → `data/ssv2_tiny` relationship
+           as closely as the re-encode step allows. |
+      49  
+      50  **Disk budget (do the arithmetic against your volume before Sta
+          ge 3):**
+
+⏺ Update(AGENT_FILES/KNOWLEDGE/ego4d/GUIDE.md)
+  ⎿  Added 12 lines, removed 7 lines
+      49  
+      50  **Disk budget (do the arithmetic against your volume before Sta
+          ge 3):**
+      51  
+      52 -- Raw `video_540ss` subset: ~1.4 GB/h × 210 h ≈ **~290 GB** (pl
+         -an for 250–320 GB; note the                                    
+      53 -  chat-context note's earlier 100–200 GB estimate was optimisti
+         -c — 5 TB/3,670 h is the                                        
+      54 -  authoritative rate).                                         
+      52 +- Raw `video_540ss` subset, total across all batches: ~1.4 GB/h
+         + × 210 h ≈ **~290 GB** (note                                   
+      53 +  the chat-context note's earlier 100–200 GB estimate was optim
+         +istic — 5 TB/3,670 h is the                                    
+      54 +  authoritative rate). Under the batched loop only **~72 GB** o
+         +f it is on disk at once                                        
+      55 +  (~145 GB if you pipeline the next batch's download during chu
+         +nking).                                                        
+      56  - Chunked output: 190k × ~250–450 KB (H.264 CRF 27, 256 px, hig
+          h-motion egocentric) ≈
+      56 -  **~50–90 GB**.                                               
+      57 -- After chunking succeeds and is verified, `/workspace/ego4d_ra
+         -w/` **may be deleted** to                                      
+      58 -  reclaim the ~290 GB (keep `ego4d.json` and the UID list files
+         - — they're tiny and are the                                    
+      59 -  provenance record). Only delete after Stage 6 passes.        
+      57 +  **~50–90 GB**, permanent.                                    
+      58 +- Peak simultaneous usage: existing volume contents (~50–60 GB)
+         + + one raw batch + accumulated                                 
+      59 +  chunks ≈ **~225 GB** sequential, **~270 GB** pipelined ⇒ **re
+         +size the network volume to                                     
+      60 +  300 GB** before Stage 3 (do it early; resizing is instant, an
+         +d volumes cannot be shrunk                                     
+      61 +  later, so do not over-provision "to be safe").               
+      62 +- Each batch's raw files are deleted at the end of its loop ite
+         +ration (Stage 4); keep                                         
+      63 +  `ego4d.json` and the `manifests/` directory forever — they ar
+         +e tiny and are the provenance                                  
+      64 +  record.                                                      
+      65  
+      66  ---
+      67  
+
+⏺ Update(AGENT_FILES/KNOWLEDGE/ego4d/GUIDE.md)
+  ⎿  Added 6 lines, removed 4 lines
+      24  
+      25  ---
+      26  
+      27 -> **Time budget at a glance.** Active human time end-to-end is 
+         -roughly **1–2 hours**; machine                                 
+      28 -> time is dominated by Stage 3 (download, ~1–3 h unattended) an
+         -d Stage 4 (chunking, ~2–4 h                                    
+      29 -> unattended); the calendar is dominated by Stage 1's ~48 h lic
+         -ense approval, which runs in                                   
+      30 -> parallel with Stage 2. Per-stage estimates sit under each sta
+         -ge heading.                                                    
+      27 +> **Time budget at a glance.** Active human time end-to-end is 
+         +roughly **1.5–2.5 hours**;                                     
+      28 +> machine time is dominated by the Stage 3→4 batched download-a
+         +nd-chunk loop (**~2.5–6 h                                      
+      29 +> unattended total** across the four batches, toward the low en
+         +d if you pipeline each next                                    
+      30 +> download during the current chunk); the calendar is dominated
+         + by Stage 1's ~48 h license                                    
+      31 +> approval, which runs in parallel with Stage 2. Per-stage esti
+         +mates sit under each stage                                     
+      32 +> heading.                                                     
+      33  
+      34  ## Stage 0 — Decisions locked in by this guide (read once, don'
+          t revisit mid-execution)
+      35  
+
+⏺ Update(AGENT_FILES/KNOWLEDGE/ego4d/GUIDE.md)
+  ⎿  Added 2 lines, removed 2 lines
+      128  download and the split. Spec:
+      129  
+      130  - CLI: `--metadata <path to ego4d.json>`, `--target-hours` (de
+           fault 210),
+      131 -  `--val-fraction` (default 0.10), `--seed` (default 42), `--o
+          -ut-dir` (default                                              
+      132 -  `ego4d_manifests/`).                                        
+      131 +  `--val-fraction` (default 0.10), `--batches` (default 4), `-
+          +-seed` (default 42),                                          
+      132 +  `--out-dir` (default `ego4d_manifests/`).                   
+      133  - Read the metadata's video list. **First inspect the actual d
+           ownloaded file to confirm field
+      134    names before coding against them** — the documented fields o
+           f interest are `video_uid`,
+      135    `duration_sec`, `scenarios` (list of activity labels), `is_s
+           tereo`, and per-video stream
+
+⏺ Update(AGENT_FILES/KNOWLEDGE/ego4d/GUIDE.md)
+  ⎿  Added 8 lines, removed 5 lines
+      143    than ~10% of the accumulated hours; stop when `--target-hour
+           s` is reached.
+      144  - Split the **accepted videos** (not chunks) into train/val at
+            `--val-fraction` of the
+      145    accumulated hours, seeded.
+      146 -- Write three files to `--out-dir`: `train_uids.txt` and `val_
+          -uids.txt` (one UID per line —                                 
+      147 -  whitespace-delimited is what the Ego4D CLI's `--video_uid_fi
+          -le` expects), and                                             
+      148 -  `all_uids.txt` (union, for the single download call); plus a
+          - `selection_manifest.json`                                    
+      149 -  recording seed, filters applied, per-scenario hour totals, a
+          -nd per-UID duration/split — the                               
+      150 -  provenance record.                                          
+      146 +- Write to `--out-dir`: `train_uids.txt` and `val_uids.txt` (o
+          +ne UID per line —                                             
+      147 +  whitespace-delimited is what the Ego4D CLI's `--video_uid_fi
+          +le` expects);                                                 
+      148 +  `batch_1_uids.txt` … `batch_N_uids.txt`, a partition of the 
+          +full selection into                                           
+      149 +  `--batches` groups balanced by total hours (assign whole sou
+          +rce videos, never split one                                   
+      150 +  across batches; each batch should contain both train- and va
+          +l-split videos so the split                                   
+      151 +  ratio is roughly preserved per batch); and a `selection_mani
+          +fest.json` recording seed,                                    
+      152 +  filters applied, per-scenario hour totals, per-UID duration/
+          +split/batch — the provenance                                  
+      153 +  record. The batch files drive the Stage 3→4 download-and-chu
+          +nk loop.                                                      
+      154  
+      155  ### Delta 5 — new script `chunk_ego4d.py`
+      156  
+
+⏺ Update(AGENT_FILES/KNOWLEDGE/ego4d/GUIDE.md)
+  ⎿  Added 9 lines, removed 2 lines
+      177      `<out-root>/<train|validation>/` per the UID's split from 
+           the manifest.
+      178  - Idempotent: skip windows whose output file already exists an
+           d is non-empty, so the run can
+      179    be resumed after interruption.
+      180 -- After encoding, write `<out-root>/chunk_manifest.json`: per 
+          -split, chunk counts, source-UID                               
+      181 -  counts, total encoded seconds, and the exact ffmpeg paramete
+          -r set used.                                                   
+      180 +- Batch-friendly by construction: process exactly those manife
+          +st UIDs whose raw file is                                     
+      181 +  **present** in `--raw-dir`, and emit a warning (never an err
+          +or) listing manifest UIDs with                                
+      182 +  no raw file on disk — under the batched loop those are simpl
+          +y later batches. The final                                    
+      183 +  summary line must print how many manifest UIDs were processe
+          +d vs. still pending, so each                                  
+      184 +  loop iteration confirms it chunked exactly its batch.       
+      185 +- After encoding, write `<out-root>/chunk_manifest.json` by **
+          +rescanning `--out-root`** (not                                
+      186 +  by counting only this invocation's work), so the manifest st
+          +ays cumulative and correct                                    
+      187 +  across the four batch invocations: per split, chunk counts, 
+          +source-UID counts, total                                      
+      188 +  encoded seconds, and the exact ffmpeg parameter set used.   
+      189  - Honesty note to encode in a comment: 30→12 FPS is a non-inte
+           ger (2.5×) decimation, so the
+      190    CFR resample selects source frames at alternating 2/3-frame 
+           steps (~83 ms jitter). This is
+      191    accepted; it is far below the 167 ms sampling interval the m
+           odel sees at stride 2.
+
+⏺ Now the main restructure: Stage 3 becomes one-time setup, Stage 4 becomes the
+  batch loop:
+
+⏺ Update(AGENT_FILES/KNOWLEDGE/ego4d/GUIDE.md)
+  ⎿  Added 71 lines, removed 44 lines
+      227  
+      228  ---
+      229  
+      230 -## Stage 3 — `[POD]` Download the EGO4D subset                
+      230 +## Stage 3 — `[POD]` One-time download setup (credentials, CLI
+          +, metadata, UID + batch selection)                            
+      231  
+      232 -> **Time: ~1.5–3.5 h, almost all unattended.** Setup (steps 1–
+          -3) ~15 min; metadata fetch                                    
+      233 -> (step 4) ~5–10 min; UID selection (step 5) &lt;5 min; the ma
+          -in ~290 GB download (step 6)                                  
+      234 -> ~25 min–3 h depending on pod bandwidth (25 min at 200 MB/s, 
+          -~1.6 h at 50 MB/s) — it runs in                               
+      235 -> tmux and is resumable, so it needs no supervision.          
+      232 +> **Time: ~25–35 min, mostly attended.** Space/credential setu
+          +p ~15 min; metadata fetch                                     
+      233 +> ~5–10 min; UID selection &lt;5 min. The actual video downloa
+          +ds happen inside the Stage 4                                  
+      234 +> loop.                                                       
+      235  
+      236  Prerequisite: Stage 1 credentials received (≤ 14 days old), St
+           age 2 merged and pulled on the
+      238 -pod. All long-running commands below run inside `tmux` — start
+          - `tmux new -s ego4d` first, and                               
+      239 -if SSH drops, reattach with `tmux attach -t ego4d`.           
+      237 +pod. All long-running commands in Stages 3–4 run inside `tmux`
+          + — start `tmux new -s ego4d`                                  
+      238 +first, and if SSH drops, reattach with `tmux attach -t ego4d`.
+      239  
+      241 -1. **Free space check** (hard gate): `df -h /workspace` must s
+          -how **≥ 400 GB free** (290 GB                                 
+      242 -   raw + 90 GB chunks + margin). If it doesn't, stop and resiz
+          -e the volume first.                                           
+      240 +1. **Volume check** (hard gate): the network volume is resized
+          + to **≥ 300 GB** and                                          
+      241 +   `df -h /workspace` shows **≥ 220 GB free**. If not, stop an
+          +d resize first (resizing is                                   
+      242 +   instant; it cannot be undone downward, which is exactly why
+          + this guide is batched).                                      
+      243  2. **Install the CLI** into the pod's Python env: `pip install
+            ego4d`.
+      244  3. **Configure credentials**: create `~/.aws/credentials` with
+            a `[default]` profile holding
+      245     the `aws_access_key_id` / `aws_secret_access_key` from the 
+           license email (the CLI reads
+     ...
+      251     package (~2 GB) that also lands `ego4d.json` at `/workspace
+           /ego4d_raw/v2/ego4d.json`. (If
+      252     2 GB of annotations is unwanted, they can be deleted afterw
+           ard; only `ego4d.json` is
+      253     needed.)
+      254 -5. **Select UIDs**: `python select_ego4d_uids.py --metadata /w
+          -orkspace/ego4d_raw/v2/ego4d.json                              
+      254 +5. **Select UIDs and batches**:                               
+      255 +   `python select_ego4d_uids.py --metadata /workspace/ego4d_ra
+          +w/v2/ego4d.json                                               
+      256     --out-dir /workspace/ego4d_raw/manifests` — inspect the pri
+           nted per-scenario hour table and
+      257     `selection_manifest.json` before proceeding.
+      257 -6. **Download the videos** (in tmux; expect roughly 1–3 h at d
+          -atacenter bandwidth for                                       
+      258 -   ~290 GB):                                                  
+      258  
+      259 +**Verify:** `manifests/` contains `train_uids.txt`, `val_uids.
+          +txt`,                                                         
+      260 +`batch_1_uids.txt` … `batch_4_uids.txt`, and `selection_manife
+          +st.json`; the four batch files                                
+      261 +partition the train+val union exactly (no UID missing, none du
+          +plicated — one-line                                           
+      262 +`sort | uniq` check); per-scenario hours in the printed table 
+          +look diverse rather than                                      
+      263 +dominated by one scenario.                                    
+      264 +                                                              
+      265 +---                                                           
+      266 +                                                              
+      267 +## Stage 4 — `[POD]` The batch loop: download → chunk → verify
+          + → delete raw, ×4                                             
+      268 +                                                              
+      269 +> **Time: ~2.5–6 h unattended total + ~20 min of verification 
+          +across the four iterations.**                                 
+      270 +> Per batch: download ~72 GB (~6 min at 200 MB/s, ~25 min at 5
+          +0 MB/s) + chunking ~30–60 min at                              
+      271 +> full worker parallelism. Chunking is the single most compute
+          +-intensive step of the whole                                  
+      272 +> guide (~190,000 ffmpeg encodes over ~210 h of source video a
+          +cross the batches); a low-core                                
+      273 +> pod stretches it badly, which is why the worker-pool design 
+          +in Delta 5 matters. **Optional                                
+      274 +> pipelining:** while batch *b* chunks in one tmux window, sta
+          +rt batch *b+1*'s download in a                                
+      275 +> second window — this hides essentially all download time and
+          + stays within the 300 GB volume                               
+      276 +> (peak ≈ 270 GB). Chunking is CPU-bound and can run on a chea
+          +p CPU pod attached to the same                                
+      277 +> network volume if you'd rather not burn GPU-pod hours.      
+      278 +                                                              
+      279 +For each batch `b` in 1…4, run the four steps below to complet
+          +ion before starting the next                                  
+      280 +batch (or with the one-window-ahead pipelining described above
+          + — never more than one download                               
+      281 +ahead):                                                       
+      282 +                                                              
+      283 +1. **Download batch `b`** (in tmux; resumable — rerunning the 
+          +same command skips completed                                  
+      284 +   files, so a dropped connection just means rerun):          
+      285 +                                                              
+      286     ```bash
+      287     ego4d --output_directory /workspace/ego4d_raw \
+      288           --datasets video_540ss \
+      263 -         --video_uid_file /workspace/ego4d_raw/manifests/all_u
+          -ids.txt \                                                     
+      289 +         --video_uid_file /workspace/ego4d_raw/manifests/batch
+          +_<b>_uids.txt \                                               
+      290           -y
+      291     ```
+      292  
+      293     Files land under `/workspace/ego4d_raw/v2/video_540ss/` wit
+           h a `manifest.csv` alongside.
+      268 -   The CLI is resumable — rerunning the same command skips com
+          -pleted files, so a dropped                                    
+      269 -   connection just means rerun.                               
+      294  
+      271 -**Verify:** the number of files under `/workspace/ego4d_raw/v2
+          -/video_540ss/` equals the line                                
+      272 -count of `all_uids.txt`; spot-open two downloaded videos with 
+      273 -`python -c "from decord import VideoReader, cpu; r = VideoRead
+          -er('<path>', ctx=cpu(0), num_threads=1); print(len(r), r.get_a
+          -vg_fps())"`                                                   
+      274 -and confirm they open, report ~30 fps, and have frame counts c
+          -onsistent with their                                          
+      275 -`duration_sec` in `selection_manifest.json`.                  
+      295 +   *Batch download check:* the file count under `/workspace/eg
+          +o4d_raw/v2/video_540ss/` equals                               
+      296 +   batch `b`'s line count (plus any not-yet-deleted earlier ba
+          +tch if pipelining); spot-open one                             
+      297 +   downloaded video with                                      
+      298 +   `python -c "from decord import VideoReader, cpu; r = VideoR
+          +eader('<path>', ctx=cpu(0), num_threads=1); print(len(r), r.ge
+          +t_avg_fps())"`                                                
+      299 +   and confirm it opens, reports ~30 fps, and has a frame coun
+          +t consistent with its                                         
+      300 +   `duration_sec` in `selection_manifest.json`.               
+      301  
+      277 ----                                                           
+      302 +2. **Chunk batch `b`** (the chunker automatically processes ex
+          +actly the raw files present —                                 
+      303 +   Delta 5's batch-friendly contract — and its summary line mu
+          +st report "processed" equal to                                
+      304 +   batch `b`'s UID count):                                    
+      305  
+      279 -## Stage 4 — `[POD]` Chunk into the training corpus           
+      306 +   ```bash                                                    
+      307 +   python chunk_ego4d.py \                                    
+      308 +     --raw-dir /workspace/ego4d_raw/v2/video_540ss \          
+      309 +     --manifest /workspace/ego4d_raw/manifests/selection_manif
+          +est.json \                                                    
+      310 +     --metadata /workspace/ego4d_raw/v2/ego4d.json \          
+      311 +     --out-root /workspace/data/ego4d                         
+      312 +   ```                                                        
+      313  
+      281 -> **Time: ~2–4 h unattended encoding + ~15 min for the four ve
+          -rification checks.** This is the                              
+      282 -> single most compute-intensive step of the whole guide (~190,
+          -000 ffmpeg encodes over ~210 h of                             
+      283 -> source video); the estimate assumes the chunker's full worke
+          -r parallelism on a many-core pod —                            
+      284 -> a low-core pod stretches it toward a day, which is why the w
+          -orker-pool design in Delta 5                                  
+      285 -> matters.                                                    
+      314 +3. **Per-batch verify:** spot-decode three random chunks just 
+          +produced (each opens in decord                                
+      315 +   at `num_threads=1`, reports 48 frames and ~12 fps, shorter 
+          +frame side 256); cumulative                                   
+      316 +   chunk counts in `chunk_manifest.json` are consistent with t
+          +he hours processed so far                                     
+      317 +   (≈900 chunks per source hour). **On batch 1 only**, additio
+          +nally run the Stage 6 step-1                                  
+      318 +   dataloader smoke against the chunks produced so far (point 
+          +it at `ego4d` with a batch-1-only                             
+      319 +   corpus — it just needs ≥ 2 videos per split) before any del
+          +etion, as cheap insurance that                                
+      320 +   the chunk format is loader-compatible while re-downloading 
+          +is still trivially cheap.                                     
+      321  
+      287 -In the same tmux session (CPU-bound; a few hours with full wor
+          -ker parallelism — it can run on                               
+      288 -a cheap CPU pod against the same network volume if you'd rathe
+          -r not burn GPU-pod hours):                                    
+      322 +4. **Delete batch `b`'s raw files** (only after step 3 passes)
+          +:                                                             
+      323 +   `xargs -a /workspace/ego4d_raw/manifests/batch_<b>_uids.txt
+          + -I{} rm -f /workspace/ego4d_raw/v2/video_540ss/{}.mp4`       
+      324 +   — never `rm -rf` the whole directory while pipelining (the 
+          +next batch may already be                                     
+      325 +   landing there). Keep `manifests/` and `ego4d.json` forever.
+      326  
+      290 -```bash                                                       
+      291 -python chunk_ego4d.py \                                       
+      292 -  --raw-dir /workspace/ego4d_raw/v2/video_540ss \             
+      293 -  --manifest /workspace/ego4d_raw/manifests/selection_manifest
+          -.json \                                                       
+      294 -  --metadata /workspace/ego4d_raw/v2/ego4d.json \             
+      295 -  --out-root /workspace/data/ego4d                            
+      296 -```                                                           
+      327 +**Final verify (after batch 4, all four in order):**          
+      328  
+      298 -**Verify (all four, in order):**                              
+      299 -                                                              
+      329  1. `chunk_manifest.json` reports ≈165k–175k train chunks and ≈
+           15k–20k validation chunks, and
+      330     `find /workspace/data/ego4d/train -name '*.mp4' | wc -l` ma
+           tches its train count.
+      331  2. No source UID appears in both splits:
+      332     the UID prefix sets of `train/` and `validation/` filenames
+            are disjoint (one-line shell or
+      333     python check; this is the leakage gate — a failure here inv
+           alidates every future val
+      334     metric).
+      306 -3. Spot-decode three random chunks with decord: each opens at 
+          -`num_threads=1`, reports 48                                   
+      307 -   frames and ~12 fps, and the shorter frame side is 256.     
+      308 -4. Disk: `du -sh /workspace/data/ego4d` is in the expected 50–
+          -90 GB band.                                                   
+      335 +3. `chunk_manifest.json`'s processed-UID count equals `selecti
+          +on_manifest.json`'s total UID                                 
+      336 +   count, and the chunker prints zero still-pending UIDs on a 
+          +final no-op rerun.                                            
+      337 +4. Disk: `du -sh /workspace/data/ego4d` is in the expected 50–
+          +90 GB band, and                                               
+      338 +   `/workspace/ego4d_raw/v2/video_540ss/` is empty (or contain
+          +s only `manifest.csv`).                                       
+      339  
+      310 -Only after all four pass may `/workspace/ego4d_raw/v2/video_54
+          -0ss/` be deleted to reclaim                                   
+      311 -space (keep `manifests/` and `ego4d.json`).                   
+      312 -                                                              
+      340  ---
+      341  
+      342  ## Stage 5 — `[POD]` Build `ego4d_tiny`
+
+⏺ The guide now describes exactly one path — the batched loop. Summary of what
+  changed:
+
+  - Stage 0 gains a "Download/chunk sequencing" decision row and a rewritten
+  disk budget: peak ~225 GB sequential / ~270 GB pipelined, with the explicit
+  instruction to resize to 300 GB (and not to over-provision, since volumes
+  can't shrink).
+  - Delta 4 (UID selector spec) now also emits batch_1_uids.txt …
+  batch_4_uids.txt — a partition balanced by hours, whole source videos only,
+  each batch preserving the train/val ratio.
+  - Delta 5 (chunker spec) gains the batch-friendly contract: it processes
+  whichever raw files are present, warns (never errors) on not-yet-downloaded
+  UIDs, prints a processed-vs-pending summary each run, and rebuilds
+  chunk_manifest.json cumulatively by rescanning the output tree.
+  - Stage 3 is now one-time setup only (volume gate at ≥300 GB / ≥220 GB free,
+  credentials, CLI, metadata, UID+batch selection) with its own verify block.
+  - Stage 4 is the loop: download batch → chunk → per-batch verify → delete that
+  batch's raw, ×4, with the optional one-window-ahead pipelining spelled out, a
+  batch-1-only extra safeguard (run the dataloader smoke before the first raw
+  deletion, while re-downloading is still cheap), a targeted per-batch rm (never
+  rm -rf while pipelining), and the full-corpus final verification after
+  batch 4.
+
+  And yes — go ahead with 100 GB → 300 GB, that's the value the guide is now
+  written against. Do it before Stage 3's volume gate; since your credential
+  clock is already running, resizing now and kicking off Stage 2 (the code
+  package) in parallel is the right move.
+
+✻ Brewed for 2m 53s
+
+※ recap: Goal: make EGO4D a switchable sibling dataset via --data. GUIDE.md is finished and now written for the batched 300 GB path. Next: resize the volume to 300 GB and hand Stage 2's code package to a coding agent. (disable recaps in /config)
+
+❯ Conduct Stage 2                                                               
+
+⏺ Stage 2 it is. Per the guide this is one work order: 8 deltas, additive-only,
+  verified with pytest at the end. First I need the remaining context: the
+  coding conventions doc, make_subset.py (style template for the new scripts),
+  the contract test file, and the exact regions of the three probe scripts I'll
+  touch.
+  Read 6 files (ctrl+o to expand)
+
+⏺ All context gathered. Executing Deltas 1–3 now — the glob, config roots, and
+  CLI choices:
+
+⏺ Update(data.py)
+  ⎿  Added 6 lines, removed 3 lines
+      166      """
+      167  
+      168      def __init__(self, root: str | Path, split: Literal["train
+           ", "validation"], cfg: Config):
+      169 -        """Index a split directory of SSv2 .webm symlinks.""" 
+      169 +        """Index a split directory of video files (SSv2 .webm 
+          +symlinks or EGO4D .mp4 chunks)."""                            
+      170          _require_torch()
+      171          self.root = Path(root)
+      172          self.split = split
+      173          self.cfg = cfg
+      174 -        self.paths = sorted((self.root / split).glob("*.webm")
+          -)                                                             
+      174 +        split_dir = self.root / split                         
+      175 +        # One combined sort over both extensions keeps indexin
+          +g deterministic across                                        
+      176 +        # datasets: SSv2 ships VP9 .webm symlinks, EGO4D chunk
+          +s are H.264 .mp4 files.                                       
+      177 +        self.paths = sorted([*split_dir.glob("*.webm"), *split
+          +_dir.glob("*.mp4")])                                          
+      178          if not self.paths:
+      176 -            raise FileNotFoundError(f"No .webm files found in 
+          -{self.root / split}")                                         
+      179 +            raise FileNotFoundError(f"No .webm or .mp4 files f
+          +ound in {split_dir}")                                         
+      180  
+      181      def __len__(self) -> int:
+      182          """Return the number of videos available in this split
+           ."""
+
+⏺ Update(data.py)
+  ⎿  Added 6 lines, removed 2 lines
+      153  
+      154  
+      155  class SSV2Dataset(Dataset):
+      156 -    """Load context/future clip pairs from SSv2 symlinks (v0.2
+          -).                                                            
+      156 +    """Load context/future clip pairs from a clip-per-file vid
+          +eo directory (v0.2).                                          
+      157  
+      158 +    Named for the original SSv2 layout; the same contract serv
+          +es any dataset that                                           
+      159 +    mirrors it (e.g. EGO4D 4-second chunks): a root with `trai
+          +n/` and `validation/`                                         
+      160 +    directories of short `.webm`/`.mp4` videos, one sample win
+          +dow pair per video.                                           
+      161 +                                                              
+      162      Args:
+      159 -        root: Dataset root with `train/` and `validation/` sym
+          -link directories.                                             
+      163 +        root: Dataset root with `train/` and `validation/` vid
+          +eo directories.                                               
+      164          split: `train` or `validation`.
+      165          cfg: Global config with frame size, stride, and horizo
+           n constants.
+      166      Returns:
+
+⏺ Update(data.py)
+  ⎿  Added 1 line, removed 1 line
+      40  
+      41  
+      42  def _open_video_reader(path: Path):
+      43 -    """Open an SSv2 .webm with decord at num_threads=1 (no deco
+         -ding yet).                                                     
+      43 +    """Open a video file (SSv2 .webm or EGO4D .mp4) with decord
+         + at num_threads=1.                                             
+      44  
+      45      Returning the open reader (rather than decoded frames) lets
+           the caller
+      46      read `len(reader)` cheaply and then decode only the indices
+           it needs,
+
+⏺ Update(data.py)
+  ⎿  Added 4 lines, removed 3 lines
+      46      read `len(reader)` cheaply and then decode only the indices
+           it needs,
+      47      instead of paying to decode every frame in the clip.
+      48  
+      49 -    `num_threads=1` is required: SSv2 ships as VP9-encoded .web
+         -m and decord's                                                 
+      49 +    `num_threads=1` is required for SSv2: it ships as VP9-encod
+         +ed .webm and decord's                                          
+      50      threaded FFmpeg decoder fails with EAGAIN (-11, "Error send
+          ing packet")
+      51      on some VP9 packets when threads > 1. See dmlc/decord#83, #
+          145, #246.
+      52 -    Each DataLoader worker still parallelises across videos.   
+      52 +    H.264 EGO4D chunks decode fine (and fast) single-threaded t
+         +oo, so the setting                                             
+      53 +    is shared. Each DataLoader worker still parallelises across
+         + videos.                                                       
+      54  
+      55      Args:
+      55 -        path: Filesystem path to a single SSv2 .webm clip.     
+      56 +        path: Filesystem path to a single video clip.          
+      57      Returns:
+      58          reader: an open decord `VideoReader` whose `len` is the
+           clip's frame
+      59              count and whose `get_batch(indices)` decodes only t
+          hose indices.
+
+⏺ Update(config.py)
+  ⎿  Added 15 lines, removed 1 line
+      275      data_root: str = field(
+      276          default_factory=lambda: os.environ.get("JEPA_DATA_ROOT
+           ", "/workspace/data")
+      277      )
+      278 -    dataset: str = "ssv2_tiny"  # CLI override: ssv2 | ssv2_ti
+          -ny                                                            
+      278 +    dataset: str = "ssv2_tiny"  # CLI override: ssv2 | ssv2_ti
+          +ny | ego4d | ego4d_tiny                                       
+      279      num_workers: int = 8
+      280      pin_memory: bool = True
+      281  
+     ...
+      289          """SSv2-tiny symlink root, `<data_root>/ssv2_tiny`."""
+      290          return str(Path(self.data_root) / "ssv2_tiny")
+      291  
+      292 +    @property                                                 
+      293 +    def ego4d_root(self) -> str:                              
+      294 +        """EGO4D chunk root, `<data_root>/ego4d` (real files f
+          +rom chunk_ego4d.py)."""                                       
+      295 +        return str(Path(self.data_root) / "ego4d")            
+      296 +                                                              
+      297 +    @property                                                 
+      298 +    def ego4d_tiny_root(self) -> str:                         
+      299 +        """EGO4D-tiny symlink root, `<data_root>/ego4d_tiny` (
+          +make_ego4d_subset.py)."""                                     
+      300 +        return str(Path(self.data_root) / "ego4d_tiny")       
+      301 +                                                              
+      302      def dataset_root(self) -> str:
+      303          """Return the selected dataset root for the configured
+            dataset name."""
+      304          if self.dataset == "ssv2":
+      305              return self.full_root
+      306          if self.dataset == "ssv2_tiny":
+      307              return self.tiny_root
+      308 +        if self.dataset == "ego4d":                           
+      309 +            return self.ego4d_root                            
+      310 +        if self.dataset == "ego4d_tiny":                      
+      311 +            return self.ego4d_tiny_root                       
+      312          raise ValueError(f"Unsupported dataset: {self.dataset}
+           ")
+      313  
+      314  
+
+⏺ Update(train.py)
+  ⎿  Added 3 lines, removed 1 line
+      1088  def parse_args() -> argparse.Namespace:
+      1089      """Parse the Phase 1 training CLI."""
+      1090      parser = argparse.ArgumentParser(description="Train HJEPA
+            -VWM Phase 1 (v0.2).")
+      1091 -    parser.add_argument("--data", choices=["ssv2", "ssv2_tiny
+           -"], default="ssv2_tiny")                                     
+      1091 +    parser.add_argument(                                     
+      1092 +        "--data", choices=["ssv2", "ssv2_tiny", "ego4d", "ego
+           +4d_tiny"], default="ssv2_tiny"                               
+      1093 +    )                                                        
+      1094      parser.add_argument("--steps", type=int, default=15_000)
+      1095      parser.add_argument("--resume", default=None)
+      1096      parser.add_argument("--seed", type=int, default=42)
+
+⏺ Update(whiten_stats.py)
+  ⎿  Added 3 lines, removed 1 line
+      146      parser = argparse.ArgumentParser(
+      147          description="Compute fixed offline whitening stats for
+            frozen V-JEPA features."
+      148      )
+      149 -    parser.add_argument("--data", choices=["ssv2", "ssv2_tiny"
+          -], default="ssv2_tiny")                                       
+      149      parser.add_argument(
+      150 +        "--data", choices=["ssv2", "ssv2_tiny", "ego4d", "ego4
+          +d_tiny"], default="ssv2_tiny"                                 
+      151 +    )                                                         
+      152 +    parser.add_argument(                                      
+      153          "--split",
+      154          default="train",
+      155          choices=["train", "validation"],
+
+⏺ Update(rank_probe.py)
+  ⎿  Added 3 lines, removed 1 line
+      239      parser = argparse.ArgumentParser(
+      240          description="Effective rank of frozen V-JEPA embedding
+           s over a fixed probe set."
+      241      )
+      242 -    parser.add_argument("--data", choices=["ssv2", "ssv2_tiny"
+          -], default="ssv2_tiny")                                       
+      242      parser.add_argument(
+      243 +        "--data", choices=["ssv2", "ssv2_tiny", "ego4d", "ego4
+          +d_tiny"], default="ssv2_tiny"                                 
+      244 +    )                                                         
+      245 +    parser.add_argument(                                      
+      246          "--split",
+      247          default="validation",
+      248          choices=["train", "validation"],
+
+⏺ Update(drift_probe.py)
+  ⎿  Added 3 lines, removed 1 line
+      775      parser = argparse.ArgumentParser(
+      776          description="Within-video temporal drift probe (V-JEPA
+            embeddings vs bottleneck latents)."
+      777      )
+      778 -    parser.add_argument("--data", choices=["ssv2", "ssv2_tiny"
+          -], default="ssv2_tiny")                                       
+      778      parser.add_argument(
+      779 +        "--data", choices=["ssv2", "ssv2_tiny", "ego4d", "ego4
+          +d_tiny"], default="ssv2_tiny"                                 
+      780 +    )                                                         
+      781 +    parser.add_argument(                                      
+      782          "--split",
+      783          default="validation",
+      784          choices=["train", "validation"],
+
+⏺ Update(drift_probe.py)
+  ⎿  Added 7 lines, removed 2 lines
+      358      """
+      359      _require_torch()
+      360      root = Path(cfg.data.dataset_root())
+      361 -    paths = sorted(str(p.relative_to(root)) for p in (root / s
+          -plit).glob("*.webm"))                                         
+      361 +    split_dir = root / split                                  
+      362 +    # Same webm+mp4 union as data.SSV2Dataset so probe manifes
+          +ts cover EGO4D chunks too.                                    
+      363 +    paths = sorted(                                           
+      364 +        str(p.relative_to(root))                              
+      365 +        for p in [*split_dir.glob("*.webm"), *split_dir.glob("
+          +*.mp4")]                                                      
+      366 +    )                                                         
+      367      if not paths:
+      363 -        raise FileNotFoundError(f"No .webm files found in {roo
+          -t / split}")                                                  
+      368 +        raise FileNotFoundError(f"No .webm or .mp4 files found
+          + in {split_dir}")                                             
+      369      t_ctx, stride = cfg.model.t_ctx, cfg.train.frame_stride
+      370      span = overlap_boundary(t_ctx, stride) + max_offset
+      371      videos: list[dict] = []
+
+❯ Give me proper commands in the GUIDE dude. i was just going through Stage 3   
+  and you're literally describing terminal commands in words and sentences      
+  rather than actually giving me the proper commands to run. Give me across all 
+  stages that require me to do stuff on the pod via ssh please.                 
+
+⏺ Update(AGENT_FILES/KNOWLEDGE/ego4d/GUIDE.md)
+  ⎿  Added 65 lines, removed 23 lines
+      237  pod. All long-running commands in Stages 3–4 run inside `tmux`
+            — start `tmux new -s ego4d`
+      238  first, and if SSH drops, reattach with `tmux attach -t ego4d`.
+      239  
+      240 -1. **Volume check** (hard gate): the network volume is resized
+          - to **≥ 300 GB** and                                          
+      241 -   `df -h /workspace` shows **≥ 220 GB free**. If not, stop an
+          -d resize first (resizing is                                   
+      242 -   instant; it cannot be undone downward, which is exactly why
+          - this guide is batched).                                      
+      243 -2. **Install the CLI** into the pod's Python env: `pip install
+          - ego4d`.                                                      
+      244 -3. **Configure credentials**: create `~/.aws/credentials` with
+          - a `[default]` profile holding                                
+      245 -   the `aws_access_key_id` / `aws_secret_access_key` from the 
+          -license email (the CLI reads                                  
+      246 -   exactly this file; `--aws_profile_name` exists if you must 
+          -use a non-default profile).                                   
+      247 -4. **Metadata first** (small, fast): the CLI downloads `ego4d.
+          -json` automatically alongside any                             
+      248 -   dataset (default `--metadata` behavior), but you need it *b
+          -efore* choosing UIDs, so fetch it                             
+      249 -   by downloading the tiny `annotations`-free path — run the C
+          -LI once with just metadata:                                   
+      250 -   `ego4d --output_directory /workspace/ego4d_raw --datasets a
+          -nnotations -y` is the smallest                                
+      251 -   package (~2 GB) that also lands `ego4d.json` at `/workspace
+          -/ego4d_raw/v2/ego4d.json`. (If                                
+      252 -   2 GB of annotations is unwanted, they can be deleted afterw
+          -ard; only `ego4d.json` is                                     
+      253 -   needed.)                                                   
+      254 -5. **Select UIDs and batches**:                               
+      255 -   `python select_ego4d_uids.py --metadata /workspace/ego4d_ra
+          -w/v2/ego4d.json                                               
+      256 -   --out-dir /workspace/ego4d_raw/manifests` — inspect the pri
+          -nted per-scenario hour table and                              
+      257 -   `selection_manifest.json` before proceeding.               
+      240 +1. **Volume check** (hard gate — the volume must be resized to
+          + **≥ 300 GB** with                                            
+      241 +   **≥ 220 GB free**; if not, stop and resize first. Resizing 
+          +is instant and cannot be undone                               
+      242 +   downward, which is exactly why this guide is batched):     
+      243  
+      259 -**Verify:** `manifests/` contains `train_uids.txt`, `val_uids.
+          -txt`,                                                         
+      260 -`batch_1_uids.txt` … `batch_4_uids.txt`, and `selection_manife
+          -st.json`; the four batch files                                
+      261 -partition the train+val union exactly (no UID missing, none du
+          -plicated — one-line                                           
+      262 -`sort | uniq` check); per-scenario hours in the printed table 
+          -look diverse rather than                                      
+      263 -dominated by one scenario.                                    
+      244 +   ```bash                                                    
+      245 +   df -h /workspace                                           
+      246 +   ```                                                        
+      247  
+      248 +2. **Start tmux and install the CLI:**                        
+      249 +                                                              
+      250 +   ```bash                                                    
+      251 +   tmux new -s ego4d                                          
+      252 +   pip install ego4d                                          
+      253 +   ```                                                        
+      254 +                                                              
+      255 +3. **Configure credentials** (paste the two values from the li
+          +cense email over the                                          
+      256 +   placeholders):                                             
+      257 +                                                              
+      258 +   ```bash                                                    
+      259 +   mkdir -p ~/.aws                                            
+      260 +   cat > ~/.aws/credentials <<'EOF'                           
+      261 +   [default]                                                  
+      262 +   aws_access_key_id = PASTE_YOUR_ACCESS_KEY_ID_HERE          
+      263 +   aws_secret_access_key = PASTE_YOUR_SECRET_ACCESS_KEY_HERE  
+      264 +   EOF                                                        
+      265 +   chmod 600 ~/.aws/credentials                               
+      266 +   ```                                                        
+      267 +                                                              
+      268 +4. **Metadata first** (small, fast — `ego4d.json` downloads au
+          +tomatically alongside any                                     
+      269 +   dataset, and `annotations` (~2 GB) is the smallest package 
+          +to ride along with; you need the                              
+      270 +   metadata *before* choosing UIDs):                          
+      271 +                                                              
+      272 +   ```bash                                                    
+      273 +   ego4d --output_directory /workspace/ego4d_raw --datasets an
+          +notations -y                                                  
+      274 +   ls -lh /workspace/ego4d_raw/v2/ego4d.json   # must exist an
+          +d be non-trivial in size                                      
+      275 +   ```                                                        
+      276 +                                                              
+      277 +   (The `annotations` payload itself can be deleted afterward;
+          + only `ego4d.json` is needed.)                                
+      278 +                                                              
+      279 +5. **Select UIDs and batches**, then inspect the printed per-s
+          +cenario hour table before                                     
+      280 +   proceeding:                                                
+      281 +                                                              
+      282 +   ```bash                                                    
+      283 +   cd /workspace/hierarchal-jepa-flow-world-model             
+      284 +   python select_ego4d_uids.py \                              
+      285 +     --metadata /workspace/ego4d_raw/v2/ego4d.json \          
+      286 +     --out-dir /workspace/ego4d_raw/manifests                 
+      287 +   ```                                                        
+      288 +                                                              
+      289 +**Verify** (all three commands; the second and third must prin
+          +t nothing):                                                   
+      290 +                                                              
+      291 +```bash                                                       
+      292 +ls /workspace/ego4d_raw/manifests/                            
+      293 +# expect: train_uids.txt val_uids.txt batch_1_uids.txt ... bat
+          +ch_4_uids.txt selection_manifest.json                         
+      294 +                                                              
+      295 +# no UID appears in two batches:                              
+      296 +cat /workspace/ego4d_raw/manifests/batch_*_uids.txt | sort | u
+          +niq -d                                                        
+      297 +                                                              
+      298 +# batches partition train+val exactly (no UID missing, none ex
+          +tra):                                                         
+      299 +diff <(cat /workspace/ego4d_raw/manifests/batch_*_uids.txt | s
+          +ort) \                                                        
+      300 +     <(cat /workspace/ego4d_raw/manifests/train_uids.txt \    
+      301 +           /workspace/ego4d_raw/manifests/val_uids.txt | sort)
+      302 +```                                                           
+      303 +                                                              
+      304 +Also eyeball the per-scenario hour table printed by step 5: it
+          + should look diverse rather                                   
+      305 +than dominated by one scenario.                               
+      306 +                                                              
+      307  ---
+      308  
+      309  ## Stage 4 — `[POD]` The batch loop: download → chunk → verify
+            → delete raw, ×4
+
+⏺ Update(AGENT_FILES/KNOWLEDGE/ego4d/GUIDE.md)
+  ⎿  Added 19 lines, removed 6 lines
+      334  
+      335     Files land under `/workspace/ego4d_raw/v2/video_540ss/` wit
+           h a `manifest.csv` alongside.
+      336  
+      337 -   *Batch download check:* the file count under `/workspace/eg
+          -o4d_raw/v2/video_540ss/` equals                               
+      338 -   batch `b`'s line count (plus any not-yet-deleted earlier ba
+          -tch if pipelining); spot-open one                             
+      339 -   downloaded video with                                      
+      340 -   `python -c "from decord import VideoReader, cpu; r = VideoR
+          -eader('<path>', ctx=cpu(0), num_threads=1); print(len(r), r.ge
+          -t_avg_fps())"`                                                
+      341 -   and confirm it opens, reports ~30 fps, and has a frame coun
+          -t consistent with its                                         
+      342 -   `duration_sec` in `selection_manifest.json`.               
+      337 +   *Batch download check* (file count must equal batch `b`'s l
+          +ine count, plus any                                           
+      338 +   not-yet-deleted earlier batch if pipelining; the spot-open 
+          +must report ~30 fps):                                         
+      339  
+      340 +   ```bash                                                    
+      341 +   find /workspace/ego4d_raw/v2/video_540ss -name '*.mp4' | wc
+          + -l                                                           
+      342 +   wc -l < /workspace/ego4d_raw/manifests/batch_<b>_uids.txt  
+      343 +                                                              
+      344 +   cd /workspace/hierarchal-jepa-flow-world-model             
+      345 +   python - <<'EOF'                                           
+      346 +   import random                                              
+      347 +   from pathlib import Path                                   
+      348 +   from decord import VideoReader, cpu                        
+      349 +                                                              
+      350 +   paths = sorted(Path("/workspace/ego4d_raw/v2/video_540ss").
+          +glob("*.mp4"))                                                
+      351 +   p = random.choice(paths)                                   
+      352 +   r = VideoReader(str(p), ctx=cpu(0), num_threads=1)         
+      353 +   print(p.name, "|", len(r), "frames |", round(r.get_avg_fps(
+          +), 2), "fps")                                                 
+      354 +   EOF                                                        
+      355 +   ```                                                        
+      356 +                                                              
+      357  2. **Chunk batch `b`** (the chunker automatically processes ex
+           actly the raw files present —
+      358     Delta 5's batch-friendly contract — and its summary line mu
+           st report "processed" equal to
+      359     batch `b`'s UID count):
+
+⏺ Update(AGENT_FILES/KNOWLEDGE/ego4d/GUIDE.md)
+  ⎿  Added 41 lines, removed 7 lines
+      366       --out-root /workspace/data/ego4d
+      367     ```
+      368  
+      369 -3. **Per-batch verify:** spot-decode three random chunks just 
+          -produced (each opens in decord                                
+      370 -   at `num_threads=1`, reports 48 frames and ~12 fps, shorter 
+          -frame side 256); cumulative                                   
+      371 -   chunk counts in `chunk_manifest.json` are consistent with t
+          -he hours processed so far                                     
+      372 -   (≈900 chunks per source hour). **On batch 1 only**, additio
+          -nally run the Stage 6 step-1                                  
+      373 -   dataloader smoke against the chunks produced so far (point 
+          -it at `ego4d` with a batch-1-only                             
+      374 -   corpus — it just needs ≥ 2 videos per split) before any del
+          -etion, as cheap insurance that                                
+      375 -   the chunk format is loader-compatible while re-downloading 
+          -is still trivially cheap.                                     
+      369 +3. **Per-batch verify** — spot-decode three random chunks per 
+          +split (each must report 48                                    
+      370 +   frames, ~12 fps, shorter frame side 256), then check the cu
+          +mulative counts are consistent                                
+      371 +   with the hours processed so far (≈900 chunks per source hou
+          +r):                                                           
+      372  
+      373 +   ```bash                                                    
+      374 +   cd /workspace/hierarchal-jepa-flow-world-model             
+      375 +   python - <<'EOF'                                           
+      376 +   import random                                              
+      377 +   from pathlib import Path                                   
+      378 +   from decord import VideoReader, cpu                        
+      379 +                                                              
+      380 +   root = Path("/workspace/data/ego4d")                       
+      381 +   for split in ("train", "validation"):                      
+      382 +       files = list((root / split).glob("*.mp4"))             
+      383 +       print(f"{split}: {len(files)} chunks")                 
+      384 +       for p in random.sample(files, min(3, len(files))):     
+      385 +           r = VideoReader(str(p), ctx=cpu(0), num_threads=1) 
+      386 +           h, w, _ = r[0].shape                               
+      387 +           print(f"  {p.name} | {len(r)} frames | {round(r.get
+          +_avg_fps(), 2)} fps | {w}x{h}")                               
+      388 +   EOF                                                        
+      389 +                                                              
+      390 +   python -m json.tool /workspace/data/ego4d/chunk_manifest.js
+          +on | head -40                                                 
+      391 +   ```                                                        
+      392 +                                                              
+      393 +   **On batch 1 only**, additionally run the dataloader smoke 
+          +against the chunks produced so                                
+      394 +   far, BEFORE any raw deletion — cheap insurance that the chu
+          +nk format is loader-compatible                                
+      395 +   while re-downloading is still trivially cheap:             
+      396 +                                                              
+      397 +   ```bash                                                    
+      398 +   python - <<'EOF'                                           
+      399 +   from config import Config                                  
+      400 +   from data import build_dataloader                          
+      401 +                                                              
+      402 +   cfg = Config()                                             
+      403 +   cfg.data.dataset = "ego4d"                                 
+      404 +   loader = build_dataloader(cfg, "train", batch_size=2)      
+      405 +   c, t = next(iter(loader))                                  
+      406 +   print(c.shape, t.shape, float(c.min()), float(c.max()))    
+      407 +   EOF                                                        
+      408 +   # expect: torch.Size([2, 8, 3, 256, 256]) twice; min < -1 o
+          +r max > 1                                                     
+      409 +   ```                                                        
+      410 +                                                              
+      411  4. **Delete batch `b`'s raw files** (only after step 3 passes)
+           :
+      412     `xargs -a /workspace/ego4d_raw/manifests/batch_<b>_uids.txt
+            -I{} rm -f /workspace/ego4d_raw/v2/video_540ss/{}.mp4`
+      413     — never `rm -rf` the whole directory while pipelining (the 
+           next batch may already be
+
+⏺ Update(AGENT_FILES/KNOWLEDGE/ego4d/GUIDE.md)
+  ⎿  Added 39 lines, removed 10 lines
+      415  
+      416  **Final verify (after batch 4, all four in order):**
+      417  
+      418 -1. `chunk_manifest.json` reports ≈165k–175k train chunks and ≈
+          -15k–20k validation chunks, and                                
+      419 -   `find /workspace/data/ego4d/train -name '*.mp4' | wc -l` ma
+          -tches its train count.                                        
+      420 -2. No source UID appears in both splits:                      
+      421 -   the UID prefix sets of `train/` and `validation/` filenames
+          - are disjoint (one-line shell or                              
+      422 -   python check; this is the leakage gate — a failure here inv
+          -alidates every future val                                     
+      423 -   metric).                                                   
+      424 -3. `chunk_manifest.json`'s processed-UID count equals `selecti
+          -on_manifest.json`'s total UID                                 
+      425 -   count, and the chunker prints zero still-pending UIDs on a 
+          -final no-op rerun.                                            
+      426 -4. Disk: `du -sh /workspace/data/ego4d` is in the expected 50–
+          -90 GB band, and                                               
+      427 -   `/workspace/ego4d_raw/v2/video_540ss/` is empty (or contain
+          -s only `manifest.csv`).                                       
+      418 +1. Chunk counts — ≈165k–175k train and ≈15k–20k validation, an
+          +d the manifest must agree with                                
+      419 +   the filesystem:                                            
+      420  
+      421 +   ```bash                                                    
+      422 +   find /workspace/data/ego4d/train -name '*.mp4' | wc -l     
+      423 +   find /workspace/data/ego4d/validation -name '*.mp4' | wc -l
+      424 +   python -m json.tool /workspace/data/ego4d/chunk_manifest.js
+          +on | head -40                                                 
+      425 +   ```                                                        
+      426 +                                                              
+      427 +2. **Leakage gate** — no source UID in both splits (chunk name
+          +s are                                                         
+      428 +   `<video_uid>_<5-digit-index>.mp4`, so strip the suffix and 
+          +intersect; the command must                                   
+      429 +   print nothing — any output invalidates every future validat
+          +ion metric):                                                  
+      430 +                                                              
+      431 +   ```bash                                                    
+      432 +   comm -12 \                                                 
+      433 +     <(find /workspace/data/ego4d/train -name '*.mp4' -printf 
+          +'%f\n' \                                                      
+      434 +         | sed 's/_[0-9]\{5\}\.mp4$//' | sort -u) \           
+      435 +     <(find /workspace/data/ego4d/validation -name '*.mp4' -pr
+          +intf '%f\n' \                                                 
+      436 +         | sed 's/_[0-9]\{5\}\.mp4$//' | sort -u)             
+      437 +   ```                                                        
+      438 +                                                              
+      439 +3. Completeness — a final no-op rerun of the chunker must repo
+          +rt zero newly processed and                                   
+      440 +   zero still-pending UIDs:                                   
+      441 +                                                              
+      442 +   ```bash                                                    
+      443 +   cd /workspace/hierarchal-jepa-flow-world-model             
+      444 +   python chunk_ego4d.py \                                    
+      445 +     --raw-dir /workspace/ego4d_raw/v2/video_540ss \          
+      446 +     --manifest /workspace/ego4d_raw/manifests/selection_manif
+          +est.json \                                                    
+      447 +     --metadata /workspace/ego4d_raw/v2/ego4d.json \          
+      448 +     --out-root /workspace/data/ego4d                         
+      449 +   ```                                                        
+      450 +                                                              
+      451 +4. Disk — chunk corpus in the expected 50–90 GB band, raw dire
+          +ctory emptied:                                                
+      452 +                                                              
+      453 +   ```bash                                                    
+      454 +   du -sh /workspace/data/ego4d                               
+      455 +   find /workspace/ego4d_raw/v2/video_540ss -name '*.mp4' | wc
+          + -l   # expect 0                                              
+      456 +   ```                                                        
+      457 +                                                              
+      458  ---
+      459  
+      460  ## Stage 5 — `[POD]` Build `ego4d_tiny`
+
+⏺ Update(AGENT_FILES/KNOWLEDGE/ego4d/GUIDE.md)
+  ⎿  Added 10 lines, removed 4 lines
+      462  > **Time: ~5–10 min** (symlink creation plus verification; no 
+           encoding, no copying).
+      463  
+      464  ```bash
+      465 +cd /workspace/hierarchal-jepa-flow-world-model                
+      466  python make_ego4d_subset.py   # defaults target /workspace/dat
+           a/ego4d -> /workspace/data/ego4d_tiny
+      467  ```
+      468  
+      468 -**Verify:** `~4,000` train and `~350` validation symlinks exis
+          -t under                                                       
+      469 -`/workspace/data/ego4d_tiny/`, `manifest.json` is present, eve
+          -ry symlink resolves                                           
+      470 -(`find /workspace/data/ego4d_tiny -xtype l` prints nothing), a
+          -nd rerunning the script is a                                  
+      471 -no-op.                                                        
+      469 +**Verify:**                                                   
+      470  
+      471 +```bash                                                       
+      472 +find /workspace/data/ego4d_tiny/train -type l | wc -l        #
+          + expect ~4000                                                 
+      473 +find /workspace/data/ego4d_tiny/validation -type l | wc -l   #
+          + expect ~350                                                  
+      474 +test -f /workspace/data/ego4d_tiny/manifest.json && echo "mani
+          +fest OK"                                                      
+      475 +find /workspace/data/ego4d_tiny -xtype l                     #
+          + broken links: expect NO output                               
+      476 +python make_ego4d_subset.py                                  #
+          + rerun must be a no-op (same counts)                          
+      477 +```                                                           
+      478 +                                                              
+      479  ---
+      480  
+      481  ## Stage 6 — `[POD]` Smoke-test the full switchability claim
+
+⏺ Update(AGENT_FILES/KNOWLEDGE/ego4d/GUIDE.md)  ⎿  Added 39 lines, removed 12 lines
+      486  
+      487  This is the stage that proves the guide's goal: the flag is th
+           e only difference.
+      488  
+      489 -1. **Dataloader smoke on EGO4D:**                             
+      490 -   `python -c "from config import Config; from data import bui
+          -ld_dataloader; cfg = Config(); cfg.data.dataset = 'ego4d_tiny'
+          -; loader = build_dataloader(cfg, 'train', batch_size=2); c, t 
+          -= next(iter(loader)); print(c.shape, t.shape, float(c.min()), 
+          -float(c.max()))"`                                             
+      491 -   — expect `(2, 8, 3, 256, 256)` twice and an encoder-normali
+          -zed value range (min < −1 or                                  
+      492 -   max > 1).                                                  
+      489 +All four commands run from the repo root (`cd /workspace/hiera
+          +rchal-jepa-flow-world-model`),                                
+      490 +inside tmux (`tmux new -s ego4d_smoke` or reattach with `tmux 
+          +attach -t ego4d_smoke`).                                      
+      491 +                                                              
+      492 +1. **Dataloader smoke on EGO4D** — expect `(2, 8, 3, 256, 256)
+          +` twice and an                                                
+      493 +   encoder-normalized value range (min < −1 or max > 1):      
+      494 +                                                              
+      495 +   ```bash                                                    
+      496 +   python - <<'EOF'                                           
+      497 +   from config import Config                                  
+      498 +   from data import build_dataloader                          
+      499 +                                                              
+      500 +   cfg = Config()                                             
+      501 +   cfg.data.dataset = "ego4d_tiny"                            
+      502 +   loader = build_dataloader(cfg, "train", batch_size=2)      
+      503 +   c, t = next(iter(loader))                                  
+      504 +   print(c.shape, t.shape, float(c.min()), float(c.max()))    
+      505 +   EOF                                                        
+      506 +   ```                                                        
+      507 +                                                              
+      508  2. **Stage-0 sanity** (dataset-independent, confirms the envir
+           onment):
+      494 -   `python train.py --stage0-only`.                           
+      495 -3. **Short training run on `ego4d_tiny`** (in tmux):          
+      496 -   `python train.py --data ego4d_tiny --steps 500 --checkpoint
+          --dir /workspace/ckpt/ego4d_smoke`                             
+      497 -   — expect finite losses, `grad_skipped=0`, a W&B run whose c
+          -onfig shows                                                   
+      498 -   `dataset: ego4d_tiny`, and a checkpoint written at the end.
+      499 -4. **Regression guard — SSv2 still works identically:**       
+      500 -   `python train.py --data ssv2_tiny --steps 100 --checkpoint-
+          -dir /workspace/ckpt/ssv2_regression_smoke`                    
+      501 -   — must run exactly as before Stage 2's code landed.        
+      509  
+      510 +   ```bash                                                    
+      511 +   python train.py --stage0-only                              
+      512 +   ```                                                        
+      513 +                                                              
+      514 +3. **Short training run on `ego4d_tiny`** — expect finite loss
+          +es, `grad_skipped=0`, a W&B                                   
+      515 +   run whose config shows `dataset: ego4d_tiny`, and a checkpo
+          +int written at the end:                                       
+      516 +                                                              
+      517 +   ```bash                                                    
+      518 +   python train.py --data ego4d_tiny --steps 500 \            
+      519 +     --checkpoint-dir /workspace/ckpt/ego4d_smoke             
+      520 +   ```                                                        
+      521 +                                                              
+      522 +4. **Regression guard — SSv2 still works identically** (must r
+          +un exactly as before Stage 2's                                
+      523 +   code landed):                                              
+      524 +                                                              
+      525 +   ```bash                                                    
+      526 +   python train.py --data ssv2_tiny --steps 100 \             
+      527 +     --checkpoint-dir /workspace/ckpt/ssv2_regression_smoke   
+      528 +   ```                                                        
+      529 +                                                              
+      530  **Verify:** all four commands pass. At this point the goal sta
+           te is reached: any experiment
+      531  command in the repo runs on either dataset by changing only `-
+           -data` (and `--checkpoint-dir`,
+      532  which is already per-run policy).
+
+⏺ Write(select_ego4d_uids.py)
+  ⎿  Wrote 337 lines to select_ego4d_uids.py
+      1 """Select EGO4D source-video UIDs for the HJEPA-VWM chunk corpus.
+      3 Reads the official `ego4d.json` metadata (downloaded by the Ego4D
+         CLI), filters out
+        ecordings), greedily
+        ts the selection into
+      6 train/validation at the SOURCE-VIDEO level (chunks of one long vi
+      7 so a chunk-level split would leak train content into validation),
+         and partitions the
+         batched
+        UIDE.md Stages 3-4.
+     … +402 lines (ctrl+o to expand)
+
+⏺ Write(chunk_ego4d.py)
+  ⎿  Wrote 290 lines to chunk_ego4d.py
+      1 """Chunk downloaded EGO4D 540ss videos into SSv2-shaped 4-second 
+      2 
+        ide, from the CLI's
+      4 `video_540ss` dataset) into non-overlapping 4-second clips re-enc
+      5 256 px shorter side (GUIDE.md Stage 0 "Option A"), so the trainin
+      6 byte-identical to SSv2: `frame_stride=2` and `horizon_k` keep the
+      7 Windows overlapping a video's privacy `redacted_intervals` are sk
+        ipped. Output filenames
+        |validation>/` per the
+        t).
+     … +341 lines (ctrl+o to expand)
+
+⏺ Write(make_ego4d_subset.py)
+  ⎿  Wrote 174 lines to make_ego4d_subset.py
+       1 """Create the EGO4D-tiny smoke subset (symlinks into the chunked
+       2 
+         lass label, but EGO4D
+         terministically and caps
+         ideo are near-duplicates
+       6 and uniform chunk sampling would let a few multi-hour videos dom
+       7 
+         iles written by
+         es the symlink-only
+         opies or re-encodes.
+     … +197 lines (ctrl+o to expand)
+
+⏺ Update(tests/test_phase1_contract.py)
+  ⎿  Added 57 lines
+      30      assert cfg.data.data_root == "/tmp/jepa-data"
+      31      assert cfg.data.full_root == "/tmp/jepa-data/ssv2"
+      32      assert cfg.data.tiny_root == "/tmp/jepa-data/ssv2_tiny"
+      33 +    assert cfg.data.ego4d_root == "/tmp/jepa-data/ego4d"       
+      34 +    assert cfg.data.ego4d_tiny_root == "/tmp/jepa-data/ego4d_ti
+         +ny"                                                            
+      35      assert cfg.checkpoint_dir == "/workspace/checkpoints"
+      36  
+      37  
+      38 +def test_dataset_root_selects_all_four_datasets(monkeypatch):  
+      39 +    """dataset_root() resolves every --data choice and rejects 
+         +unknown names."""                                              
+      40 +    monkeypatch.setenv("JEPA_DATA_ROOT", "/tmp/jepa-data")     
+      41 +    config = importlib.import_module("config")                 
+      42 +                                                               
+      43 +    expected = {                                               
+      44 +        "ssv2": "/tmp/jepa-data/ssv2",                         
+      45 +        "ssv2_tiny": "/tmp/jepa-data/ssv2_tiny",               
+      46 +        "ego4d": "/tmp/jepa-data/ego4d",                       
+      47 +        "ego4d_tiny": "/tmp/jepa-data/ego4d_tiny",             
+      48 +    }                                                          
+      49 +    for name, root in expected.items():                        
+      50 +        cfg = config.Config()                                  
+      51 +        cfg.data.dataset = name                                
+      52 +        assert cfg.data.dataset_root() == root, name           
+      53 +                                                               
+      54 +    cfg = config.Config()                                      
+      55 +    cfg.data.dataset = "not-a-dataset"                         
+      56 +    try:                                                       
+      57 +        cfg.data.dataset_root()                                
+      58 +    except ValueError:                                         
+      59 +        pass                                                   
+      60 +    else:                                                      
+      61 +        raise AssertionError("dataset_root() accepted an unknow
+         +n dataset name")                                               
+      62 +                                                               
+      63 +                                                               
+      64 +def test_dataset_indexes_webm_and_mp4_deterministically(tmp_pat
+         +h):                                                            
+      65 +    """The video glob indexes mixed .webm/.mp4 directories in o
+         +ne sorted order."""                                            
+      66 +    import pytest                                              
+      67 +                                                               
+      68 +    pytest.importorskip("torch")                               
+      69 +    config = importlib.import_module("config")                 
+      70 +    data = importlib.import_module("data")                     
+      71 +                                                               
+      72 +    root = tmp_path / "mixed"                                  
+      73 +    for split in ("train", "validation"):                      
+      74 +        (root / split).mkdir(parents=True)                     
+      75 +    for name in ("c_chunk.mp4", "a_video.webm", "b_chunk.mp4"):
+      76 +        (root / "train" / name).write_bytes(b"fake")           
+      77 +    (root / "validation" / "d_video.webm").write_bytes(b"fake")
+      78 +                                                               
+      79 +    dataset = data.SSV2Dataset(root, "train", config.Config()) 
+      80 +    assert [p.name for p in dataset.paths] == ["a_video.webm", 
+         +"b_chunk.mp4", "c_chunk.mp4"]                                  
+      81 +    assert len(dataset) == 3                                   
+      82 +                                                               
+      83 +    empty_root = tmp_path / "empty"                            
+      84 +    (empty_root / "train").mkdir(parents=True)                 
+      85 +    try:                                                       
+      86 +        data.SSV2Dataset(empty_root, "train", config.Config()) 
+      87 +    except FileNotFoundError:                                  
+      88 +        pass                                                   
+      89 +    else:                                                      
+      90 +        raise AssertionError("SSV2Dataset accepted an empty spl
+         +it directory")                                                 
+      91 +                                                               
+      92 +                                                               
+      93  def test_make_subset_creates_stratified_symlinks_and_manifest(t
+          mp_path, monkeypatch):
+      94      """make_subset creates deterministic symlinks plus a manife
+          st."""
+      95      make_subset = importlib.import_module("make_subset")
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ All 72 tests pass. Quick lint check plus a functional smoke of the new scripts
+  with synthetic data:
+
+  Ran 12 shell commands (ctrl+o to expand)
+⏺ Update(AGENT_FILES/SETUPS/VOLUME_LAYOUT.md)
+  ⎿  Added 1 line
+      20  | `/workspace/ckpt/` | No | Yes |
+      21  | `/workspace/checkpoints/` | No (legacy) | Yes |
+      22  | `/workspace/ssv2_raw/` | No | Yes |
+      23 +| `/workspace/ego4d_raw/` | No | Yes (transient: raw batches de
+         +leted after chunking; `manifests/` + `ego4d.json` kept) |      
+      24  | `/workspace/hf_cache/` | No | Yes |
+      25  | `/workspace/archive/` | No | Yes |
+      26  
+
+⏺ Update(AGENT_FILES/SETUPS/VOLUME_LAYOUT.md)
+  ⎿  Added 18 lines, removed 4 lines
+       90  │   │   ├── train/          → ~168,913 symlinks → /workspace/s
+           sv2_raw/.../*.webm
+       91  │   │   ├── validation/     → ~24,777 symlinks
+       92  │   │   └── labels.json
+       93 -│   └── ssv2_tiny/                             ← smoke subset 
+          -(created by make_subset.py)                                   
+       94 -│       ├── train/          → ~4,000 symlinks (stratified, 23/
+          -class × 174 classes)                                          
+       95 -│       ├── validation/     → ~350 symlinks (2/class)         
+       96 -│       └── manifest.json   → selected video_ids, seed, per-cl
+          -ass counts                                                    
+       93 +│   ├── ssv2_tiny/                             ← smoke subset 
+          +(created by make_subset.py)                                   
+       94 +│   │   ├── train/          → ~4,000 symlinks (stratified, 23/
+          +class × 174 classes)                                          
+       95 +│   │   ├── validation/     → ~350 symlinks (2/class)         
+       96 +│   │   └── manifest.json   → selected video_ids, seed, per-cl
+          +ass counts                                                    
+       97 +│   ├── ego4d/                                 ← EGO4D chunk c
+          +orpus (created by chunk_ego4d.py)                             
+       98 +│   │   ├── train/          → ~170k REAL .mp4 files (4s, 12fps
+          +, 256px shorter side)                                         
+       99 +│   │   ├── validation/     → ~18k REAL .mp4 files (split by S
+          +OURCE video — no leakage)                                     
+      100 +│   │   └── chunk_manifest.json → cumulative counts + ffmpeg p
+          +arams (rescanned each run)                                    
+      101 +│   └── ego4d_tiny/                            ← smoke subset 
+          +(created by make_ego4d_subset.py)                             
+      102 +│       ├── train/          → ~4,000 symlinks into data/ego4d/
+          +train (≤10 per source video)                                  
+      103 +│       ├── validation/     → ~350 symlinks                   
+      104 +│       └── manifest.json   → seed, per-video selected chunk n
+          +ames                                                          
+      105  │
+      106  ├── ssv2_raw/                                  ← raw .webm (un
+           changed, read-only)
+      107  │   └── 20bn-something-something-v2/
+      108  │
+      109 +├── ego4d_raw/                                 ← EGO4D CLI dow
+          +nloads (TRANSIENT raw batches)                                
+      110 +│   ├── manifests/                             ← UID/batch fil
+          +es + selection_manifest.json (KEEP)                           
+      111 +│   └── v2/                                                   
+      112 +│       ├── ego4d.json                         ← official meta
+          +data (KEEP)                                                   
+      113 +│       └── video_540ss/                       ← raw 540ss bat
+          +ch, deleted after chunk+verify                                
+      114 +│                                                             
+      115  ├── ckpt/                                      ← ACTIVE traini
+           ng outputs (sibling to repo)
+      116  │   ├── inv015_whiten_abs_recon/              ← one subdir per
+            run (via --checkpoint-dir)
+      117  │   │   └── phase1_step15000.pt               ← naming: phase1
+           _step{step}.pt
+
+⏺ Update(AGENT_FILES/SETUPS/VOLUME_LAYOUT.md)
+  ⎿  Added 14 lines, removed 6 lines
+      128  
+      129  ### Dataset directory contract
+      130  
+      131 -`ssv2` and `ssv2_tiny` share the **same internal shape** — onl
+          -y the number of videos differs:                               
+      131 +All four dataset roots share the **same internal shape** — a `
+          +train/` and `validation/`                                     
+      132 +directory of short, independently sampleable clip files:      
+      133  
+      134  ```
+      135  <dataset_root>/
+      135 -├── train/           ← one symlink per video_id.webm          
+      136 -├── validation/      ← one symlink per video_id.webm          
+      137 -└── labels.json      ← full SSv2 only                         
+      138 -    or manifest.json ← ssv2_tiny only (plus symlinks)         
+      136 +├── train/           ← one video file per clip (.webm symlink 
+          +for ssv2*, REAL .mp4 for ego4d,                               
+      137 +├── validation/        .mp4 symlink for ego4d_tiny)           
+      138 +└── labels.json         ← full SSv2 only                      
+      139 +    or manifest.json    ← ssv2_tiny / ego4d_tiny (subset prove
+          +nance)                                                        
+      140 +    or chunk_manifest.json ← ego4d (chunker provenance)       
+      141  ```
+      142  
+      141 -Training selects which root via CLI: `python train.py --data s
+          -sv2_tiny` (default, ~4–5 hr smoke) or `--data ssv2` (full run)
+          -. No code edits required to switch.                           
+      143 +Key difference: `data/ego4d/` holds **real files** (new 4-seco
+          +nd H.264 encodes produced by                                  
+      144 +`chunk_ego4d.py` from `ego4d_raw`), not symlinks — the raw EGO
+          +4D videos are hours long, so                                  
+      145 +clip files must be created, unlike SSv2 whose raw files are al
+          +ready clip-sized.                                             
+      146  
+      147 +Training selects which root via CLI: `python train.py --data s
+          +sv2_tiny` (default, ~4–5 hr                                   
+      148 +smoke), `--data ssv2`, `--data ego4d_tiny`, or `--data ego4d`.
+          + No code edits required to                                    
+      149 +switch. EGO4D build procedure: [`AGENT_FILES/KNOWLEDGE/ego4d/G
+          +UIDE.md`](../KNOWLEDGE/ego4d/GUIDE.md).                       
+      150 +                                                              
+      151  ---
+      152  
+      153  ## 4. Path defaults — what the code expects
+
+⏺ Update(AGENT_FILES/SETUPS/VOLUME_LAYOUT.md)
+  ⎿  Added 2 lines
+      160  | `DATA_ROOT` | `/workspace/data` (override: env `JEPA_DATA_RO
+           OT`) | Parent of both datasets |
+      161  | `SSV2_FULL` | `{DATA_ROOT}/ssv2` | Full Something-Something 
+           V2 |
+      162  | `SSV2_TINY` | `{DATA_ROOT}/ssv2_tiny` | Stratified smoke sub
+           set |
+      163 +| `EGO4D` | `{DATA_ROOT}/ego4d` | EGO4D chunk corpus (`cfg.dat
+          +a.ego4d_root`) |                                              
+      164 +| `EGO4D_TINY` | `{DATA_ROOT}/ego4d_tiny` | EGO4D smoke subset
+          + (`cfg.data.ego4d_tiny_root`) |                               
+      165  | `CHECKPOINT_DIR` | `/workspace/checkpoints` (default, **lega
+           cy**) | Saved `.pt` checkpoints. Real runs override via `--che
+           ckpoint-dir /workspace/ckpt/<tag>/` (`config.py:309`, applied 
+           at `train.py:1440`). |
+      166  | `HF_CACHE_DIR` | `/workspace/hf_cache` | `diffusers` VAE cac
+           he (Phase 3) |
+      167  
+
+⏺ Update(AGENT_FILES/SETUPS/VOLUME_LAYOUT.md)
+  ⎿  Added 9 lines
+      218  # Raw backing files
+      219  find /workspace/ssv2_raw/20bn-something-something-v2 -maxdepth
+            1 -name '*.webm' | wc -l  # expect ~220847
+      220  
+      221 +# EGO4D chunk corpus (after AGENT_FILES/KNOWLEDGE/ego4d/GUIDE.
+          +md Stage 4)                                                   
+      222 +test -f /workspace/data/ego4d/chunk_manifest.json && echo "ego
+          +4d OK"                                                        
+      223 +find /workspace/data/ego4d/train -maxdepth 1 -name '*.mp4' | w
+          +c -l       # expect ~165k-175k                                
+      224 +find /workspace/data/ego4d/validation -maxdepth 1 -name '*.mp4
+          +' | wc -l  # expect ~15k-20k                                  
+      225 +                                                              
+      226 +# EGO4D tiny subset (after make_ego4d_subset.py)              
+      227 +test -f /workspace/data/ego4d_tiny/manifest.json && echo "ego4
+          +d_tiny OK"                                                    
+      228 +find /workspace/data/ego4d_tiny/train -maxdepth 1 -type l | wc
+          + -l        # expect ~4000                                     
+      229 +                                                              
+      230  # v0 code present
+      231  test -f /workspace/hierarchal-jepa-flow-world-model/train.py &
+           & echo "v0 code OK"
+      232  ```
+
+⏺ Update(GUIDES/CODEBASE_STRUCTURE.md)
+  ⎿  Added 4 lines, removed 1 line
+      14  ```text
+      15  HJEPA-VWM/
+      16  ├── config.py              # All defaults, paths, dimensions
+      17 -├── data.py                # SSv2 dataset + dataloader         
+      17 +├── data.py                # Video dataset + dataloader (SSv2 .
+         +webm / EGO4D .mp4 chunks)                                      
+      18  ├── make_subset.py         # Build ssv2_tiny symlink subset
+      19 +├── select_ego4d_uids.py   # Pick EGO4D source UIDs + download 
+         +batches from ego4d.json                                        
+      20 +├── chunk_ego4d.py         # Chunk EGO4D 540ss videos into 4s/1
+         +2fps/256px .mp4 clips                                          
+      21 +├── make_ego4d_subset.py   # Build ego4d_tiny symlink subset   
+      22  ├── models.py              # nn.Module classes (encoder, B, F_c
+          , D, …)
+      23  ├── losses.py              # Pure tensor losses (no parameters)
+      24  ├── diagnostics.py         # Collapse probes, baselines, AGC he
+          lpers
+
+⏺ Update(GUIDES/CODEBASE_STRUCTURE.md)
+  ⎿  Added 7 lines, removed 1 line
+      75  | File | Role |
+      76  |---|---|
+      77  | `make_subset.py` | One-time: symlinks ~4k train / ~348 val cl
+          ips into `ssv2_tiny/` + `manifest.json` |
+      78 -| `data.py` | Loads `.webm` via decord; yields `(context_clip, 
+         -target_clip)` tensors `(8,3,256,256)` |                        
+      78 +| `select_ego4d_uids.py` | One-time: reads `ego4d.json`, picks 
+         +scenario-diverse source UIDs (~210 h), splits train/val by SOUR
+         +CE video, emits hour-balanced download batch files |           
+      79 +| `chunk_ego4d.py` | One-time (per batch): ffmpeg-chunks downlo
+         +aded EGO4D 540ss videos into 4 s / 12 fps / 256 px `.mp4` clips
+         + under `data/ego4d/`; idempotent, batch-friendly |             
+      80 +| `make_ego4d_subset.py` | One-time: symlinks ~4k train / ~350 
+         +val chunks into `ego4d_tiny/` + `manifest.json` (≤10 chunks per
+         + source video) |                                               
+      81 +| `data.py` | Loads `.webm`/`.mp4` via decord; yields `(context
+         +_clip, target_clip)` tensors `(8,3,256,256)` |                 
+      82  
+      83  Key semantics:
+      84  
+      85  - Context window ends at time `t`; target window ends `horizon_
+          k` **original** frames later.
+      86  - Only the 16 frame indices needed are decoded (not full videos
+          ).
+      87  - Encoder path uses ImageNet/V-JEPA mean/std — not `[-1,1]` VAE
+           normalization.
+      88 +- Datasets: `--data ssv2 | ssv2_tiny | ego4d | ego4d_tiny`. EGO
+         +4D chunks are pre-encoded to                                   
+      89 +  12 fps, so `frame_stride`/`horizon_k` keep the same real-time
+         + meaning as on SSv2                                            
+      90 +  (build procedure: [`AGENT_FILES/KNOWLEDGE/ego4d/GUIDE.md`](..
+         +/AGENT_FILES/KNOWLEDGE/ego4d/GUIDE.md)).                       
+      91  
+      92  Override dataset parent locally: `export JEPA_DATA_ROOT=/path/t
+          o/data`.
+      93  
+
+❯ Good work on Stage 2, I hope everything changes u made are proper as per      
+  whats exepcted so that everything runs smoothly at the end. Regarding the     
+  GUIDE: Brother are u genuinely retarded? I literally asked you to give me     
+  brain-dead commands instead of DESCRIBING the commands, in the GUIDE.md and   
+  next thing I see is EXACTLY WHAT I TOLD U I AM TRYING TO AVOID. You're        
+  telling me that in Stage 3, literally every single command that needs to be   
+  done / literally every single thing i need to do in the dashboard etc, is all 
+  listed out and not just described? You're telling me the same for Stage 4,    
+  5, etcc??? THen for Stage 4, why the fuck do I see literally 4 paragraphs     
+  where each paragraph = a step INSTEAD OF ACTUAL PROPER FUCKING COMMANDS. GO   
+  THROUGH THE ENTIRE GUIDE END TO END STEP BY STEP WORD BY WORD SENTENCE BY     
+  SENTENCE and figure out, at that specific point of time: is a command/set of  
+  commands supposed to be run (on mac / ssh whatever)? and is that command/set  
+  of commands listed out there in the GUIDE? If not, GODDAMN WRITE IT. If it's  
+  not a command/set of commands but rather some stuff to do on a dashboard,     
+  GIVE BRAIN-DEAD STEPS ON THE TASK TO BE DONE END-TO-END.                      
+  ⎿  You've hit your monthly spend limit.
+     /usage-credits to adjust your monthly spend limit.
+
+✻ Brewed for 13m 6s

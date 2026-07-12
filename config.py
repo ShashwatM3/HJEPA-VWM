@@ -275,7 +275,7 @@ class DataConfig:
     data_root: str = field(
         default_factory=lambda: os.environ.get("JEPA_DATA_ROOT", "/workspace/data")
     )
-    dataset: str = "ssv2_tiny"  # CLI override: ssv2 | ssv2_tiny
+    dataset: str = "ssv2_tiny"  # CLI override: ssv2 | ssv2_tiny | ego4d | ego4d_tiny
     num_workers: int = 8
     pin_memory: bool = True
 
@@ -289,12 +289,26 @@ class DataConfig:
         """SSv2-tiny symlink root, `<data_root>/ssv2_tiny`."""
         return str(Path(self.data_root) / "ssv2_tiny")
 
+    @property
+    def ego4d_root(self) -> str:
+        """EGO4D chunk root, `<data_root>/ego4d` (real files from chunk_ego4d.py)."""
+        return str(Path(self.data_root) / "ego4d")
+
+    @property
+    def ego4d_tiny_root(self) -> str:
+        """EGO4D-tiny symlink root, `<data_root>/ego4d_tiny` (make_ego4d_subset.py)."""
+        return str(Path(self.data_root) / "ego4d_tiny")
+
     def dataset_root(self) -> str:
         """Return the selected dataset root for the configured dataset name."""
         if self.dataset == "ssv2":
             return self.full_root
         if self.dataset == "ssv2_tiny":
             return self.tiny_root
+        if self.dataset == "ego4d":
+            return self.ego4d_root
+        if self.dataset == "ego4d_tiny":
+            return self.ego4d_tiny_root
         raise ValueError(f"Unsupported dataset: {self.dataset}")
 
 

@@ -14,8 +14,11 @@ invariants. Use this file when you need to know *which file to open*, not *how t
 ```text
 HJEPA-VWM/
 ├── config.py              # All defaults, paths, dimensions
-├── data.py                # SSv2 dataset + dataloader
+├── data.py                # Video dataset + dataloader (SSv2 .webm / EGO4D .mp4 chunks)
 ├── make_subset.py         # Build ssv2_tiny symlink subset
+├── select_ego4d_uids.py   # Pick EGO4D source UIDs + download batches from ego4d.json
+├── chunk_ego4d.py         # Chunk EGO4D 540ss videos into 4s/12fps/256px .mp4 clips
+├── make_ego4d_subset.py   # Build ego4d_tiny symlink subset
 ├── models.py              # nn.Module classes (encoder, B, F_c, D, …)
 ├── losses.py              # Pure tensor losses (no parameters)
 ├── diagnostics.py         # Collapse probes, baselines, AGC helpers
@@ -72,13 +75,19 @@ encoder, bottleneck, target_bottleneck, coarse_flow, decoder
 | File | Role |
 |---|---|
 | `make_subset.py` | One-time: symlinks ~4k train / ~348 val clips into `ssv2_tiny/` + `manifest.json` |
-| `data.py` | Loads `.webm` via decord; yields `(context_clip, target_clip)` tensors `(8,3,256,256)` |
+| `select_ego4d_uids.py` | One-time: reads `ego4d.json`, picks scenario-diverse source UIDs (~210 h), splits train/val by SOURCE video, emits hour-balanced download batch files |
+| `chunk_ego4d.py` | One-time (per batch): ffmpeg-chunks downloaded EGO4D 540ss videos into 4 s / 12 fps / 256 px `.mp4` clips under `data/ego4d/`; idempotent, batch-friendly |
+| `make_ego4d_subset.py` | One-time: symlinks ~4k train / ~350 val chunks into `ego4d_tiny/` + `manifest.json` (≤10 chunks per source video) |
+| `data.py` | Loads `.webm`/`.mp4` via decord; yields `(context_clip, target_clip)` tensors `(8,3,256,256)` |
 
 Key semantics:
 
 - Context window ends at time `t`; target window ends `horizon_k` **original** frames later.
 - Only the 16 frame indices needed are decoded (not full videos).
 - Encoder path uses ImageNet/V-JEPA mean/std — not `[-1,1]` VAE normalization.
+- Datasets: `--data ssv2 | ssv2_tiny | ego4d | ego4d_tiny`. EGO4D chunks are pre-encoded to
+  12 fps, so `frame_stride`/`horizon_k` keep the same real-time meaning as on SSv2
+  (build procedure: [`AGENT_FILES/KNOWLEDGE/ego4d/GUIDE.md`](../AGENT_FILES/KNOWLEDGE/ego4d/GUIDE.md)).
 
 Override dataset parent locally: `export JEPA_DATA_ROOT=/path/to/data`.
 

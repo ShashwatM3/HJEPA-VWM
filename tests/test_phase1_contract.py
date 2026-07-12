@@ -30,7 +30,64 @@ def test_config_exposes_locked_phase1_constants(monkeypatch):
     assert cfg.data.data_root == "/tmp/jepa-data"
     assert cfg.data.full_root == "/tmp/jepa-data/ssv2"
     assert cfg.data.tiny_root == "/tmp/jepa-data/ssv2_tiny"
+    assert cfg.data.ego4d_root == "/tmp/jepa-data/ego4d"
+    assert cfg.data.ego4d_tiny_root == "/tmp/jepa-data/ego4d_tiny"
     assert cfg.checkpoint_dir == "/workspace/checkpoints"
+
+
+def test_dataset_root_selects_all_four_datasets(monkeypatch):
+    """dataset_root() resolves every --data choice and rejects unknown names."""
+    monkeypatch.setenv("JEPA_DATA_ROOT", "/tmp/jepa-data")
+    config = importlib.import_module("config")
+
+    expected = {
+        "ssv2": "/tmp/jepa-data/ssv2",
+        "ssv2_tiny": "/tmp/jepa-data/ssv2_tiny",
+        "ego4d": "/tmp/jepa-data/ego4d",
+        "ego4d_tiny": "/tmp/jepa-data/ego4d_tiny",
+    }
+    for name, root in expected.items():
+        cfg = config.Config()
+        cfg.data.dataset = name
+        assert cfg.data.dataset_root() == root, name
+
+    cfg = config.Config()
+    cfg.data.dataset = "not-a-dataset"
+    try:
+        cfg.data.dataset_root()
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("dataset_root() accepted an unknown dataset name")
+
+
+def test_dataset_indexes_webm_and_mp4_deterministically(tmp_path):
+    """The video glob indexes mixed .webm/.mp4 directories in one sorted order."""
+    import pytest
+
+    pytest.importorskip("torch")
+    config = importlib.import_module("config")
+    data = importlib.import_module("data")
+
+    root = tmp_path / "mixed"
+    for split in ("train", "validation"):
+        (root / split).mkdir(parents=True)
+    for name in ("c_chunk.mp4", "a_video.webm", "b_chunk.mp4"):
+        (root / "train" / name).write_bytes(b"fake")
+    (root / "validation" / "d_video.webm").write_bytes(b"fake")
+
+    dataset = data.SSV2Dataset(root, "train", config.Config())
+    assert [p.name for p in dataset.paths] == ["a_video.webm", "b_chunk.mp4", "c_chunk.mp4"]
+    assert len(dataset) == 3
+
+    empty_root = tmp_path / "empty"
+    (empty_root / "train").mkdir(parents=True)
+    try:
+        data.SSV2Dataset(empty_root, "train", config.Config())
+    except FileNotFoundError:
+        pass
+    else:
+        raise AssertionError("SSV2Dataset accepted an empty split directory")
 
 
 def test_make_subset_creates_stratified_symlinks_and_manifest(tmp_path, monkeypatch):

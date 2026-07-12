@@ -146,7 +146,9 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Compute fixed offline whitening stats for frozen V-JEPA features."
     )
-    parser.add_argument("--data", choices=["ssv2", "ssv2_tiny"], default="ssv2_tiny")
+    parser.add_argument(
+        "--data", choices=["ssv2", "ssv2_tiny", "ego4d", "ego4d_tiny"], default="ssv2_tiny"
+    )
     parser.add_argument(
         "--split",
         default="train",

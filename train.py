@@ -1088,7 +1088,9 @@ def run_training(cfg: Config, steps: int, resume: str | None = None) -> None:
 def parse_args() -> argparse.Namespace:
     """Parse the Phase 1 training CLI."""
     parser = argparse.ArgumentParser(description="Train HJEPA-VWM Phase 1 (v0.2).")
-    parser.add_argument("--data", choices=["ssv2", "ssv2_tiny"], default="ssv2_tiny")
+    parser.add_argument(
+        "--data", choices=["ssv2", "ssv2_tiny", "ego4d", "ego4d_tiny"], default="ssv2_tiny"
+    )
     parser.add_argument("--steps", type=int, default=15_000)
     parser.add_argument("--resume", default=None)
     parser.add_argument("--seed", type=int, default=42)

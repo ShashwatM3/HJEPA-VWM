@@ -17,15 +17,22 @@ The git repo holds **code only**. Datasets, checkpoints, and Hugging Face cache 
 |---|---|---|
 | `/workspace/hierarchal-jepa-flow-world-model/` | Yes (cloned) | Yes (on network volume) |
 | `/workspace/data/` | No | Yes |
-| `/workspace/checkpoints/` | No | Yes |
+| `/workspace/ckpt/` | No | Yes |
+| `/workspace/checkpoints/` | No (legacy) | Yes |
 | `/workspace/ssv2_raw/` | No | Yes |
+| `/workspace/ego4d_raw/` | No | Yes (transient: raw batches deleted after chunking; `manifests/` + `ego4d.json` kept) |
 | `/workspace/hf_cache/` | No | Yes |
+| `/workspace/archive/` | No | Yes |
+
+> **Checkpoints:** real runs write to **`/workspace/ckpt/<run_tag>/`** via `--checkpoint-dir` (per-run subdir, mandatory for parallel sweeps — see [`KANBAN/PHASE_1/investigation_007/GUIDE.md`](../../KANBAN/PHASE_1/investigation_007/GUIDE.md)). The `config.py` default `/workspace/checkpoints/` is **legacy** — it holds only early single-run `phase1_step*.pt` files and is no longer written to.
 
 RunPod mounts the network volume at `/workspace` by default. SSH and pod ops: [`SETUP.md`](SETUP.md), [`GUIDES/MLOPS.md`](../../GUIDES/MLOPS.md).
 
 ---
 
-## 2. Current state (as inspected — pre–v0 setup)
+## 2. Historical state (pre–v0 setup — migration long done)
+
+> **⚠️ HISTORICAL — no longer reflects the volume.** Migration completed in June 2026; the live layout is Section 3. Kept only as a record of the starting point.
 
 This is what the volume looked like **before** Path A migration and **before** v0 code is deployed. Legacy Python from a prior implementation may still be present — **disregard it**; build fresh from phase docs.
 
@@ -83,35 +90,63 @@ After [`SETUP.md`](SETUP.md) Path A (steps A8, A9, A12) and Phase 1 `make_subset
 │   │   ├── train/          → ~168,913 symlinks → /workspace/ssv2_raw/.../*.webm
 │   │   ├── validation/     → ~24,777 symlinks
 │   │   └── labels.json
-│   └── ssv2_tiny/                             ← smoke subset (created by make_subset.py)
-│       ├── train/          → ~4,000 symlinks (stratified, 23/class × 174 classes)
-│       ├── validation/     → ~350 symlinks (2/class)
-│       └── manifest.json   → selected video_ids, seed, per-class counts
+│   ├── ssv2_tiny/                             ← smoke subset (created by make_subset.py)
+│   │   ├── train/          → ~4,000 symlinks (stratified, 23/class × 174 classes)
+│   │   ├── validation/     → ~350 symlinks (2/class)
+│   │   └── manifest.json   → selected video_ids, seed, per-class counts
+│   ├── ego4d/                                 ← EGO4D chunk corpus (created by chunk_ego4d.py)
+│   │   ├── train/          → ~170k REAL .mp4 files (4s, 12fps, 256px shorter side)
+│   │   ├── validation/     → ~18k REAL .mp4 files (split by SOURCE video — no leakage)
+│   │   └── chunk_manifest.json → cumulative counts + ffmpeg params (rescanned each run)
+│   └── ego4d_tiny/                            ← smoke subset (created by make_ego4d_subset.py)
+│       ├── train/          → ~4,000 symlinks into data/ego4d/train (≤10 per source video)
+│       ├── validation/     → ~350 symlinks
+│       └── manifest.json   → seed, per-video selected chunk names
 │
 ├── ssv2_raw/                                  ← raw .webm (unchanged, read-only)
 │   └── 20bn-something-something-v2/
 │
-├── checkpoints/                               ← all training outputs (sibling to repo)
-│   ├── phase1_step15000.pt                    ← Phase 1 example (default `stage1_steps`)
-│   ├── checkpoint_step105000.pt             ← after Phase 2 latent stages
-│   └── checkpoint_step150000.pt               ← v0 final (Phase 3)
+├── ego4d_raw/                                 ← EGO4D CLI downloads (TRANSIENT raw batches)
+│   ├── manifests/                             ← UID/batch files + selection_manifest.json (KEEP)
+│   └── v2/
+│       ├── ego4d.json                         ← official metadata (KEEP)
+│       └── video_540ss/                       ← raw 540ss batch, deleted after chunk+verify
+│
+├── ckpt/                                      ← ACTIVE training outputs (sibling to repo)
+│   ├── inv015_whiten_abs_recon/              ← one subdir per run (via --checkpoint-dir)
+│   │   └── phase1_step15000.pt               ← naming: phase1_step{step}.pt
+│   ├── inv012_sharp_slot_recon_only/
+│   └── … (one dir per experiment/sweep tag)
+│
+├── checkpoints/                               ← LEGACY (config.py default; no longer written)
+│   └── phase1_step*.pt                        ← early single-run files (Jun 2026), kept for history
+│
+├── archive/                                   ← retired artifacts (e.g. legacy stage1_final.pt)
 │
 └── hf_cache/                                  ← Hugging Face cache (Phase 3 VAE download)
 ```
 
 ### Dataset directory contract
 
-`ssv2` and `ssv2_tiny` share the **same internal shape** — only the number of videos differs:
+All four dataset roots share the **same internal shape** — a `train/` and `validation/`
+directory of short, independently sampleable clip files:
 
 ```
 <dataset_root>/
-├── train/           ← one symlink per video_id.webm
-├── validation/      ← one symlink per video_id.webm
-└── labels.json      ← full SSv2 only
-    or manifest.json ← ssv2_tiny only (plus symlinks)
+├── train/           ← one video file per clip (.webm symlink for ssv2*, REAL .mp4 for ego4d,
+├── validation/        .mp4 symlink for ego4d_tiny)
+└── labels.json         ← full SSv2 only
+    or manifest.json    ← ssv2_tiny / ego4d_tiny (subset provenance)
+    or chunk_manifest.json ← ego4d (chunker provenance)
 ```
 
-Training selects which root via CLI: `python train.py --data ssv2_tiny` (default, ~4–5 hr smoke) or `--data ssv2` (full run). No code edits required to switch.
+Key difference: `data/ego4d/` holds **real files** (new 4-second H.264 encodes produced by
+`chunk_ego4d.py` from `ego4d_raw`), not symlinks — the raw EGO4D videos are hours long, so
+clip files must be created, unlike SSv2 whose raw files are already clip-sized.
+
+Training selects which root via CLI: `python train.py --data ssv2_tiny` (default, ~4–5 hr
+smoke), `--data ssv2`, `--data ego4d_tiny`, or `--data ego4d`. No code edits required to
+switch. EGO4D build procedure: [`AGENT_FILES/KNOWLEDGE/ego4d/GUIDE.md`](../KNOWLEDGE/ego4d/GUIDE.md).
 
 ---
 
@@ -125,7 +160,9 @@ Hardcoded in `config.py` (see [`AGENTS.md`](../AGENTS.md) §12):
 | `DATA_ROOT` | `/workspace/data` (override: env `JEPA_DATA_ROOT`) | Parent of both datasets |
 | `SSV2_FULL` | `{DATA_ROOT}/ssv2` | Full Something-Something V2 |
 | `SSV2_TINY` | `{DATA_ROOT}/ssv2_tiny` | Stratified smoke subset |
-| `CHECKPOINT_DIR` | `/workspace/checkpoints` | Saved `.pt` checkpoints |
+| `EGO4D` | `{DATA_ROOT}/ego4d` | EGO4D chunk corpus (`cfg.data.ego4d_root`) |
+| `EGO4D_TINY` | `{DATA_ROOT}/ego4d_tiny` | EGO4D smoke subset (`cfg.data.ego4d_tiny_root`) |
+| `CHECKPOINT_DIR` | `/workspace/checkpoints` (default, **legacy**) | Saved `.pt` checkpoints. Real runs override via `--checkpoint-dir /workspace/ckpt/<tag>/` (`config.py:309`, applied at `train.py:1440`). |
 | `HF_CACHE_DIR` | `/workspace/hf_cache` | `diffusers` VAE cache (Phase 3) |
 
 **Local dev:** set `JEPA_DATA_ROOT` to a local folder that mirrors `data/ssv2` and `data/ssv2_tiny` structure. No environment auto-detection in code.
@@ -180,6 +217,15 @@ find /workspace/data/ssv2_tiny/train -maxdepth 1 -type l | wc -l  # expect ~4000
 
 # Raw backing files
 find /workspace/ssv2_raw/20bn-something-something-v2 -maxdepth 1 -name '*.webm' | wc -l  # expect ~220847
+
+# EGO4D chunk corpus (after AGENT_FILES/KNOWLEDGE/ego4d/GUIDE.md Stage 4)
+test -f /workspace/data/ego4d/chunk_manifest.json && echo "ego4d OK"
+find /workspace/data/ego4d/train -maxdepth 1 -name '*.mp4' | wc -l       # expect ~165k-175k
+find /workspace/data/ego4d/validation -maxdepth 1 -name '*.mp4' | wc -l  # expect ~15k-20k
+
+# EGO4D tiny subset (after make_ego4d_subset.py)
+test -f /workspace/data/ego4d_tiny/manifest.json && echo "ego4d_tiny OK"
+find /workspace/data/ego4d_tiny/train -maxdepth 1 -type l | wc -l        # expect ~4000
 
 # v0 code present
 test -f /workspace/hierarchal-jepa-flow-world-model/train.py && echo "v0 code OK"

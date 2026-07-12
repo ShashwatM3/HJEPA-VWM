@@ -239,7 +239,9 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Effective rank of frozen V-JEPA embeddings over a fixed probe set."
     )
-    parser.add_argument("--data", choices=["ssv2", "ssv2_tiny"], default="ssv2_tiny")
+    parser.add_argument(
+        "--data", choices=["ssv2", "ssv2_tiny", "ego4d", "ego4d_tiny"], default="ssv2_tiny"
+    )
     parser.add_argument(
         "--split",
         default="validation",

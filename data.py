@@ -40,19 +40,20 @@ def _require_torch() -> None:
 
 
 def _open_video_reader(path: Path):
-    """Open an SSv2 .webm with decord at num_threads=1 (no decoding yet).
+    """Open a video file (SSv2 .webm or EGO4D .mp4) with decord at num_threads=1.
 
     Returning the open reader (rather than decoded frames) lets the caller
     read `len(reader)` cheaply and then decode only the indices it needs,
     instead of paying to decode every frame in the clip.
 
-    `num_threads=1` is required: SSv2 ships as VP9-encoded .webm and decord's
+    `num_threads=1` is required for SSv2: it ships as VP9-encoded .webm and decord's
     threaded FFmpeg decoder fails with EAGAIN (-11, "Error sending packet")
     on some VP9 packets when threads > 1. See dmlc/decord#83, #145, #246.
-    Each DataLoader worker still parallelises across videos.
+    H.264 EGO4D chunks decode fine (and fast) single-threaded too, so the setting
+    is shared. Each DataLoader worker still parallelises across videos.
 
     Args:
-        path: Filesystem path to a single SSv2 .webm clip.
+        path: Filesystem path to a single video clip.
     Returns:
         reader: an open decord `VideoReader` whose `len` is the clip's frame
             count and whose `get_batch(indices)` decodes only those indices.
@@ -153,10 +154,14 @@ def _normalize_encoder(frames: Tensor) -> Tensor:
 
 
 class SSV2Dataset(Dataset):
-    """Load context/future clip pairs from SSv2 symlinks (v0.2).
+    """Load context/future clip pairs from a clip-per-file video directory (v0.2).
+
+    Named for the original SSv2 layout; the same contract serves any dataset that
+    mirrors it (e.g. EGO4D 4-second chunks): a root with `train/` and `validation/`
+    directories of short `.webm`/`.mp4` videos, one sample window pair per video.
 
     Args:
-        root: Dataset root with `train/` and `validation/` symlink directories.
+        root: Dataset root with `train/` and `validation/` video directories.
         split: `train` or `validation`.
         cfg: Global config with frame size, stride, and horizon constants.
     Returns:
@@ -166,14 +171,17 @@ class SSV2Dataset(Dataset):
     """
 
     def __init__(self, root: str | Path, split: Literal["train", "validation"], cfg: Config):
-        """Index a split directory of SSv2 .webm symlinks."""
+        """Index a split directory of video files (SSv2 .webm symlinks or EGO4D .mp4 chunks)."""
         _require_torch()
         self.root = Path(root)
         self.split = split
         self.cfg = cfg
-        self.paths = sorted((self.root / split).glob("*.webm"))
+        split_dir = self.root / split
+        # One combined sort over both extensions keeps indexing deterministic across
+        # datasets: SSv2 ships VP9 .webm symlinks, EGO4D chunks are H.264 .mp4 files.
+        self.paths = sorted([*split_dir.glob("*.webm"), *split_dir.glob("*.mp4")])
         if not self.paths:
-            raise FileNotFoundError(f"No .webm files found in {self.root / split}")
+            raise FileNotFoundError(f"No .webm or .mp4 files found in {split_dir}")
 
     def __len__(self) -> int:
         """Return the number of videos available in this split."""
