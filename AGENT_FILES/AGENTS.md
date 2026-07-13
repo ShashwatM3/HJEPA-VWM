@@ -893,7 +893,7 @@ Current code:
 
 | Training stage | Implemented? | Notes |
 |---|---|---|
-| Stage 0 sanity | yes | `python train.py --stage0-only` loads encoder and runs one synthetic step. |
+| Stage 0 sanity | yes | `python train.py --stage0-only` loads the encoder, runs one synthetic step, verifies the frozen encoder, and checks the exact dtype-rounded `B_EMA` transition. |
 | Stage 1 coarse dynamics | yes | `B`, `B_EMA`, `F_c`, optional reconstruction/regularizer knobs. |
 | Stage 2 fine teacher forcing | no | Requires `FineFlow`; Phase 2 spec only. |
 | Stage 3 predicted-coarse fine | no | Requires detached `c_hat` into `F_e`; Phase 2 spec only. |

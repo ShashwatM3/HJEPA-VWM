@@ -122,6 +122,39 @@ def test_linear_ramp_scale_handles_sigreg_warmup_edges():
     assert train.linear_ramp_scale(0, 0) == 1.0
 
 
+def test_stage0_ema_transition_accepts_fp32_rounding_to_no_visible_change():
+    """Tiny warmup-step EMA deltas may correctly round back to the old fp32 value."""
+    train = importlib.import_module("train")
+    target_before = [torch.tensor([0.02], dtype=torch.float32)]
+    online_after = [torch.tensor([0.0200001], dtype=torch.float32)]
+    target_after = [target_before[0].clone()]
+
+    train._assert_ema_transition(
+        online_after,
+        target_before,
+        target_after,
+        momentum=0.996,
+        updated=True,
+    )
+
+
+def test_stage0_ema_transition_rejects_a_missing_representable_update():
+    """The Stage-0 check still fails when a required EMA change is representable."""
+    train = importlib.import_module("train")
+    target_before = [torch.tensor([0.02], dtype=torch.float32)]
+    online_after = [torch.tensor([0.03], dtype=torch.float32)]
+    target_after = [target_before[0].clone()]
+
+    with pytest.raises(AssertionError, match="B_EMA transition incorrect"):
+        train._assert_ema_transition(
+            online_after,
+            target_before,
+            target_after,
+            momentum=0.996,
+            updated=True,
+        )
+
+
 def test_load_checkpoint_skips_incompatible_optimizer_state(tmp_path):
     """Old 3-group optimizer checkpoints resume model weights with a fresh optimizer."""
     models = importlib.import_module("models")

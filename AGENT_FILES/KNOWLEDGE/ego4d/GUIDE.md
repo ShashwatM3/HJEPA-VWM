@@ -10,8 +10,10 @@
 > **How to use it.** Stages are strictly ordered; each ends with a **Verify** block — do not
 > proceed past a failed verification. Stages marked `[DASHBOARD]` are browser clicks. Stages
 > marked `[LOCAL]` are commands on your Mac/local checkout. Stages marked `[POD]` are commands
-> inside SSH on the RunPod pod. Commands are copy-paste blocks. Replace only the explicit
-> `PASTE_...` placeholders.
+> inside SSH on the RunPod pod. Every label beginning with **Paste** marks exactly one block to
+> paste at once. Wait for the shell prompt to return before moving to the next numbered block,
+> unless the text explicitly says that a long-running command is still working. Replace only
+> the explicit `PASTE_...` placeholders.
 >
 > **Facts baseline.** Every dataset statistic used here is from
 > [`EGO4D_dataset_understanding.md`](EGO4D_dataset_understanding.md) (verified against
@@ -136,10 +138,11 @@ error message.
 ### Delta 4 — new script `select_ego4d_uids.py`
 
 Purpose: read the downloaded `ego4d.json` metadata (it will live at
-`/workspace/ego4d_raw/v2/ego4d.json`, see Stage 3) and emit the UID files that drive both the
+`/workspace/ego4d_raw/ego4d.json`, see Stage 3) and emit the UID files that drive both the
 download and the split. Spec:
 
-- CLI: `--metadata <path to ego4d.json>`, `--target-hours` (default 210),
+- CLI: `--metadata <path to ego4d.json>`, `--download-manifest <path to the video_540ss
+  manifest.csv>`, `--target-hours` (default 210),
   `--val-fraction` (default 0.10), `--batches` (default 4), `--seed` (default 42),
   `--out-dir` (default `ego4d_manifests/`).
 - Read the metadata's video list. **First inspect the actual downloaded file to confirm field
@@ -147,7 +150,10 @@ download and the split. Spec:
   `duration_sec`, `scenarios` (list of activity labels), `is_stereo`, and per-video stream
   facts (fps etc.) which may sit in a nested video-metadata object. The script must fail
   loudly if an expected field is missing rather than guessing.
-- Filter: drop `is_stereo == true` videos (side-by-side stereo frames would corrupt training);
+- Filter: keep only UIDs present in the authoritative `video_540ss/manifest.csv`; drop v2.1
+  grouped-video records whose `video_uid` starts with `grp-` (these Goal-Step
+  aggregates are downloadable as benchmark-filtered `full_scale`, but have no `video_540ss`
+  object); drop `is_stereo == true` videos (side-by-side stereo frames would corrupt training);
   drop videos whose canonical fps is not 30 (tolerance ±0.1) if the field is present; drop
   videos shorter than 60 s.
 - Select for scenario diversity with a deterministic greedy pass: shuffle the filtered videos
@@ -171,7 +177,7 @@ Purpose: turn the downloaded long-form 540ss videos into the SSv2-shaped chunk c
 - CLI: `--raw-dir` (default `/workspace/ego4d_raw/v2/video_540ss`), `--manifest`
   (the `selection_manifest.json` from Delta 4 — provides each UID's split), `--out-root`
   (default `/workspace/data/ego4d`), `--chunk-seconds` (default 4), `--fps` (default 12),
-  `--shorter-side` (default 256), `--crf` (default 27), `--workers` (default: CPU count),
+  `--shorter-side` (default 256), `--crf` (default 27), `--workers` (default: at most 4),
   `--metadata` (path to `ego4d.json`, for redacted-interval lookup).
 - For each source video (parallelized with a process pool over videos, not over chunks):
   compute non-overlapping `[t, t+4s)` windows over the video duration, discard the final
@@ -182,7 +188,8 @@ Purpose: turn the downloaded long-form 540ss videos into the SSv2-shaped chunk c
   - filters: constant-frame-rate resample to 12 FPS, then scale so the **shorter** side is 256
     with the other side preserved to an even pixel count (the scale expression must handle
     portrait sources — do not assume height is the shorter side);
-  - encode: `libx264`, `preset veryfast`, the `--crf` value, `yuv420p` pixel format, keyframe
+  - encode: `libx264`, one decoder thread and one encoder thread per worker, `preset veryfast`,
+    the `--crf` value, `yuv420p` pixel format, keyframe
     interval 12 (one keyframe per second, for cheap random access in decord), **no audio**,
     `+faststart` so the container index is at the front (decord opens faster);
   - output name: `<video_uid>_<window_index:05d>.mp4` into
@@ -235,18 +242,51 @@ so empty placeholder files suffice).
 
 ### Stage 2B — local verification commands
 
-Run this from your Mac/local checkout:
+Run each numbered block separately from your Mac/local checkout. Wait for the prompt to return
+after every block.
+
+**Paste 1 of 7 — enter the repository:**
 
 ```bash
 cd /Users/gobus/Desktop/main/projects/NURON/HJEPA-VWM
+```
+
+**Paste 2 of 7 — compile all changed Python files:**
+
+```bash
 python -m py_compile \
   config.py data.py train.py whiten_stats.py rank_probe.py drift_probe.py \
   select_ego4d_uids.py chunk_ego4d.py make_ego4d_subset.py
+```
+
+**Paste 3 of 7 — run the test suite:**
+
+```bash
 pytest -q
+```
+
+**Paste 4 of 7 — verify the training CLI choices:**
+
+```bash
 python train.py --help | grep -F "ego4d"
+```
+
+**Paste 5 of 7 — verify the whitening CLI choices:**
+
+```bash
 python whiten_stats.py --help | grep -F "ego4d"
+```
+
+**Paste 6 of 7 — verify both probe CLI choices:**
+
+```bash
 python rank_probe.py --help | grep -F "ego4d"
 python drift_probe.py --help | grep -F "ego4d"
+```
+
+**Paste 7 of 7 — inspect the worktree:**
+
+```bash
 git status --short
 ```
 
@@ -260,10 +300,17 @@ git status shows the Stage 2 files and this guide edit.
 
 ### Stage 2C — commit and push the Stage 2 package
 
-Run this from your Mac/local checkout after Stage 2B passes:
+Run each numbered block separately from your Mac/local checkout after Stage 2B passes.
+
+**Paste 1 of 5 — enter the repository:**
 
 ```bash
 cd /Users/gobus/Desktop/main/projects/NURON/HJEPA-VWM
+```
+
+**Paste 2 of 5 — stage only the EGO4D implementation package:**
+
+```bash
 git add \
   config.py data.py train.py whiten_stats.py rank_probe.py drift_probe.py \
   select_ego4d_uids.py chunk_ego4d.py make_ego4d_subset.py \
@@ -272,7 +319,26 @@ git add \
   AGENT_FILES/SETUPS/VOLUME_LAYOUT.md \
   GUIDES/CODEBASE_STRUCTURE.md \
   AGENT_FILES/KNOWLEDGE/ego4d/
+```
+
+**Paste 3 of 5 — inspect exactly what will be committed:**
+
+```bash
+git status --short
+git diff --cached --stat
+```
+
+Do not continue if the handoff chat file or unrelated KANBAN files are staged.
+
+**Paste 4 of 5 — create the commit:**
+
+```bash
 git commit -m "Add EGO4D sibling dataset pipeline"
+```
+
+**Paste 5 of 5 — push the commit:**
+
+```bash
 git push
 ```
 
@@ -309,7 +375,7 @@ Do this in the RunPod dashboard:
 
 ### Stage 3B — SSH into the pod and pull Stage 2
 
-Run this on your Mac:
+**Paste 1 — run this on your Mac to enter the pod:**
 
 ```bash
 ssh runpod-jepa
@@ -323,15 +389,32 @@ If `ssh runpod-jepa` is not configured, do this in the RunPod dashboard:
 4. Copy the exact SSH command RunPod shows.
 5. Paste that command into your Mac terminal.
 
-Then run this inside the pod SSH session:
+Run the remaining blocks separately inside the pod SSH session.
+
+**Paste 2 — enter the repository and pull Stage 2:**
 
 ```bash
 cd /workspace/hierarchal-jepa-flow-world-model
 git pull
+```
+
+**Paste 3 — compile the pulled files:**
+
+```bash
 python -m py_compile \
   config.py data.py train.py whiten_stats.py rank_probe.py drift_probe.py \
   select_ego4d_uids.py chunk_ego4d.py make_ego4d_subset.py
+```
+
+**Paste 4 — verify the EGO4D training option:**
+
+```bash
 python train.py --help | grep -F "ego4d"
+```
+
+**Paste 5 — verify free volume space:**
+
+```bash
 df -h /workspace
 ```
 
@@ -340,7 +423,7 @@ available before Stage 4.
 
 ### Stage 3C — enter tmux
 
-Run this inside the pod SSH session:
+**Paste 1 — run this inside the pod SSH session:**
 
 ```bash
 tmux has-session -t ego4d 2>/dev/null && tmux attach -t ego4d || tmux new -s ego4d
@@ -350,28 +433,58 @@ All remaining Stage 3 and Stage 4 commands run inside that `ego4d` tmux session.
 
 ### Stage 3D — install the EGO4D CLI
 
-Run this inside tmux:
+Run each numbered block separately inside tmux.
+
+**Paste 1 of 3 — enter the repository and update pip:**
 
 ```bash
 cd /workspace/hierarchal-jepa-flow-world-model
 python -m pip install --upgrade pip
+```
+
+**Paste 2 of 3 — install the EGO4D CLI:**
+
+```bash
 python -m pip install ego4d
+```
+
+**Paste 3 of 3 — verify the installation:**
+
+```bash
 command -v ego4d
 ego4d --help | head -40
 ```
 
 ### Stage 3E — write AWS credentials
 
-Run this inside tmux, replacing the two `PASTE_...` placeholders with values from the EGO4D
-email:
+Run each numbered block separately inside tmux. Wait for the shell prompt to return after each
+block before pasting the next one.
+
+**Paste 1 of 3 — create the AWS configuration directory:**
 
 ```bash
 mkdir -p ~/.aws
+```
+
+**Paste 2 of 3 — write the credential file:**
+
+Before pasting this block, replace the two `PASTE_...` placeholders with the exact values from
+the EGO4D email. Paste the entire block at once, including both lines containing `EOF`. The shell
+prompt returns only after the second `EOF` is received.
+
+```bash
 cat > ~/.aws/credentials <<'EOF'
 [default]
 aws_access_key_id = PASTE_YOUR_ACCESS_KEY_ID_HERE
 aws_secret_access_key = PASTE_YOUR_SECRET_ACCESS_KEY_HERE
 EOF
+```
+
+**Paste 3 of 3 — lock down and verify the credential file:**
+
+Paste this entire block at once. This check does not print either secret.
+
+```bash
 chmod 600 ~/.aws/credentials
 python - <<'EOF'
 from pathlib import Path
@@ -387,23 +500,63 @@ EOF
 
 ### Stage 3F — download EGO4D metadata
 
-Run this inside tmux:
+Run each numbered block separately inside tmux.
+
+**Paste 1 of 4 — create the persistent raw-data directory:**
 
 ```bash
 mkdir -p /workspace/ego4d_raw
+```
+
+**Paste 2 of 4 — download metadata and annotations:**
+
+This downloads about 6 GB. Wait for the integrity check to finish and the prompt to return.
+
+```bash
 ego4d --output_directory /workspace/ego4d_raw --datasets annotations -y
-test -s /workspace/ego4d_raw/v2/ego4d.json
-ls -lh /workspace/ego4d_raw/v2/ego4d.json
+```
+
+Connection-pool warnings during this download are harmless if the download reaches 100% and
+the integrity check completes.
+
+**Paste 3 of 4 — verify the metadata file:**
+
+```bash
+test -s /workspace/ego4d_raw/ego4d.json
+ls -lh /workspace/ego4d_raw/ego4d.json
+```
+
+**Paste 4 of 4 — download the authoritative `video_540ss` UID manifest:**
+
+Paste this entire Python heredoc at once. It downloads only a small CSV, not any videos.
+
+```bash
+python - <<'EOF'
+from pathlib import Path
+import boto3
+
+out = Path("/workspace/ego4d_raw/video_540ss_manifest.csv")
+boto3.session.Session(profile_name="default").client("s3").download_file(
+    "ego4d-consortium-sharing",
+    "public/v2_1/video_540ss/manifest.csv",
+    str(out),
+)
+assert out.exists() and out.stat().st_size > 0
+print(out, out.stat().st_size, "bytes OK")
+EOF
 ```
 
 ### Stage 3G — select source UIDs and four batches
 
-Run this inside tmux:
+Run both numbered blocks separately inside tmux.
+
+**Paste 1 of 2 — select source videos and create four download batches:**
 
 ```bash
 cd /workspace/hierarchal-jepa-flow-world-model
 python select_ego4d_uids.py \
-  --metadata /workspace/ego4d_raw/v2/ego4d.json \
+  --metadata /workspace/ego4d_raw/ego4d.json \
+  --download-manifest /workspace/ego4d_raw/video_540ss_manifest.csv \
   --target-hours 210 \
   --val-fraction 0.10 \
   --batches 4 \
@@ -411,9 +564,9 @@ python select_ego4d_uids.py \
   --out-dir /workspace/ego4d_raw/manifests
 ```
 
-**Verify Stage 3:**
+**Paste 2 of 2 — verify the complete Stage 3 selection:**
 
-Run this inside tmux:
+Paste this entire Python heredoc at once.
 
 ```bash
 python - <<'EOF'
@@ -468,43 +621,221 @@ EOF
 
 ---
 
-## Stage 4 — `[POD]` The batch loop: download → chunk → verify → delete raw, ×4
+## Stage 4 — `[POD]` The batch cycle: download → chunk → verify → delete raw, ×4
 
 > **Time: ~2.5–6 h unattended total + ~20 min of verification across the four iterations.**
-> Per batch: download ~72 GB (~6 min at 200 MB/s, ~25 min at 50 MB/s) + chunking ~30–60 min at
-> full worker parallelism. Chunking is the single most compute-intensive step of the whole
+> Per batch: download ~72 GB (~6 min at 200 MB/s, ~25 min at 50 MB/s) + chunking roughly
+> 45–120 min with conservative process/thread parallelism. Chunking is the single most
+> compute-intensive step of the whole
 > guide (~190,000 ffmpeg encodes over ~210 h of source video across the batches). This guide
 > uses the sequential batched path only: download one batch, chunk it, verify it, delete that
 > batch's raw files, then move to the next batch. Do not pipeline the first run.
 
-Run this whole block inside the `ego4d` tmux session:
+Do not paste all of Stage 4 at once. Run the numbered blocks below separately inside the
+`ego4d` tmux session. Wait for the prompt to return after each block. A download or chunking
+block may run for a long time; leave tmux with `Ctrl-b`, then `d`, and reconnect later if needed.
+
+### Stage 4A — one-time directory setup
+
+**Paste 1 of 2 — create the raw and processed-data directories:**
 
 ```bash
-set -euo pipefail
 cd /workspace/hierarchal-jepa-flow-world-model
 mkdir -p /workspace/ego4d_raw/v2/video_540ss
 mkdir -p /workspace/data/ego4d/train /workspace/data/ego4d/validation
+```
 
-for BATCH in 1 2 3 4; do
-  UID_FILE="/workspace/ego4d_raw/manifests/batch_${BATCH}_uids.txt"
-  RAW_DIR="/workspace/ego4d_raw/v2/video_540ss"
+**Paste 2 of 2 — install and verify the ffmpeg system dependency:**
 
-  echo "============================================================"
-  echo "EGO4D batch ${BATCH}/4: download"
-  echo "============================================================"
-  test -s "${UID_FILE}"
-  ego4d --output_directory /workspace/ego4d_raw \
-        --datasets video_540ss \
-        --video_uid_file "${UID_FILE}" \
-        -y
+The chunker calls the `ffmpeg` executable directly; installing the Python requirements does not
+install it. Paste this block at once and wait for the prompt to return.
 
-  RAW_COUNT="$(find "${RAW_DIR}" -maxdepth 1 -name '*.mp4' | wc -l | tr -d ' ')"
-  UID_COUNT="$(wc -l < "${UID_FILE}" | tr -d ' ')"
-  echo "raw mp4 count: ${RAW_COUNT}"
-  echo "batch UID count: ${UID_COUNT}"
-  test "${RAW_COUNT}" -eq "${UID_COUNT}"
+```bash
+apt-get update
+apt-get install -y ffmpeg
+command -v ffmpeg
+ffmpeg -version | head -1
+```
 
-  python - "${BATCH}" <<'EOF'
+Do not continue unless `command -v` prints a path and the final line starts with
+`ffmpeg version`.
+
+### Stage 4B — process one batch
+
+Run this Stage 4B cycle first with batch 1. After its raw files are deleted, repeat the same
+cycle with batches 2, 3, and 4 as directed in Stage 4C.
+
+If you reconnect into a new shell or lose the `BATCH`, `UID_FILE`, or `RAW_DIR` variables,
+simply rerun the selection block for the batch you are currently processing before continuing.
+Rerunning a selection block does not download, encode, or delete anything.
+
+**Paste 1 — select batch 1:**
+
+```bash
+export BATCH=1
+export UID_FILE="/workspace/ego4d_raw/manifests/batch_${BATCH}_uids.txt"
+export RAW_DIR="/workspace/ego4d_raw/v2/video_540ss"
+test -s "${UID_FILE}"
+echo "selected EGO4D batch ${BATCH}/4"
+```
+
+**Paste 2 — download the selected batch:**
+
+This is one command split across lines. Paste the entire block at once, then wait until the
+download finishes and the prompt returns.
+
+```bash
+ego4d --output_directory /workspace/ego4d_raw \
+  --datasets video_540ss \
+  --video_uid_file "${UID_FILE}" \
+  -y
+```
+
+If, and only if, the CLI says a requested UID beginning with `grp-` could not be found, the
+selection was created by the older selector before grouped-video filtering was added. The failed
+CLI command downloads nothing. Run this one-time repair block, which removes every `grp-*` record
+consistently from the split files, batch files, and selection manifest. Then rerun Paste 2.
+
+**Repair Paste 2R — remove unavailable v2.1 grouped-video records:**
+
+Paste this entire Python heredoc at once.
+
+```bash
+python - <<'EOF'
+import json
+from collections import defaultdict
+from pathlib import Path
+
+root = Path("/workspace/ego4d_raw/manifests")
+manifest_path = root / "selection_manifest.json"
+manifest = json.loads(manifest_path.read_text())
+removed_records = [v for v in manifest["videos"] if v["video_uid"].startswith("grp-")]
+assert removed_records, "No grp-* records found; do not use this repair for a different error."
+removed_uids = {v["video_uid"] for v in removed_records}
+
+for path in [root / "train_uids.txt", root / "val_uids.txt", *sorted(root.glob("batch_*_uids.txt"))]:
+    uids = [line.strip() for line in path.read_text().splitlines() if line.strip()]
+    kept = [uid for uid in uids if uid not in removed_uids]
+    path.write_text("\n".join(kept) + "\n")
+
+records = [v for v in manifest["videos"] if v["video_uid"] not in removed_uids]
+scenario_hours = defaultdict(float)
+for record in records:
+    scenario_hours[record["primary_scenario"]] += record["duration_sec"] / 3600.0
+
+manifest["videos"] = records
+manifest["scenario_hours"] = {
+    key: round(value, 3) for key, value in sorted(scenario_hours.items())
+}
+manifest["totals"] = {
+    "videos": len(records),
+    "hours": round(sum(v["duration_sec"] for v in records) / 3600.0, 2),
+    "train_videos": sum(v["split"] == "train" for v in records),
+    "val_videos": sum(v["split"] == "validation" for v in records),
+}
+drops = manifest.setdefault("filters", {}).setdefault("drops", {})
+drops["grouped_video_not_in_video_540ss"] = len(removed_records)
+manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True))
+
+assert manifest["totals"]["hours"] >= 200, manifest["totals"]
+print("removed grouped UIDs:", sorted(removed_uids))
+print("repaired totals:", manifest["totals"])
+print("grouped-video manifest repair OK")
+EOF
+```
+
+Do not continue until the block prints `grouped-video manifest repair OK`. Rerun Paste 2; the
+CLI should then report one fewer requested video for each removed UID in the current batch and
+begin downloading normally.
+
+If the missing UID is a normal UUID rather than `grp-*`, reconcile the selection against the
+authoritative CSV that the failed CLI command saved in the raw-video directory.
+
+**Repair Paste 2S — remove every remaining UID absent from `video_540ss`:**
+
+Paste this entire Python heredoc at once. It refuses to modify a previously completed batch or
+reduce the selected corpus below 200 hours.
+
+```bash
+python - <<'EOF'
+import csv
+import json
+import os
+from collections import defaultdict
+from pathlib import Path
+
+root = Path("/workspace/ego4d_raw/manifests")
+tier_manifest = Path("/workspace/ego4d_raw/v2/video_540ss/manifest.csv")
+selection_path = root / "selection_manifest.json"
+current_batch = int(os.environ["BATCH"])
+
+with tier_manifest.open(newline="") as handle:
+    reader = csv.DictReader(handle)
+    assert reader.fieldnames and "video_uid" in reader.fieldnames, reader.fieldnames
+    available = {row["video_uid"].strip() for row in reader if row.get("video_uid", "").strip()}
+assert available, "video_540ss manifest contained no UIDs"
+
+manifest = json.loads(selection_path.read_text())
+removed = [v for v in manifest["videos"] if v["video_uid"] not in available]
+assert removed, "No unavailable selected UIDs found; do not use this for a different error."
+assert not [v for v in removed if v["batch"] < current_batch], (
+    "Repair would alter an already completed batch",
+    [(v["video_uid"], v["batch"]) for v in removed],
+)
+removed_uids = {v["video_uid"] for v in removed}
+records = [v for v in manifest["videos"] if v["video_uid"] not in removed_uids]
+projected_hours = sum(v["duration_sec"] for v in records) / 3600.0
+assert projected_hours >= 200, f"repair would leave only {projected_hours:.2f} hours"
+
+for path in [root / "train_uids.txt", root / "val_uids.txt", *sorted(root.glob("batch_*_uids.txt"))]:
+    uids = [line.strip() for line in path.read_text().splitlines() if line.strip()]
+    path.write_text("\n".join(uid for uid in uids if uid not in removed_uids) + "\n")
+
+scenario_hours = defaultdict(float)
+for record in records:
+    scenario_hours[record["primary_scenario"]] += record["duration_sec"] / 3600.0
+manifest["videos"] = records
+manifest["scenario_hours"] = {
+    key: round(value, 3) for key, value in sorted(scenario_hours.items())
+}
+manifest["totals"] = {
+    "videos": len(records),
+    "hours": round(projected_hours, 2),
+    "train_videos": sum(v["split"] == "train" for v in records),
+    "val_videos": sum(v["split"] == "validation" for v in records),
+}
+drops = manifest.setdefault("filters", {}).setdefault("drops", {})
+drops["not_in_video_540ss_manifest"] = drops.get("not_in_video_540ss_manifest", 0) + len(removed)
+selection_path.write_text(json.dumps(manifest, indent=2, sort_keys=True))
+
+print("removed unavailable UIDs:", [(v["video_uid"], v["batch"]) for v in removed])
+print("repaired totals:", manifest["totals"])
+print("video_540ss manifest reconciliation OK")
+EOF
+```
+
+Do not continue until the block prints `video_540ss manifest reconciliation OK`. Rerun Paste 2;
+the CLI should report fewer requested files and begin downloading normally.
+
+**Paste 3 — verify the number of downloaded raw files:**
+
+```bash
+RAW_COUNT="$(find "${RAW_DIR}" -maxdepth 1 -name '*.mp4' | wc -l | tr -d ' ')"
+UID_COUNT="$(wc -l < "${UID_FILE}" | tr -d ' ')"
+echo "raw mp4 count: ${RAW_COUNT}"
+echo "batch UID count: ${UID_COUNT}"
+test "${RAW_COUNT}" -eq "${UID_COUNT}"
+echo "batch ${BATCH} raw file-count check OK"
+```
+
+The two counts must be equal and the last line must say the check is `OK`.
+
+**Paste 4 — decode-check one downloaded raw video:**
+
+Paste this entire Python heredoc at once, including both lines containing `EOF`.
+
+```bash
+python - "${BATCH}" <<'EOF'
 import random
 import sys
 from pathlib import Path
@@ -519,20 +850,31 @@ fps = float(r.get_avg_fps())
 print(f"batch {batch} raw spot check: {p.name} | {len(r)} frames | {fps:.2f} fps")
 assert 29.0 <= fps <= 31.0, f"expected about 30 fps, got {fps}"
 EOF
+```
 
-  echo "============================================================"
-  echo "EGO4D batch ${BATCH}/4: chunk"
-  echo "============================================================"
-  python chunk_ego4d.py \
-    --raw-dir /workspace/ego4d_raw/v2/video_540ss \
-    --manifest /workspace/ego4d_raw/manifests/selection_manifest.json \
-    --metadata /workspace/ego4d_raw/v2/ego4d.json \
-    --out-root /workspace/data/ego4d
+**Paste 5 — chunk the selected batch:**
 
-  echo "============================================================"
-  echo "EGO4D batch ${BATCH}/4: verify chunks"
-  echo "============================================================"
-  python - "${BATCH}" <<'EOF'
+Paste the entire command at once, then wait until chunking finishes and the prompt returns.
+
+```bash
+python chunk_ego4d.py \
+  --raw-dir /workspace/ego4d_raw/v2/video_540ss \
+  --manifest /workspace/ego4d_raw/manifests/selection_manifest.json \
+  --metadata /workspace/ego4d_raw/ego4d.json \
+  --out-root /workspace/data/ego4d \
+  --workers 2
+```
+
+Do not continue to Paste 6 unless the final summary contains `'failed': 0`. Current code exits
+with an error when this count is nonzero. Keep the raw videos and rerun this idempotent command
+with `--workers 1` if resource-related ffmpeg failures still occur.
+
+**Paste 6 — decode-check the processed chunks:**
+
+Paste this entire Python heredoc at once, including both lines containing `EOF`.
+
+```bash
+python - "${BATCH}" <<'EOF'
 import random
 import sys
 from pathlib import Path
@@ -553,14 +895,22 @@ for split in ("train", "validation"):
         assert 11.5 <= fps <= 12.5, f"{p} fps {fps}, expected about 12"
         assert min(h, w) == 256, f"{p} shorter side is {min(h, w)}, expected 256"
 EOF
+```
 
-  python -m json.tool /workspace/data/ego4d/chunk_manifest.json | head -40
+**Paste 7 — inspect the cumulative chunk manifest:**
 
-  if [ "${BATCH}" = "1" ]; then
-    echo "============================================================"
-    echo "EGO4D batch 1 only: dataloader smoke before raw deletion"
-    echo "============================================================"
-    python - <<'EOF'
+```bash
+python -m json.tool /workspace/data/ego4d/chunk_manifest.json | head -40
+```
+
+For batch 1 only, run this additional dataloader check before deleting the raw files.
+
+**Paste 8 — batch-1-only dataloader check:**
+
+Paste this entire Python heredoc at once. Do not repeat this block for batches 2, 3, or 4.
+
+```bash
+python - <<'EOF'
 from config import Config
 from data import build_dataloader
 
@@ -572,27 +922,65 @@ print(c.shape, t.shape, float(c.min()), float(c.max()))
 assert tuple(c.shape) == (2, 8, 3, 256, 256)
 assert tuple(t.shape) == (2, 8, 3, 256, 256)
 assert float(c.min()) < -1.0 or float(c.max()) > 1.0
+print("batch 1 dataloader check OK")
 EOF
-  fi
-
-  echo "============================================================"
-  echo "EGO4D batch ${BATCH}/4: delete transient raw files"
-  echo "============================================================"
-  xargs -a "${UID_FILE}" -I{} rm -f "${RAW_DIR}/{}.mp4"
-  LEFT="$(find "${RAW_DIR}" -maxdepth 1 -name '*.mp4' | wc -l | tr -d ' ')"
-  echo "raw mp4 files left after deleting batch ${BATCH}: ${LEFT}"
-  test "${LEFT}" -eq 0
-done
 ```
 
-**Final verify after the loop:**
+**Paste 9 — delete only the selected batch's transient raw videos:**
 
-Run this inside the `ego4d` tmux session:
+Run this only after Pastes 3 through 7 succeeded, plus Paste 8 when `BATCH=1`.
 
 ```bash
-set -euo pipefail
-cd /workspace/hierarchal-jepa-flow-world-model
+xargs -a "${UID_FILE}" -I{} rm -f "${RAW_DIR}/{}.mp4"
+LEFT="$(find "${RAW_DIR}" -maxdepth 1 -name '*.mp4' | wc -l | tr -d ' ')"
+echo "raw mp4 files left after deleting batch ${BATCH}: ${LEFT}"
+test "${LEFT}" -eq 0
+echo "batch ${BATCH} complete"
+```
 
+### Stage 4C — repeat the cycle for batches 2, 3, and 4
+
+For batch 2, paste this selection block, then repeat Stage 4B **Pastes 2 through 7 and Paste 9**
+in that order. Do not repeat the batch-1-only Paste 8.
+
+```bash
+export BATCH=2
+export UID_FILE="/workspace/ego4d_raw/manifests/batch_${BATCH}_uids.txt"
+export RAW_DIR="/workspace/ego4d_raw/v2/video_540ss"
+test -s "${UID_FILE}"
+echo "selected EGO4D batch ${BATCH}/4"
+```
+
+For batch 3, paste this selection block, then repeat Stage 4B **Pastes 2 through 7 and Paste 9**
+in that order.
+
+```bash
+export BATCH=3
+export UID_FILE="/workspace/ego4d_raw/manifests/batch_${BATCH}_uids.txt"
+export RAW_DIR="/workspace/ego4d_raw/v2/video_540ss"
+test -s "${UID_FILE}"
+echo "selected EGO4D batch ${BATCH}/4"
+```
+
+For batch 4, paste this selection block, then repeat Stage 4B **Pastes 2 through 7 and Paste 9**
+in that order.
+
+```bash
+export BATCH=4
+export UID_FILE="/workspace/ego4d_raw/manifests/batch_${BATCH}_uids.txt"
+export RAW_DIR="/workspace/ego4d_raw/v2/video_540ss"
+test -s "${UID_FILE}"
+echo "selected EGO4D batch ${BATCH}/4"
+```
+
+### Stage 4D — final verification after all four batches
+
+**Paste 1 — verify the manifests, processed files, and split isolation:**
+
+Paste this entire Python heredoc at once.
+
+```bash
+cd /workspace/hierarchal-jepa-flow-world-model
 python - <<'EOF'
 import json
 from pathlib import Path
@@ -625,8 +1013,19 @@ assert 150_000 <= chunks["train"] <= 190_000, chunks["train"]
 assert 12_000 <= chunks["validation"] <= 25_000, chunks["validation"]
 print("Stage 4 manifest/filesystem/leakage checks OK")
 EOF
+```
 
+Wait for `Stage 4 manifest/filesystem/leakage checks OK` before continuing.
+
+**Paste 2 — display the final processed-dataset size:**
+
+```bash
 du -sh /workspace/data/ego4d
+```
+
+**Paste 3 — confirm that no transient raw videos remain:**
+
+```bash
 test "$(find /workspace/ego4d_raw/v2/video_540ss -maxdepth 1 -name '*.mp4' | wc -l | tr -d ' ')" = "0"
 echo "raw video_540ss mp4 files left: 0"
 ```
@@ -637,10 +1036,12 @@ echo "raw video_540ss mp4 files left: 0"
 
 > **Time: ~5–10 min** (symlink creation plus verification; no encoding, no copying).
 
-Run this inside the `ego4d` tmux session:
+Run each numbered block separately inside the `ego4d` tmux session. Wait for the prompt to
+return before continuing.
+
+**Paste 1 of 4 — build the tiny subset:**
 
 ```bash
-set -euo pipefail
 cd /workspace/hierarchal-jepa-flow-world-model
 python make_ego4d_subset.py \
   --data-root /workspace/data \
@@ -650,14 +1051,12 @@ python make_ego4d_subset.py \
   --seed 42
 ```
 
-**Verify Stage 5:**
+**Paste 2 of 4 — verify counts, symlinks, and the manifest:**
 
-Run this inside the `ego4d` tmux session:
+Paste this entire Python heredoc at once.
 
 ```bash
-set -euo pipefail
 cd /workspace/hierarchal-jepa-flow-world-model
-
 python - <<'EOF'
 import json
 from pathlib import Path
@@ -678,13 +1077,25 @@ print("ego4d_tiny train symlinks:", len(train))
 print("ego4d_tiny validation symlinks:", len(val))
 print("ego4d_tiny manifest OK:", manifest_path)
 EOF
+```
 
+**Paste 3 of 4 — rerun the builder to verify idempotence:**
+
+```bash
 python make_ego4d_subset.py \
   --data-root /workspace/data \
   --train-chunks 4000 \
   --val-chunks 350 \
   --per-video-cap 10 \
   --seed 42
+```
+
+**Paste 4 of 4 — confirm the rerun kept the exact requested counts:**
+
+```bash
+test "$(find /workspace/data/ego4d_tiny/train -maxdepth 1 -name '*.mp4' | wc -l | tr -d ' ')" = "4000"
+test "$(find /workspace/data/ego4d_tiny/validation -maxdepth 1 -name '*.mp4' | wc -l | tr -d ' ')" = "350"
+echo "Stage 5 checks OK"
 ```
 
 ---
@@ -697,18 +1108,23 @@ python make_ego4d_subset.py \
 
 This is the stage that proves the guide's goal: the flag is the only difference.
 
-Run this inside the pod SSH session:
+Run this first block in the pod SSH session, outside any existing tmux session.
+
+**Paste 1 — enter the smoke-test tmux session:**
 
 ```bash
 tmux has-session -t ego4d_smoke 2>/dev/null && tmux attach -t ego4d_smoke || tmux new -s ego4d_smoke
 ```
 
-Then run this inside the `ego4d_smoke` tmux session:
+Run every remaining Stage 6 block separately inside the `ego4d_smoke` tmux session. Wait for
+the prompt to return after each block.
+
+**Paste 2 — test the EGO4D dataloader:**
+
+Paste this entire Python heredoc at once.
 
 ```bash
-set -euo pipefail
 cd /workspace/hierarchal-jepa-flow-world-model
-
 python - <<'EOF'
 from config import Config
 from data import build_dataloader
@@ -721,18 +1137,42 @@ print(c.shape, t.shape, float(c.min()), float(c.max()))
 assert tuple(c.shape) == (2, 8, 3, 256, 256)
 assert tuple(t.shape) == (2, 8, 3, 256, 256)
 assert float(c.min()) < -1.0 or float(c.max()) > 1.0
+print("EGO4D dataloader smoke OK")
 EOF
+```
 
+**Paste 3 — run Stage-0 model sanity:**
+
+```bash
 python train.py --stage0-only
+```
 
+**Paste 4 — run the 500-step EGO4D smoke training:**
+
+This runs for roughly 10–13 minutes. Wait for the prompt to return.
+
+```bash
 python train.py --data ego4d_tiny --steps 500 \
   --checkpoint-dir /workspace/ckpt/ego4d_smoke
+```
 
+**Paste 5 — verify the EGO4D checkpoint:**
+
+```bash
 test -f /workspace/ckpt/ego4d_smoke/phase1_step500.pt
+echo "EGO4D checkpoint OK"
+```
 
+**Paste 6 — run the 100-step SSv2 regression smoke:**
+
+```bash
 python train.py --data ssv2_tiny --steps 100 \
   --checkpoint-dir /workspace/ckpt/ssv2_regression_smoke
+```
 
+**Paste 7 — verify the SSv2 checkpoint and finish Stage 6:**
+
+```bash
 test -f /workspace/ckpt/ssv2_regression_smoke/phase1_step100.pt
 echo "Stage 6 switchability smoke passed"
 ```
@@ -751,7 +1191,12 @@ only `--data` and the per-run `--checkpoint-dir`.
 
 ### Stage 7A — create a KANBAN investigation stub
 
-Run this on your Mac/local checkout before the first real run:
+Run each numbered block separately in your Mac terminal, not in SSH or pod tmux. Wait for the
+prompt to return after each block.
+
+**Paste 1 of 6 — enter the local repository and choose the next investigation number:**
+
+Paste this entire block at once, including both lines containing `EOF`.
 
 ```bash
 cd /Users/gobus/Desktop/main/projects/NURON/HJEPA-VWM
@@ -768,7 +1213,20 @@ for path in root.glob("investigation_[0-9][0-9][0-9]*"):
 print(f"investigation_{max(nums) + 1:03d}")
 EOF
 )"
+echo "${INV_DIR}"
+```
+
+**Paste 2 of 6 — create the investigation directory:**
+
+```bash
 mkdir -p "KANBAN/PHASE_1/${INV_DIR}"
+```
+
+**Paste 3 of 6 — write `DESCRIPTION.md`:**
+
+Paste this entire heredoc at once, including both lines containing `EOF`.
+
+````bash
 cat > "KANBAN/PHASE_1/${INV_DIR}/DESCRIPTION.md" <<'EOF'
 # EGO4D sibling A/B
 
@@ -788,27 +1246,51 @@ python train.py --data ego4d --steps 15000 --horizon-k 12 --lr-coarse-flow 1e-4 
   --checkpoint-dir /workspace/ckpt/ego4d_run037_ab --log-every 50 --diag-every 500
 ```
 EOF
+````
+
+**Paste 4 of 6 — write `OBSERVATIONS.md`:**
+
+```bash
 cat > "KANBAN/PHASE_1/${INV_DIR}/OBSERVATIONS.md" <<'EOF'
 # Observations
 
 Pending run.
 EOF
+```
+
+**Paste 5 of 6 — write `NEXT_STEPS.md`:**
+
+```bash
 cat > "KANBAN/PHASE_1/${INV_DIR}/NEXT_STEPS.md" <<'EOF'
 # Next Steps
 
 Pending run.
 EOF
+```
+
+**Paste 6 of 6 — verify all three files exist:**
+
+```bash
+test -s "KANBAN/PHASE_1/${INV_DIR}/DESCRIPTION.md"
+test -s "KANBAN/PHASE_1/${INV_DIR}/OBSERVATIONS.md"
+test -s "KANBAN/PHASE_1/${INV_DIR}/NEXT_STEPS.md"
 echo "created KANBAN/PHASE_1/${INV_DIR}"
 ```
 
 ### Stage 7B — optional dataset probes before the first full run
 
-Run this inside a pod tmux session if you want a quick frozen-encoder drift/rank read before
-burning a 15k-step run:
+These probes are optional. If you choose to run them, run each numbered block separately inside
+a pod tmux session. Wait for the prompt to return after each probe.
+
+**Paste 1 of 3 — enter the repository:**
 
 ```bash
-set -euo pipefail
 cd /workspace/hierarchal-jepa-flow-world-model
+```
+
+**Paste 2 of 3 — run the rank probe:**
+
+```bash
 python rank_probe.py \
   --data ego4d \
   --split validation \
@@ -816,6 +1298,11 @@ python rank_probe.py \
   --seed 42 \
   --out-dir logs/drift_probe_ego4d \
   --plot on
+```
+
+**Paste 3 of 3 — run the drift probe:**
+
+```bash
 python drift_probe.py \
   --data ego4d \
   --split validation \
@@ -828,23 +1315,40 @@ python drift_probe.py \
 
 ### Stage 7C — launch the first full EGO4D A/B run
 
-Run this inside the pod SSH session:
+Run this first block in the pod SSH session, outside any existing tmux session.
+
+**Paste 1 of 4 — enter the real-run tmux session:**
 
 ```bash
 tmux has-session -t ego4d_real 2>/dev/null && tmux attach -t ego4d_real || tmux new -s ego4d_real
 ```
 
-Then run this inside the `ego4d_real` tmux session:
+Run the remaining blocks separately inside `ego4d_real` tmux.
+
+**Paste 2 of 4 — enter the repository:**
 
 ```bash
-set -euo pipefail
 cd /workspace/hierarchal-jepa-flow-world-model
+```
+
+**Paste 3 of 4 — launch the 15k-step run:**
+
+Paste the entire command at once. It runs for approximately six hours; detach from tmux with
+`Ctrl-b`, then `d` if you need to disconnect.
+
+```bash
 python train.py --data ego4d --steps 15000 --horizon-k 12 --lr-coarse-flow 1e-4 \
   --lambda-var 0.5 --lambda-sigreg 5.0 --sigreg-warmup-steps 2000 \
   --lambda-recon 0.05 --lambda-recon-pred 0.05 --recon-warmup-steps 2000 --predict-residual \
   --decoder-dim 512 --decoder-blocks 4 --n-c 32 \
   --checkpoint-dir /workspace/ckpt/ego4d_run037_ab --log-every 50 --diag-every 500
+```
+
+**Paste 4 of 4 — after training finishes, verify the final checkpoint:**
+
+```bash
 test -f /workspace/ckpt/ego4d_run037_ab/phase1_step15000.pt
+echo "EGO4D 15k-step checkpoint OK"
 ```
 
 Do this in the W&B dashboard after the run appears:
@@ -862,12 +1366,21 @@ Do this in the W&B dashboard after the run appears:
 
 ### Stage 7D — if a future EGO4D run uses whitening, generate EGO4D whitening stats first
 
-Run this inside a pod tmux session before any `--whiten-features --data ego4d` training run:
+Run each numbered block separately inside a pod tmux session before any
+`--whiten-features --data ego4d` training run.
+
+**Paste 1 of 4 — enter the repository and create the output directory:**
 
 ```bash
-set -euo pipefail
 cd /workspace/hierarchal-jepa-flow-world-model
 mkdir -p logs/whiten
+```
+
+**Paste 2 of 4 — generate EGO4D whitening statistics:**
+
+Paste the entire command at once and wait for it to finish.
+
+```bash
 python whiten_stats.py \
   --data ego4d \
   --split train \
@@ -875,10 +1388,18 @@ python whiten_stats.py \
   --seed 42 \
   --out logs/whiten/whiten_stats_ego4d_train_seed42.pt \
   --device cuda
-test -f logs/whiten/whiten_stats_ego4d_train_seed42.pt
 ```
 
-Then pass that file to the future training command:
+**Paste 3 of 4 — verify the statistics file:**
+
+```bash
+test -f logs/whiten/whiten_stats_ego4d_train_seed42.pt
+echo "EGO4D whitening statistics OK"
+```
+
+**Paste 4 of 4 — example future whitening run:**
+
+Before pasting, replace `PASTE_RUN_TAG` with a unique run name. Then paste the entire command.
 
 ```bash
 python train.py --data ego4d --whiten-features \
@@ -893,6 +1414,11 @@ python train.py --data ego4d --whiten-features \
 | Symptom | Likely cause / fix |
 |---|---|
 | CLI errors with credential/403 failures | AWS credentials expired (14-day window) — renew via the license FAQ, update `~/.aws/credentials`, rerun (resumable). |
+| `requested video UIDs could not be found` and the UID starts with `grp-` | A v2.1 Goal-Step grouped-video record entered the selection, but grouped videos have no `video_540ss` object. Use the Stage 4B repair block below the download command, then rerun the download. Current `select_ego4d_uids.py` filters these records before selection. |
+| `requested video UIDs could not be found` for a normal UUID | `ego4d.json` contains a metadata record absent from the chosen tier. Use Stage 4B Repair Paste 2S to reconcile against the CLI-downloaded `video_540ss/manifest.csv`, then rerun the download. Current Stage 3 prefilters against that authoritative CSV. |
+| `FileNotFoundError: ... 'ffmpeg'` from `chunk_ego4d.py` | The pod image lacks the ffmpeg system package. Run Stage 4A Paste 2, verify `ffmpeg -version`, and rerun the idempotent chunk command. Raw videos are unaffected. |
+| Repeated ffmpeg `Resource temporarily unavailable` / encoder-open failures | CPU-count process workers multiplied by ffmpeg's internal threads and exhausted pod resources. Press `Ctrl-C`, keep the raw videos, and rerun Stage 4B's idempotent chunk command with `--workers 2`. Current code also pins ffmpeg decoder/encoder threads to one. |
+| Stage 0 raises `B_EMA did not update` | The old visible-change assertion could reject a correct first-step EMA delta that rounded below fp32 resolution. Pull the current code, which validates the exact dtype-rounded EMA transition, then rerun Stage 6 Paste 3. |
 | `No .webm or .mp4 files found` from a probe script | Delta 1/3's twin change in `drift_probe.py` was missed — its glob is independent of `data.py`. |
 | Chunk decode returns ≠ 48 frames | ffmpeg trim landed on a stream edge; the chunker's idempotent rerun should re-encode flagged files; the loader's clamp makes stragglers non-fatal but they should be rare (< 0.1%). |
 | Val metrics implausibly good on EGO4D | Check the Stage-4 split-disjointness gate first — source-video leakage is the classic cause. |

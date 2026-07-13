@@ -1,7 +1,8 @@
 """Select EGO4D source-video UIDs for the HJEPA-VWM chunk corpus.
 
 Reads the official `ego4d.json` metadata (downloaded by the Ego4D CLI), filters out
-unusable videos (stereo captures, non-30fps streams, very short recordings), greedily
+unusable videos (v2.1 grouped videos, stereo captures, non-30fps streams, very short
+recordings), greedily
 selects a scenario-diverse subset totaling `--target-hours`, splits the selection into
 train/validation at the SOURCE-VIDEO level (chunks of one long video are near-duplicates,
 so a chunk-level split would leak train content into validation), and partitions the
@@ -19,6 +20,7 @@ Pure stdlib; no torch dependency (this runs before any training environment exis
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import random
 from collections import defaultdict
@@ -36,7 +38,7 @@ def load_video_records(metadata_path: Path) -> list[dict[str, Any]]:
     empty selection rather than an actionable error.
 
     Args:
-        metadata_path: Path to `ego4d.json` (CLI download, `<output_dir>/v2/ego4d.json`).
+        metadata_path: Path to `ego4d.json` (CLI download, `<output_dir>/ego4d.json`).
     Returns:
         List of per-video metadata dicts.
     """
@@ -51,6 +53,20 @@ def load_video_records(metadata_path: Path) -> list[dict[str, Any]]:
     if not isinstance(videos, list) or not videos:
         raise ValueError(f"{metadata_path} 'videos' is empty or not a list.")
     return videos
+
+
+def load_downloadable_uids(manifest_path: Path) -> set[str]:
+    """Load the authoritative video UIDs from an EGO4D dataset-tier manifest CSV."""
+    with manifest_path.open(newline="", encoding="utf-8") as handle:
+        reader = csv.DictReader(handle)
+        if not reader.fieldnames or "video_uid" not in reader.fieldnames:
+            raise KeyError(
+                f"{manifest_path} has no 'video_uid' column; got {reader.fieldnames}."
+            )
+        uids = {row["video_uid"].strip() for row in reader if row.get("video_uid", "").strip()}
+    if not uids:
+        raise ValueError(f"{manifest_path} contains no downloadable video UIDs.")
+    return uids
 
 
 def _video_fps(video: dict[str, Any]) -> float | None:
@@ -77,10 +93,12 @@ def filter_videos(
     min_duration_sec: float = 60.0,
     fps_target: float = 30.0,
     fps_tolerance: float = 0.1,
+    downloadable_uids: set[str] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     """Drop videos unusable for the chunk corpus, with per-reason counters.
 
-    Strict on identity fields (`video_uid`, `duration_sec` — missing raises), lenient
+    Strict on identity fields (`video_uid`, `duration_sec` — missing raises), excludes
+    v2.1 `grp-*` Goal-Step aggregates that have no `video_540ss` object, and is lenient
     with reporting on optional fields (`is_stereo` absent counts as mono, fps absent is
     not checked), matching the GUIDE Delta-4 contract.
 
@@ -89,6 +107,7 @@ def filter_videos(
         min_duration_sec: Drop recordings shorter than this.
         fps_target: Canonical EGO4D frame rate (30).
         fps_tolerance: Allowed |fps - fps_target| when fps metadata is present.
+        downloadable_uids: Optional authoritative UID set from the selected download tier.
     Returns:
         (kept, drop_counts) — usable video dicts and a reason -> count report.
     """
@@ -100,7 +119,14 @@ def filter_videos(
                 "ego4d.json video record missing required 'video_uid'/'duration_sec': "
                 f"keys={sorted(video.keys())[:12]}. Schema drift — inspect before rerunning."
             )
+        uid = str(video["video_uid"])
         duration = float(video["duration_sec"])
+        if uid.startswith("grp-"):
+            drops["grouped_video_not_in_video_540ss"] += 1
+            continue
+        if downloadable_uids is not None and uid not in downloadable_uids:
+            drops["not_in_video_540ss_manifest"] += 1
+            continue
         if video.get("is_stereo") is True:
             drops["stereo"] += 1
             continue
@@ -302,6 +328,10 @@ def parse_args() -> argparse.Namespace:
     """Parse the EGO4D UID-selection CLI (GUIDE.md Stage 3 step 5)."""
     parser = argparse.ArgumentParser(description="Select EGO4D source-video UIDs and batches.")
     parser.add_argument("--metadata", required=True, help="Path to the downloaded ego4d.json.")
+    parser.add_argument(
+        "--download-manifest",
+        help="Optional video_540ss manifest.csv used to exclude metadata-only UIDs.",
+    )
     parser.add_argument("--target-hours", type=float, default=210.0)
     parser.add_argument("--val-fraction", type=float, default=0.10)
     parser.add_argument("--batches", type=int, default=4)
@@ -314,7 +344,10 @@ def main() -> None:
     """Run selection end to end and print the per-scenario hour table."""
     args = parse_args()
     videos = load_video_records(Path(args.metadata))
-    kept, drop_counts = filter_videos(videos)
+    downloadable_uids = (
+        load_downloadable_uids(Path(args.download_manifest)) if args.download_manifest else None
+    )
+    kept, drop_counts = filter_videos(videos, downloadable_uids=downloadable_uids)
     selected, scenario_hours = select_diverse(kept, args.target_hours, args.seed)
     split = split_train_val(selected, args.val_fraction, args.seed)
     batches = assign_batches(selected, split, args.batches)

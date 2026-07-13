@@ -234,6 +234,29 @@ def _update_ema(online: nn.Module, target: nn.Module, momentum: float) -> None:
             p_target.data.lerp_(p_online.data, 1.0 - momentum)
 
 
+def _assert_ema_transition(
+    online_after: list[Tensor],
+    target_before: list[Tensor],
+    target_after: list[Tensor],
+    *,
+    momentum: float,
+    updated: bool,
+) -> None:
+    """Assert the exact dtype-rounded EMA transition used by the training step.
+
+    Early warmup updates can imply EMA deltas below fp32 resolution, so requiring
+    visible target movement is a false negative. Replaying the same lerp checks the
+    transition itself while preserving the real parameter dtype and rounding.
+    """
+    for index, (online, before, after) in enumerate(
+        zip(online_after, target_before, target_after, strict=True)
+    ):
+        expected = before.clone()
+        if updated:
+            expected.lerp_(online, 1.0 - momentum)
+        assert torch.equal(expected, after), f"B_EMA transition incorrect at parameter {index}"
+
+
 def autocast_context(device: torch.device, cfg: Config):
     """Return a bf16 autocast context for CUDA, null context otherwise."""
     _require_torch()
@@ -741,12 +764,9 @@ def run_stage0(cfg: Config) -> None:
         torch.randn(2, cfg.model.t_ctx, 3, cfg.model.h, cfg.model.w, device=device),
     )
     enc_before = next(encoder.parameters()).detach().clone()
-    # Snapshot ALL target params, not just the first: at identity-init the first
-    # bottleneck param (in_proj, input pathway) gets zero gradient because every
-    # residual branch is zero-init (c == norm(queries)), so a step-0 gradient that
-    # reaches only `queries` (e.g. lambda_cov before the recon/sigreg warmups ramp
-    # in) legitimately moves B_EMA without touching in_proj. Checking any param
-    # keeps the "B_EMA tracked B" invariant without the first-param false negative.
+    # Snapshot every target parameter so Stage 0 can replay the exact EMA lerp.
+    # A visible-change assertion is invalid here: the tiny first warmup update,
+    # multiplied by (1 - momentum), can round back to the old fp32 target value.
     ema_before = [p.detach().clone() for p in target_bottleneck.parameters()]
     metrics = train_step(
         batch, modules, optimizer, 0, cfg, device, mean_tracker=mean_tracker, whitener=whitener
@@ -755,10 +775,13 @@ def run_stage0(cfg: Config) -> None:
     ema_after = [p.detach().clone() for p in target_bottleneck.parameters()]
     assert math.isfinite(metrics["loss"]), metrics
     assert torch.equal(enc_before, enc_after), "Frozen encoder params changed"
-    if metrics["grad_norm"] > 0.0 and metrics["grad_skipped"] == 0.0:
-        assert any(
-            not torch.equal(b, a) for b, a in zip(ema_before, ema_after)
-        ), "B_EMA did not update"
+    _assert_ema_transition(
+        [p.detach() for p in bottleneck.parameters()],
+        ema_before,
+        ema_after,
+        momentum=metrics["ema_m"],
+        updated=metrics["grad_skipped"] == 0.0,
+    )
     print(f"Stage 0 sanity passed: {metrics}")
 
 

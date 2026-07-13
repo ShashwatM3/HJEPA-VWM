@@ -43,11 +43,12 @@ Most fresh-pod setup happens after SSH, inside Linux, with `apt-get` and `pip`.
 ## 1. Install System Packages
 
 Run this on the pod every time the image is fresh. This fixes the recurring
-`tmux: command not found` issue and ensures basic tooling is available.
+`tmux: command not found` issue, installs the ffmpeg executable used by the EGO4D
+chunker, and ensures basic tooling is available.
 
 ```bash
 apt-get update -qq
-apt-get install -y git tmux curl ca-certificates
+apt-get install -y git tmux curl ca-certificates ffmpeg
 ```
 
 Optional quality-of-life tools:
@@ -313,9 +314,9 @@ Interpretation:
 |---|---|
 | `ModuleNotFoundError: No module named 'transformers'` | `python3 -m pip install -r requirements.txt` |
 | `tmux: command not found` | `apt-get update -qq && apt-get install -y tmux` |
+| `FileNotFoundError: ... 'ffmpeg'` from `chunk_ego4d.py` | `apt-get update -qq && apt-get install -y ffmpeg` |
 | V-JEPA checkpoint redownloads every pod | `export HF_HOME=/workspace/hf_cache` |
 | W&B asks for auth / no metrics online | `wandb login` |
 | GitHub asks for password | Use a GitHub personal access token as HTTPS password |
 | Data count is 0 / missing dir | Wrong volume attached, or `/workspace/data` layout missing |
 | SSH dies and run stops | Launch inside `tmux` |
-

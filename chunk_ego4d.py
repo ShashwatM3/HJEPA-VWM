@@ -26,12 +26,34 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import subprocess
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
 SPLITS = ("train", "validation")
+MAX_DEFAULT_WORKERS = 4
+
+
+def require_ffmpeg() -> str:
+    """Return the ffmpeg path or fail before starting worker processes.
+
+    ffmpeg is an OS-level dependency rather than a Python package, so importing this
+    module cannot guarantee that encoding is available.
+    """
+    path = shutil.which("ffmpeg")
+    if path is None:
+        raise RuntimeError(
+            "ffmpeg is required to chunk EGO4D videos but is not installed. "
+            "Run: apt-get update && apt-get install -y ffmpeg"
+        )
+    return path
+
+
+def default_workers() -> int:
+    """Choose conservative process parallelism because each worker launches ffmpeg."""
+    return min(MAX_DEFAULT_WORKERS, os.cpu_count() or MAX_DEFAULT_WORKERS)
 
 
 def load_split_map(manifest_path: Path) -> dict[str, dict[str, Any]]:
@@ -124,8 +146,11 @@ def encode_window(
 
     `-ss` before `-i` fast-seeks on keyframes then decodes to the exact start; keyframe
     interval == fps (one per second) keeps decord random access cheap; `+faststart` puts
-    the container index up front so per-item open cost stays low in the dataloader.
+    the container index up front so per-item open cost stays low in the dataloader. ffmpeg
+    writes a `.part.mp4` file that is atomically renamed only after a successful encode.
     """
+    partial = out.with_name(f"{out.stem}.part{out.suffix}")
+    partial.unlink(missing_ok=True)
     cmd = [
         "ffmpeg",
         "-y",
@@ -134,6 +159,8 @@ def encode_window(
         "error",
         "-ss",
         f"{start_sec:.3f}",
+        "-threads",
+        "1",
         "-i",
         str(src),
         "-t",
@@ -142,6 +169,8 @@ def encode_window(
         _scale_filter(fps, shorter_side),
         "-c:v",
         "libx264",
+        "-threads",
+        "1",
         "-preset",
         "veryfast",
         "-crf",
@@ -153,14 +182,25 @@ def encode_window(
         "-an",
         "-movflags",
         "+faststart",
-        str(out),
+        str(partial),
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0 or not out.exists() or out.stat().st_size == 0:
-        out.unlink(missing_ok=True)
+    if result.returncode != 0 or not partial.exists() or partial.stat().st_size == 0:
+        partial.unlink(missing_ok=True)
         print(f"WARN: ffmpeg failed on {src.name} @ {start_sec:.0f}s: {result.stderr.strip()}")
         return False
+    partial.replace(out)
     return True
+
+
+def raise_for_failed_encodes(totals: dict[str, int]) -> None:
+    """Fail the batch when any window failed, preventing unsafe raw-file deletion."""
+    failed = totals.get("failed", 0)
+    if failed:
+        raise RuntimeError(
+            f"{failed} ffmpeg window encodes failed. Keep the raw videos and rerun the "
+            "idempotent chunk command with lower --workers until failed is 0."
+        )
 
 
 def chunk_one_video(
@@ -234,13 +274,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--fps", type=int, default=12)
     parser.add_argument("--shorter-side", type=int, default=256)
     parser.add_argument("--crf", type=int, default=27)
-    parser.add_argument("--workers", type=int, default=os.cpu_count() or 4)
+    parser.add_argument("--workers", type=int, default=default_workers())
     return parser.parse_args()
 
 
 def main() -> None:
     """Chunk every manifest UID whose raw file is present; report processed vs pending."""
     args = parse_args()
+    require_ffmpeg()
     split_map = load_split_map(Path(args.manifest))
     redactions = load_redactions(Path(args.metadata))
     raw_dir = Path(args.raw_dir)
@@ -275,6 +316,7 @@ def main() -> None:
                 totals[key] += counts[key]
             if done % 25 == 0 or done == len(futures):
                 print(f"[{done}/{len(futures)}] videos done | cumulative {totals}")
+    raise_for_failed_encodes(totals)
     manifest = rescan_chunk_manifest(Path(args.out_root), args)
     print(
         f"Processed {len(present)} of {len(split_map)} manifest UIDs "
