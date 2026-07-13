@@ -137,12 +137,18 @@ Quick dependency check:
 ```bash
 python3 - <<'PY'
 import torch, transformers, decord, wandb
+from transformers import DINOv3ViTModel, Siglip2VisionModel, VJEPA2Model
 print("torch:", torch.__version__)
 print("transformers:", transformers.__version__)
+assert transformers.__version__ == "4.57.6"
+print("planned encoder architectures OK")
 print("decord OK")
 print("wandb OK")
 PY
 ```
+
+`transformers==4.57.6` is intentional. Do not upgrade one adapter lane independently: a
+dependency change invalidates every earlier real-adapter result.
 
 ---
 
@@ -238,8 +244,16 @@ Always run this before a training job:
 ```bash
 cd /workspace/hierarchal-jepa-flow-world-model
 export HF_HOME=/workspace/hf_cache
+python3 encoders.py --smoke --encoder vjepa2_vitl16 --batch-size 1 \
+  --hf-cache-dir /workspace/hf_cache
 python3 train.py --stage0-only
 ```
+
+The encoder smoke must report requested/resolved revision
+`b3c1679b7c34d3255ef3547f27c7b226aefab26f`, output shape `[1,1024,1024]`, finite values,
+325,971,328 parameters, and zero trainable parameters. Peak CUDA memory is reported on a
+GPU. DINOv3 and SigLIP2 aliases intentionally fail until their separate adapter lanes pin
+tested immutable revisions.
 
 If this fails with `No module named 'transformers'`, repeat section 4.
 
@@ -316,6 +330,7 @@ Interpretation:
 | `tmux: command not found` | `apt-get update -qq && apt-get install -y tmux` |
 | `FileNotFoundError: ... 'ffmpeg'` from `chunk_ego4d.py` | `apt-get update -qq && apt-get install -y ffmpeg` |
 | V-JEPA checkpoint redownloads every pod | `export HF_HOME=/workspace/hf_cache` |
+| Encoder smoke says an alias is reserved/not implemented | Expected for DINOv3/SigLIP2 until that lane lands; never bypass it with `main` |
 | W&B asks for auth / no metrics online | `wandb login` |
 | GitHub asks for password | Use a GitHub personal access token as HTTPS password |
 | Data count is 0 / missing dir | Wrong volume attached, or `/workspace/data` layout missing |

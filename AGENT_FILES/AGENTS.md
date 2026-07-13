@@ -67,7 +67,7 @@ implemented behavior, trace code first and then reconcile the docs explicitly.
 Use this order — **code always wins over prose**:
 
 1. **Root implementation files + tests** for anything implemented today:
-   `config.py`, `data.py`, `models.py`, `losses.py`, `diagnostics.py`,
+   `config.py`, `data.py`, `encoders.py`, `models.py`, `losses.py`, `diagnostics.py`,
    `train.py`, `make_subset.py`, `tests/`.
 2. **This file (`AGENTS.md`)** — implementation-grounded map of shapes, modules,
    training step, shipped defaults, invariants.
@@ -174,11 +174,12 @@ Root implementation files:
 |---|---|
 | `config.py` | Dataclass configuration, path contract, dimensions, optimizer/loss knobs. |
 | `data.py` | Clip-per-file video dataset and dataloader. Produces context/target clip pairs from SSv2 `.webm` symlinks or EGO4D `.mp4` chunks. |
+| `encoders.py` | Encoder-independent raw-clip seam, immutable feature specs/fingerprints, private adapter registry, pinned V-JEPA2 adapter, and authenticated real-adapter smoke CLI. DINOv3/SigLIP2 aliases are reserved but intentionally unresolved. |
 | `make_subset.py` | Builds `ssv2_tiny` as symlinks plus `manifest.json`. |
 | `select_ego4d_uids.py` | Selects scenario-diverse EGO4D source-video UIDs, train/validation split, and download batches from `ego4d.json`. |
 | `chunk_ego4d.py` | Chunks downloaded EGO4D 540ss videos into 4-second, 12 FPS, 256px-shorter-side H.264 `.mp4` clips under `data/ego4d`. |
 | `make_ego4d_subset.py` | Builds `ego4d_tiny` as symlinks into `data/ego4d` plus `manifest.json`. |
-| `models.py` | All `nn.Module` classes currently implemented. |
+| `models.py` | Phase-1 latent modules plus the temporary legacy normalized-input `FrozenEncoder` bridge. New encoder logic belongs in `encoders.py`, not here. |
 | `losses.py` | Pure tensor losses and detach helper. No parameters. |
 | `diagnostics.py` | Collapse metrics, baseline comparisons, AGC, weight-decay grouping. |
 | `train.py` | Stage-0 sanity, Stage-1 training, CLI, optimizer, EMA, checkpoints. |
@@ -199,7 +200,7 @@ Agent and architecture docs:
 | `AGENT_FILES/AGENT-BEHAVIOUR/CODE_DESIGN.md` | Flat-file layout, naming, docstrings, detach rules. |
 | `AGENT_FILES/AGENT-BEHAVIOUR/WORKFLOW.md` | Redirect → [`GUIDES/EXPERIMENT_LIFECYCLE.md`](../GUIDES/EXPERIMENT_LIFECYCLE.md). |
 | `AGENT_FILES/SETUPS/VOLUME_LAYOUT.md` | RunPod `/workspace` data/checkpoint/cache layout. |
-| `AGENT_FILES/KNOWLEDGE/encoders/README.md` | Frozen-encoder research index: DINOv3-B and SigLIP 2-B dossiers plus the encoder-pluggability/parallel-experiment plan. These describe proposed work, not shipped implementation. |
+| `AGENT_FILES/KNOWLEDGE/encoders/README.md` | Frozen-encoder research index: DINOv3-B and SigLIP 2-B dossiers plus the encoder-pluggability/parallel-experiment plan and segmented guide. Prompt 1C's foundation is shipped; later pipeline/adapter stages remain planned. |
 | `GUIDES/latest_brief.md` | Architecture narrative (v0.3) — **historical intent, not ground truth**. |
 | `GUIDES/PROBLEMS_METRICS_AND_EXPERIMENTS.md` | Metric glossary + experiment problem history. |
 | `GUIDES/CODEBASE_STRUCTURE.md` | File map: training code, MLOps, docs, KANBAN. |
@@ -313,9 +314,33 @@ future Stage-4 concern, not current code.
 
 ## 6. Current model components
 
-All current trainable modules live in `models.py`.
+All current trainable latent modules live in `models.py`. The frozen-encoder foundation now
+lives in `encoders.py`, but the data/model/training hot path is deliberately not migrated to
+it yet; that is the next encoder-pluggability stage.
 
-### FrozenEncoder
+### Encoder-independent foundation (`encoders.py`)
+
+The public surface is exactly `FeatureLayout`, `EncoderSpec`, `FrozenEncoder`, and
+`build_frozen_encoder`. `FrozenEncoder` accepts raw floating-point clips in `[0,1]` with
+shape `(B,8,3,256,256)`, normalizes once in fp32, owns fp32/bf16 inference precision and
+frame microbatching, and returns only finite dense `(B,N_e,D_e)` tokens. Its resolved spec
+contains the immutable requested/resolved Hub revision, cache and inference identity,
+layout, exact normalization values, parameter count, and SHA-256 feature fingerprint. Eval
+mode and freezing are sticky under normal parent `.train()` recursion.
+
+The private registry currently has:
+
+- `vjepa2_vitl16`: implemented at Hub commit
+  `b3c1679b7c34d3255ef3547f27c7b226aefab26f`, layout `4x16x16`, `D_e=1024`;
+- `dinov3_vitb16` and `siglip2_vitb16`: stable reserved aliases that fail clearly because
+  no tested private adapter/default immutable revision is installed yet. They never fall
+  back to `main`.
+
+`transformers==4.57.6` is the shared dependency pin. Its installed source exposes the
+planned V-JEPA2, DINOv3 ViT, and SigLIP2 vision architectures. Any later dependency change
+invalidates the real-adapter evidence and requires all lanes to be rerun.
+
+### Legacy pipeline FrozenEncoder (`models.py`)
 
 `FrozenEncoder` wraps `transformers.AutoModel.from_pretrained(
 "facebook/vjepa2-vitl-fpc64-256", attn_implementation="sdpa")`.
@@ -329,6 +354,11 @@ Contracts:
 - `.train()` is overridden to keep the wrapped model in eval mode.
 - `forward` is decorated with `torch.no_grad()`.
 - The same instance encodes context and target clips.
+
+This class is a temporary compatibility bridge for the still-normalized current data path.
+Do not add new adapter, normalization, revision, or fingerprint logic here. The next stage
+replaces its call sites with `encoders.build_frozen_encoder`; until then, `train.py` and the
+offline probes remain V-JEPA-specific.
 
 Never put encoder parameters in an optimizer. Never add a target encoder.
 
@@ -842,6 +872,16 @@ Model defaults:
 | `condition_dropout` | `0.10` |
 | reconstruction decoder dim / blocks / heads | `256`, `2`, `8` |
 
+Encoder-foundation defaults (`EncoderConfig`; not yet exposed by `train.py`):
+
+| Field | Default |
+|---|---|
+| `alias`, `revision` | `vjepa2_vitl16`, `None` (registry resolves the pinned SHA; never `main`) |
+| `input_frames`, `input_height`, `input_width` | `8`, `256`, `256` |
+| `precision`, `frame_microbatch` | `bf16`, `8` |
+| `attention_implementation` | `sdpa` |
+| `hf_cache_dir` | `/workspace/hf_cache` |
+
 Training defaults:
 
 | Field | Default |
@@ -951,7 +991,9 @@ Do not violate these without explicit human approval:
 7. In future Stage 3, `c_hat` must be detached before feeding `F_e`.
 8. In future Stage 4, `e_hat` and the latent stack must be detached/frozen
    before training the pixel generator.
-9. Encoder input normalization is ImageNet/V-JEPA stats, not `[-1, 1]`.
+9. The new `encoders.FrozenEncoder` accepts raw `[0,1]` clips and privately applies its
+   adapter normalization. The temporary current `data.py -> models.FrozenEncoder` path
+   still applies ImageNet/V-JEPA normalization in `data.py`; do not mix the two contracts.
 10. No tubelet dropout on frozen encoder inputs.
 11. SSv2 direction-sensitive transforms must not include horizontal/temporal
     flips unless a human approves a changed data contract.
@@ -979,7 +1021,7 @@ For any code change, trace the relevant path in this order:
 Useful local checks:
 
 ```bash
-python -m py_compile config.py data.py models.py losses.py diagnostics.py train.py make_subset.py select_ego4d_uids.py chunk_ego4d.py make_ego4d_subset.py
+python -m py_compile config.py data.py encoders.py models.py losses.py diagnostics.py train.py make_subset.py select_ego4d_uids.py chunk_ego4d.py make_ego4d_subset.py
 pytest -q
 python -c "from models import smoke_test_models; smoke_test_models()"
 python -c "from diagnostics import smoke_test_diagnostics; smoke_test_diagnostics()"
@@ -988,6 +1030,7 @@ python -c "from diagnostics import smoke_test_diagnostics; smoke_test_diagnostic
 RunPod checks that may download or require data:
 
 ```bash
+python encoders.py --smoke --encoder vjepa2_vitl16 --batch-size 1
 python -c "from data import smoke_test_dataloader; smoke_test_dataloader()"
 python -c "from models import smoke_test_encoder; smoke_test_encoder()"
 python train.py --stage0-only
@@ -1002,6 +1045,8 @@ optimizer grouping, reconstruction, decoder, SIGReg, or present-only mode.
 `config.py`:
 
 - Holds dataclasses and path defaults.
+- `EncoderConfig` owns alias/revision/input/cache/inference settings for `encoders.py`;
+  the legacy top-level `Config.hf_cache_dir` constructor field is synchronized to it.
 - Includes properties for token geometry.
 - Avoid inline magic constants in hot paths. Add config fields first.
 - CLI overrides are applied in `train.main`, not here.
@@ -1012,6 +1057,17 @@ optimizer grouping, reconstruction, decoder, SIGReg, or present-only mode.
   chunk roots.
 - Keep context/target transforms shared where intended.
 - Do not change video sampling semantics without updating docs and tests.
+
+`encoders.py`:
+
+- Owns raw-clip validation, private normalization, frozen inference precision,
+  frame-microbatch ordering, immutable feature identity, and all backend-specific quirks.
+- Keep the public surface to `FeatureLayout`, `EncoderSpec`, `FrozenEncoder`, and
+  `build_frozen_encoder`; backend classes/registry entries stay private.
+- V1 is intentionally strict: 8 frames, square 256x256 input, dense time-major output,
+  immutable 40-character revisions, and no fallback to mutable Hub refs.
+- Use injected fake backends for offline contracts. Real adapter smoke is
+  `python encoders.py --smoke ...` and must report its resolved revision and zero trainables.
 
 `make_subset.py`:
 

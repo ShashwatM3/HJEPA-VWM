@@ -12,11 +12,17 @@ plan for making HJEPA-VWM encoder-pluggable.
 3. [`ENCODER_PLUGGABILITY_AND_PARALLEL_EXPERIMENT_PLAN.md`](ENCODER_PLUGGABILITY_AND_PARALLEL_EXPERIMENT_PLAN.md)
    — complete code-change design, test matrix, migration sequence, paired run recipe,
    analysis rules, full-prediction follow-up, and user actions.
-4. [`GUIDE.md`](GUIDE.md) — ordered human/coding-agent execution guide: manual access and
-   EGO4D coordination, five copy/paste implementation prompts, verification gates,
-   whitening/resource preflights, exact paired launch blocks, and full-mode follow-up.
+4. [`GUIDE_encoders.md`](GUIDE_encoders.md) — dependency-segmented human/coding-agent execution guide:
+   DINO-independent common work, separate SigLIP/DINO lanes, a final join gate, manual
+   access/EGO4D coordination, copy/paste implementation prompts, whitening/resource
+   preflights, concurrent-or-sequential launch blocks, and full-mode follow-up.
 
 The first pair is intentionally shape-matched: both frame encoders produce an
 8x16x16 lattice of 768-dimensional patch tokens at 256px. Neither is temporally aware, so
 present-only reconstruction is a substrate test; a later full-prediction control is needed
 to evaluate the loss of V-JEPA2's tubelet-level temporal modeling.
+
+Implementation status (2026-07-14): Prompt 1C is complete. `encoders.py` provides the
+strict two-layout seam and the pinned V-JEPA2 adapter on `transformers==4.57.6`; the
+DINOv3/SigLIP2 aliases remain deliberately unresolved, and the current training hot path
+still uses the temporary `models.FrozenEncoder` bridge until Prompt 2.

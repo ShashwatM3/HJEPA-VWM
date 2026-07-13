@@ -20,6 +20,11 @@ def test_config_exposes_locked_phase1_constants(monkeypatch):
     assert cfg.model.d_e == 1024
     assert cfg.model.d_c == 256
     assert cfg.model.encoder_repo == "facebook/vjepa2-vitl-fpc64-256"
+    assert cfg.encoder.alias == "vjepa2_vitl16"
+    assert cfg.encoder.revision is None
+    assert cfg.encoder.input_frames == 8
+    assert cfg.encoder.input_height == cfg.encoder.input_width == 256
+    assert cfg.encoder.hf_cache_dir == cfg.hf_cache_dir
     assert cfg.train.stage1_steps == 15_000
     assert cfg.train.total_latent_steps == 105_000
     assert cfg.train.lambda_var == 0.10
@@ -33,6 +38,12 @@ def test_config_exposes_locked_phase1_constants(monkeypatch):
     assert cfg.data.ego4d_root == "/tmp/jepa-data/ego4d"
     assert cfg.data.ego4d_tiny_root == "/tmp/jepa-data/ego4d_tiny"
     assert cfg.checkpoint_dir == "/workspace/checkpoints"
+
+    custom = config.Config(hf_cache_dir="/tmp/legacy-cache-constructor")
+    assert custom.hf_cache_dir == "/tmp/legacy-cache-constructor"
+    assert custom.encoder.hf_cache_dir == custom.hf_cache_dir
+    custom.hf_cache_dir = "/tmp/legacy-cache-mutation"
+    assert custom.encoder.hf_cache_dir == custom.hf_cache_dir
 
 
 def test_dataset_root_selects_all_four_datasets(monkeypatch):
@@ -135,6 +146,7 @@ def test_phase1_scaffolding_files_are_present():
         "make_subset.py",
         "data.py",
         "models.py",
+        "encoders.py",
         "losses.py",
         "diagnostics.py",
         "train.py",

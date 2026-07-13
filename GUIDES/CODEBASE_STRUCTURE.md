@@ -15,11 +15,12 @@ invariants. Use this file when you need to know *which file to open*, not *how t
 HJEPA-VWM/
 ├── config.py              # All defaults, paths, dimensions
 ├── data.py                # Video dataset + dataloader (SSv2 .webm / EGO4D .mp4 chunks)
+├── encoders.py            # Generic raw-clip frozen-encoder seam + private adapters
 ├── make_subset.py         # Build ssv2_tiny symlink subset
 ├── select_ego4d_uids.py   # Pick EGO4D source UIDs + download batches from ego4d.json
 ├── chunk_ego4d.py         # Chunk EGO4D 540ss videos into 4s/12fps/256px .mp4 clips
 ├── make_ego4d_subset.py   # Build ego4d_tiny symlink subset
-├── models.py              # nn.Module classes (encoder, B, F_c, D, …)
+├── models.py              # Phase-1 modules + temporary legacy encoder bridge
 ├── losses.py              # Pure tensor losses (no parameters)
 ├── diagnostics.py         # Collapse probes, baselines, AGC helpers
 ├── train.py               # Training loop, CLI, checkpoints, W&B logging
@@ -42,15 +43,16 @@ Runtime data and checkpoints live **outside** the git repo on RunPod under `/wor
 
 ---
 
-## Training pipeline (the six core files)
+## Training pipeline (the seven core files)
 
 These flat files are the entire Phase 1 implementation. There is no `src/` package.
 
 | File | Owns | Does not own |
 |---|---|---|
-| `config.py` | `ModelConfig`, `TrainConfig`, `Config`; path defaults; locked dimensions | CLI parsing (that is `train.py`) |
-| `data.py` | `SSV2Dataset`, clip windows, encoder normalization | Model forward passes |
-| `models.py` | `FrozenEncoder`, `Bottleneck` (+ `BottleneckLatentBlock`), `TargetBottleneck`, `CoarseFlow`, `Decoder`, `FeatureMeanTracker`, `FeatureWhitener` | Loss math, optimizer |
+| `config.py` | `EncoderConfig`, `ModelConfig`, `TrainConfig`, `Config`; path defaults; locked dimensions | CLI parsing (that is `train.py`) |
+| `data.py` | `SSV2Dataset`, clip windows, and—temporarily—legacy V-JEPA normalization | Model forward passes or new-backend selection |
+| `encoders.py` | Raw `[0,1]` clip contract, normalization/precision/microbatching, immutable `EncoderSpec`, private registry/adapters, real smoke CLI | Latent architecture, losses, or training orchestration |
+| `models.py` | `Bottleneck` (+ `BottleneckLatentBlock`), `TargetBottleneck`, `CoarseFlow`, `Decoder`, `FeatureMeanTracker`, `FeatureWhitener`, and the temporary legacy `FrozenEncoder` bridge | New encoder adapter logic, loss math, optimizer |
 | `losses.py` | `flow_matching_loss`, `variance_floor`, `reconstruction_loss`, `as_target`, … | Any `nn.Parameter` |
 | `diagnostics.py` | `variance_stats`, `coarse_baselines`, `reconstruction_readouts`, AGC/decay grouping | Training loop |
 | `train.py` | `train_step`, `run_diagnostics`, EMA, checkpoints, `argparse`, `wandb.init` | New module architectures |
@@ -58,9 +60,10 @@ These flat files are the entire Phase 1 implementation. There is no `src/` packa
 **Typical read order for a change:**
 
 1. `config.py` — is there already a knob?
-2. `train.py` — where is it wired into the step or diagnostics?
-3. `models.py` / `losses.py` / `diagnostics.py` — the actual math
-4. `tests/test_*.py` — existing contracts
+2. `encoders.py` — if the change touches frozen features or preprocessing
+3. `train.py` — where is it wired into the step or diagnostics?
+4. `models.py` / `losses.py` / `diagnostics.py` — the actual math
+5. `tests/test_*.py` — existing contracts
 
 **Module construction order** (must stay consistent):
 
@@ -84,7 +87,9 @@ Key semantics:
 
 - Context window ends at time `t`; target window ends `horizon_k` **original** frames later.
 - Only the 16 frame indices needed are decoded (not full videos).
-- Encoder path uses ImageNet/V-JEPA mean/std — not `[-1,1]` VAE normalization.
+- The current hot path still uses ImageNet/V-JEPA mean/std in `data.py`. The new
+  `encoders.FrozenEncoder` instead accepts raw `[0,1]` clips and owns adapter normalization;
+  do not feed the current normalized dataset output into that seam until the next migration stage.
 - Datasets: `--data ssv2 | ssv2_tiny | ego4d | ego4d_tiny`. EGO4D chunks are pre-encoded to
   12 fps, so `frame_stride`/`horizon_k` keep the same real-time meaning as on SSv2
   (build procedure: [`AGENT_FILES/KNOWLEDGE/ego4d/GUIDE.md`](../AGENT_FILES/KNOWLEDGE/ego4d/GUIDE.md)).
@@ -97,6 +102,7 @@ Override dataset parent locally: `export JEPA_DATA_ROOT=/path/to/data`.
 
 | Command | Purpose |
 |---|---|
+| `python encoders.py --smoke --encoder vjepa2_vitl16 --batch-size 1` | Real pinned-adapter shape/revision/freeze/memory report (downloads weights if absent) |
 | `python train.py --stage0-only` | Synthetic one-step sanity (encoder load + shapes) |
 | `python train.py --data ssv2_tiny --steps 500` | Short smoke run |
 | `python train.py --data ssv2 --steps 15000 --horizon-k 12 --lambda-var 0.5` | Typical full Phase 1 experiment (CLI overrides defaults) |
@@ -155,6 +161,7 @@ Prefer the **W&B MCP server** in Cursor for interactive metric pulls (see
 | Path | What it guards |
 |---|---|
 | `tests/test_phase1_contract.py` | Config, subset manifest, flat-file deliverables |
+| `tests/test_encoders.py` | Raw-input validation, normalization once, both dense layouts, frame ordering/microbatching, fingerprints, sticky freeze, registry/revision failures, and V-JEPA legacy parity |
 | `tests/test_reconstruction_loss.py` | Reconstruction loss modes and detach behaviour |
 | `tests/test_optimizer_and_flow.py` | Optimizer groups and flow loss contracts |
 | `tests/test_agc.py` | Adaptive gradient clipping contracts |

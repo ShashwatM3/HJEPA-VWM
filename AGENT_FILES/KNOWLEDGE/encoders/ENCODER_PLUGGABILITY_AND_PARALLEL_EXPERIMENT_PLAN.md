@@ -1,8 +1,10 @@
-# Encoder Pluggability and the First Parallel Experiment
+# Encoder Pluggability and the First Paired Experiment
 
-> Status: implementation-ready design, audited against the repository on 2026-07-13.
-> This document does **not** claim that encoder pluggability is already implemented.
-> The operational execution order and copy/paste prompts live in [`GUIDE.md`](GUIDE.md).
+> Status: staged implementation design, audited against the repository on 2026-07-14.
+> Prompt 1C's encoder-independent foundation and pinned V-JEPA2 regression adapter are
+> implemented; the data/model/training migration and real DINOv3/SigLIP2 adapters are not.
+> The operational execution order and copy/paste prompts live in
+> [`GUIDE_encoders.md`](GUIDE_encoders.md).
 
 ## Do these human-only steps first
 
@@ -81,14 +83,18 @@ documented [here](https://docs.runpod.io/pods/templates/secrets).
    fails. W&B's current key and verification steps are
    [documented here](https://docs.wandb.ai/models/ref/cli/wandb-login).
 
-### Later, at launch time: provide two equivalent GPUs
+### Later, at launch time: provide one stable GPU or two equivalent GPUs
 
-1. Use one pod with two identical GPUs, or two identical one-GPU pods attached to the same
-   code commit and immutable dataset volume. Two A100-class GPUs are the historical
-   reference; smaller GPUs are allowed only after a common-batch preflight.
+1. Choose either concurrent execution on one pod with two identical GPUs/two identical
+   one-GPU pods, or sequential execution on one unchanged GPU. Sequential execution is
+   scientifically valid because the arms do not communicate; concurrency only saves
+   wall-clock time. Two A100-class GPUs are the historical concurrent reference; smaller
+   GPUs are allowed only after a common-batch preflight.
 2. Pre-download DINOv3 and SigLIP 2 sequentially before launching both processes so two
    jobs do not race in the Hugging Face cache.
-3. Give each arm its own GPU, W&B name, log path, and checkpoint directory.
+3. Give each arm its own W&B name, log path, and checkpoint directory. Concurrent arms
+   also receive separate GPUs; sequential arms reuse the same GPU without changing the
+   pod, code commit, dependency lock, CUDA stack, or resource envelope.
 4. Use the same common batch size and frame microbatch in both arms. If either arm cannot
    fit, lower the physical batch for **both**. Do not quietly use naive gradient
    accumulation: the variance and covariance objectives depend on the logical batch.
@@ -183,6 +189,8 @@ class EncoderSpec:
     feature_dim: int
     layout: FeatureLayout
     normalization_id: str
+    normalization_mean: tuple[float, float, float]
+    normalization_std: tuple[float, float, float]
     preprocess_version: str
     inference_precision: str
     frame_microbatch: int
@@ -278,10 +286,11 @@ The runtime provenance block must also include:
 - whitening-stat fingerprint when active;
 - physical batch, frame microbatch, and number of feature rows used for statistics.
 
-The current `transformers>=4.53,<5` dependency is insufficient for DINOv3. During
-implementation, choose and test one exact 4.x release with DINOv3 support (minimum 4.56),
-pin it, run all three real-adapter preflights, and record the lock. Do not leave a broad
-version range for the paid experiment.
+The dependency is now pinned to `transformers==4.57.6`. Its installed source exposes
+V-JEPA2, DINOv3 ViT, and SigLIP2 vision model classes, and the real pinned V-JEPA2 adapter
+passed on this version. The DINOv3 and SigLIP2 lanes must validate this same pin against
+their real weights. Do not change it for one lane: a dependency change invalidates every
+earlier real-adapter result and requires all three preflights to be rerun.
 
 ## Determinism and fair initialization
 
@@ -503,20 +512,27 @@ Before 15,000 steps:
 ## Implementation sequence
 
 1. Add failing contract tests and `EncoderConfig`/`FeatureLayout`/`EncoderSpec`.
-2. Implement the single deep `encoders.py` module and V-JEPA adapter first.
+2. Implement the single deep `encoders.py` module, two-layout fake fixtures, and V-JEPA
+   regression adapter first; freeze this public seam before either new real adapter.
 3. Move normalization to the wrapper and make the data layer emit canonical raw clips;
    update the EGO4D Stage 6 dataloader smoke in the same commit so it asserts `[0,1]`
    instead of the pre-refactor ImageNet-normalized range.
 4. Make present-only loading genuinely context-only.
 5. Resolve spec before constructing B/D/tracker/whitener; remove downstream geometry
    inference.
-6. Add DINO and SigLIP private adapters, microbatching, and real-adapter preflights.
+6. Add DINO and SigLIP as independent private-adapter lanes. They may run concurrently only
+   in separate worktrees/branches based on the frozen common seam; neither lane depends on
+   the other, and each owns its exact preprocessing/token rules and real-adapter preflight.
 7. Isolate RNG streams and add trainable/data hashes.
 8. Version stats, checkpoints, caches, and dataset identity; fix strict resume.
 9. Migrate train, Stage 0, diagnostics, rank, drift, CLI, W&B, and docs.
-10. Run the full test matrix, then a refactored V-JEPA regression.
-11. Fit DINO/SigLIP SSv2 whitening artifacts and run paired smokes.
-12. Launch the paid pair only after all validity gates pass.
+10. Run the common full test matrix and refactored V-JEPA regression without requiring
+    either new encoder's weights.
+11. Integrate both adapter lanes, rerun the entire three-real-adapter matrix, and invalidate
+    any earlier evidence affected by shared-code or dependency changes.
+12. Fit separate DINO/SigLIP SSv2 whitening artifacts, find one common resource envelope,
+    compare provenance, and run paired smokes.
+13. Launch the paid pair concurrently or sequentially only after all validity gates pass.
 
 When implementation lands, update the human architecture documents at the same time:
 

@@ -20,6 +20,25 @@ ENCODER_IMAGE_STD: tuple[float, float, float] = (0.229, 0.224, 0.225)
 
 
 @dataclass
+class EncoderConfig:
+    """Encoder-seam inputs; the private registry resolves family and repository.
+
+    ``revision=None`` means "use the alias's tested immutable default". It never
+    means the mutable Hub ``main`` branch.
+    """
+
+    alias: str = "vjepa2_vitl16"
+    revision: str | None = None
+    input_frames: int = 8
+    input_height: int = 256
+    input_width: int = 256
+    precision: str = "bf16"
+    frame_microbatch: int = 8
+    attention_implementation: str = "sdpa"
+    hf_cache_dir: str = "/workspace/hf_cache"
+
+
+@dataclass
 class ModelConfig:
     """Locked architecture constants (see AGENT_FILES/AGENTS.md §4, §12)."""
 
@@ -317,9 +336,25 @@ class Config:
     """Top-level Phase 1 configuration."""
 
     model: ModelConfig = field(default_factory=ModelConfig)
+    encoder: EncoderConfig = field(default_factory=EncoderConfig)
     train: TrainConfig = field(default_factory=TrainConfig)
     data: DataConfig = field(default_factory=DataConfig)
     debug_shapes: bool = True
     checkpoint_dir: str = "/workspace/checkpoints"
-    hf_cache_dir: str = "/workspace/hf_cache"
+    # Kept as a top-level constructor field for current callers/checkpoint shape.
+    # __post_init__/__setattr__ synchronize it with EncoderConfig's identity field.
+    hf_cache_dir: str | None = None
     seed: int = 42
+
+    def __post_init__(self) -> None:
+        """Resolve the legacy top-level cache field to one synchronized value."""
+        selected = self.encoder.hf_cache_dir if self.hf_cache_dir is None else self.hf_cache_dir
+        self.hf_cache_dir = selected
+
+    def __setattr__(self, name: str, value: object) -> None:
+        """Keep post-construction top-level cache assignments synchronized."""
+        object.__setattr__(self, name, value)
+        if name == "hf_cache_dir" and value is not None:
+            encoder = self.__dict__.get("encoder")
+            if encoder is not None:
+                encoder.hf_cache_dir = str(value)

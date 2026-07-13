@@ -59,7 +59,7 @@ class FrozenEncoder(nn.Module):
             from transformers import AutoModel
         except ModuleNotFoundError as exc:  # pragma: no cover - RunPod dependency.
             raise RuntimeError(
-                "transformers>=4.53,<5 (with vjepa2 support) is required for FrozenEncoder."
+                "transformers==4.57.6 (with V-JEPA2 support) is required for FrozenEncoder."
             ) from exc
         self.cfg = cfg
         self.model = AutoModel.from_pretrained(cfg.encoder_repo, attn_implementation="sdpa")
