@@ -108,8 +108,9 @@ After [`SETUP.md`](SETUP.md) Path A (steps A8, A9, A12) and Phase 1 `make_subset
 │
 ├── ego4d_raw/                                 ← EGO4D CLI downloads (TRANSIENT raw batches)
 │   ├── manifests/                             ← UID/batch files + selection_manifest.json (KEEP)
+│   ├── video_540ss_manifest.csv               ← authoritative downloadable-tier inventory (KEEP)
+│   ├── ego4d.json                             ← official metadata (KEEP; CLI writes it here)
 │   └── v2/
-│       ├── ego4d.json                         ← official metadata (KEEP)
 │       └── video_540ss/                       ← raw 540ss batch, deleted after chunk+verify
 │
 ├── ckpt/                                      ← ACTIVE training outputs (sibling to repo)

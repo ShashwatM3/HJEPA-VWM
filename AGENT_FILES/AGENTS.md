@@ -199,6 +199,7 @@ Agent and architecture docs:
 | `AGENT_FILES/AGENT-BEHAVIOUR/CODE_DESIGN.md` | Flat-file layout, naming, docstrings, detach rules. |
 | `AGENT_FILES/AGENT-BEHAVIOUR/WORKFLOW.md` | Redirect → [`GUIDES/EXPERIMENT_LIFECYCLE.md`](../GUIDES/EXPERIMENT_LIFECYCLE.md). |
 | `AGENT_FILES/SETUPS/VOLUME_LAYOUT.md` | RunPod `/workspace` data/checkpoint/cache layout. |
+| `AGENT_FILES/KNOWLEDGE/encoders/README.md` | Frozen-encoder research index: DINOv3-B and SigLIP 2-B dossiers plus the encoder-pluggability/parallel-experiment plan. These describe proposed work, not shipped implementation. |
 | `GUIDES/latest_brief.md` | Architecture narrative (v0.3) — **historical intent, not ground truth**. |
 | `GUIDES/PROBLEMS_METRICS_AND_EXPERIMENTS.md` | Metric glossary + experiment problem history. |
 | `GUIDES/CODEBASE_STRUCTURE.md` | File map: training code, MLOps, docs, KANBAN. |
@@ -271,7 +272,7 @@ auto-detection.
 
 EGO4D build helpers:
 
-1. `select_ego4d_uids.py` reads `/workspace/ego4d_raw/v2/ego4d.json`, filters
+1. `select_ego4d_uids.py` reads `/workspace/ego4d_raw/ego4d.json`, filters
    unsuitable source videos, selects ~210 source hours, splits train/validation
    by source UID, and writes four balanced batch UID files plus
    `selection_manifest.json`.

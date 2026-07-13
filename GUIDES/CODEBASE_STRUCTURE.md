@@ -33,7 +33,7 @@ HJEPA-VWM/
 ├── pyproject.toml         # Black + Ruff
 ├── README.md              # Human entry point (short)
 ├── GUIDES/                # Operator playbooks + project knowledge
-├── AGENT_FILES/           # Agent behaviour, setups
+├── AGENT_FILES/           # Agent behaviour, setups, focused knowledge dossiers
 └── KANBAN/                # Phase 1 experiment history (living record)
 ```
 
@@ -166,6 +166,8 @@ Prefer the **W&B MCP server** in Cursor for interactive metric pulls (see
 | `tests/test_drift_probe.py` | Drift-probe pure helpers: offsets, windows, drift matrices, Spearman, checkpoint-config rebuild |
 | `tests/test_rank_probe.py` | Rank-probe pure helpers: covariance spectrum, entropy-rank formula, energy ranks, report validation |
 | `tests/test_whitening.py` | `FeatureWhitener` round-trip/stats contracts and train-step/checkpoint whitening wiring |
+| `tests/test_chunk_ego4d.py` | ffmpeg availability, conservative worker/thread limits, atomic chunk writes, and encode-failure handling |
+| `tests/test_select_ego4d_uids.py` | grouped/metadata-only UID rejection and authoritative-tier provenance |
 
 Quick local checks (no encoder download):
 
@@ -184,6 +186,7 @@ python -c "from diagnostics import smoke_test_diagnostics; smoke_test_diagnostic
 | [`AGENT_FILES/AGENTS.md`](../AGENT_FILES/AGENTS.md) | **Agents (start here)** | Architecture, shapes, training step, invariants, doc precedence |
 | [`AGENT_FILES/AGENT-BEHAVIOUR/PROTOCOL.md`](../AGENT_FILES/AGENT-BEHAVIOUR/PROTOCOL.md) | Agents | Phase discipline, escalation |
 | [`AGENT_FILES/AGENT-BEHAVIOUR/CODE_DESIGN.md`](../AGENT_FILES/AGENT-BEHAVIOUR/CODE_DESIGN.md) | Agents | Naming map, docstrings, detach rules |
+| [`AGENT_FILES/KNOWLEDGE/encoders/README.md`](../AGENT_FILES/KNOWLEDGE/encoders/README.md) | Both | DINOv3-B and SigLIP 2-B research plus the proposed encoder-pluggability and parallel-run plan; not shipped code |
 | [`GUIDES/README.md`](README.md) | Humans + agents | Index of all guides (this folder) |
 | [`GUIDES/latest_brief.md`](latest_brief.md) | Both | Architecture narrative v0.3 — **not ground truth** |
 | [`GUIDES/PROBLEMS_METRICS_AND_EXPERIMENTS.md`](PROBLEMS_METRICS_AND_EXPERIMENTS.md) | Both | Metric glossary + experiment problem history |

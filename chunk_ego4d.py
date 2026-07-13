@@ -117,9 +117,7 @@ def chunk_windows(duration_sec: float, chunk_seconds: float) -> list[tuple[float
     return windows
 
 
-def overlaps_redaction(
-    window: tuple[float, float], intervals: list[tuple[float, float]]
-) -> bool:
+def overlaps_redaction(window: tuple[float, float], intervals: list[tuple[float, float]]) -> bool:
     """True when the window intersects any privacy-redacted interval."""
     start, end = window
     return any(start < r_end and r_start < end for r_start, r_end in intervals)

@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import random
 from collections import defaultdict
@@ -28,6 +29,15 @@ from pathlib import Path
 from typing import Any
 
 SECONDS_PER_HOUR = 3600.0
+
+
+def file_sha256(path: Path) -> str:
+    """Return the SHA-256 identity of a source metadata/manifest file."""
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def load_video_records(metadata_path: Path) -> list[dict[str, Any]]:
@@ -60,9 +70,7 @@ def load_downloadable_uids(manifest_path: Path) -> set[str]:
     with manifest_path.open(newline="", encoding="utf-8") as handle:
         reader = csv.DictReader(handle)
         if not reader.fieldnames or "video_uid" not in reader.fieldnames:
-            raise KeyError(
-                f"{manifest_path} has no 'video_uid' column; got {reader.fieldnames}."
-            )
+            raise KeyError(f"{manifest_path} has no 'video_uid' column; got {reader.fieldnames}.")
         uids = {row["video_uid"].strip() for row in reader if row.get("video_uid", "").strip()}
     if not uids:
         raise ValueError(f"{manifest_path} contains no downloadable video UIDs.")
@@ -300,14 +308,16 @@ def write_outputs(
     (out_dir / "train_uids.txt").write_text("\n".join(by_split["train"]) + "\n")
     (out_dir / "val_uids.txt").write_text("\n".join(by_split["validation"]) + "\n")
     for batch_num in sorted(by_batch):
-        (out_dir / f"batch_{batch_num}_uids.txt").write_text(
-            "\n".join(by_batch[batch_num]) + "\n"
-        )
+        (out_dir / f"batch_{batch_num}_uids.txt").write_text("\n".join(by_batch[batch_num]) + "\n")
     manifest = {
         "seed": args.seed,
         "target_hours": args.target_hours,
         "val_fraction": args.val_fraction,
         "batches": args.batches,
+        "source_fingerprints": {
+            "metadata_sha256": file_sha256(Path(args.metadata)),
+            "video_540ss_manifest_sha256": file_sha256(Path(args.download_manifest)),
+        },
         "filters": {"min_duration_sec": 60.0, "fps_target": 30.0, "drops": drop_counts},
         "scenario_hours": {k: round(v, 3) for k, v in sorted(scenario_hours.items())},
         "totals": {
@@ -330,7 +340,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--metadata", required=True, help="Path to the downloaded ego4d.json.")
     parser.add_argument(
         "--download-manifest",
-        help="Optional video_540ss manifest.csv used to exclude metadata-only UIDs.",
+        required=True,
+        help="Authoritative video_540ss manifest.csv used to exclude metadata-only UIDs.",
     )
     parser.add_argument("--target-hours", type=float, default=210.0)
     parser.add_argument("--val-fraction", type=float, default=0.10)
@@ -344,9 +355,7 @@ def main() -> None:
     """Run selection end to end and print the per-scenario hour table."""
     args = parse_args()
     videos = load_video_records(Path(args.metadata))
-    downloadable_uids = (
-        load_downloadable_uids(Path(args.download_manifest)) if args.download_manifest else None
-    )
+    downloadable_uids = load_downloadable_uids(Path(args.download_manifest))
     kept, drop_counts = filter_videos(videos, downloadable_uids=downloadable_uids)
     selected, scenario_hours = select_diverse(kept, args.target_hours, args.seed)
     split = split_train_val(selected, args.val_fraction, args.seed)

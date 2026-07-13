@@ -675,8 +675,7 @@ Rerunning a selection block does not download, encode, or delete anything.
 export BATCH=1
 export UID_FILE="/workspace/ego4d_raw/manifests/batch_${BATCH}_uids.txt"
 export RAW_DIR="/workspace/ego4d_raw/v2/video_540ss"
-test -s "${UID_FILE}"
-echo "selected EGO4D batch ${BATCH}/4"
+test -s "${UID_FILE}" && echo "selected EGO4D batch ${BATCH}/4"
 ```
 
 **Paste 2 — download the selected batch:**
@@ -824,8 +823,7 @@ RAW_COUNT="$(find "${RAW_DIR}" -maxdepth 1 -name '*.mp4' | wc -l | tr -d ' ')"
 UID_COUNT="$(wc -l < "${UID_FILE}" | tr -d ' ')"
 echo "raw mp4 count: ${RAW_COUNT}"
 echo "batch UID count: ${UID_COUNT}"
-test "${RAW_COUNT}" -eq "${UID_COUNT}"
-echo "batch ${BATCH} raw file-count check OK"
+test "${RAW_COUNT}" -eq "${UID_COUNT}" && echo "batch ${BATCH} raw file-count check OK"
 ```
 
 The two counts must be equal and the last line must say the check is `OK`.
@@ -934,8 +932,7 @@ Run this only after Pastes 3 through 7 succeeded, plus Paste 8 when `BATCH=1`.
 xargs -a "${UID_FILE}" -I{} rm -f "${RAW_DIR}/{}.mp4"
 LEFT="$(find "${RAW_DIR}" -maxdepth 1 -name '*.mp4' | wc -l | tr -d ' ')"
 echo "raw mp4 files left after deleting batch ${BATCH}: ${LEFT}"
-test "${LEFT}" -eq 0
-echo "batch ${BATCH} complete"
+test "${LEFT}" -eq 0 && echo "batch ${BATCH} complete"
 ```
 
 ### Stage 4C — repeat the cycle for batches 2, 3, and 4
@@ -947,8 +944,7 @@ in that order. Do not repeat the batch-1-only Paste 8.
 export BATCH=2
 export UID_FILE="/workspace/ego4d_raw/manifests/batch_${BATCH}_uids.txt"
 export RAW_DIR="/workspace/ego4d_raw/v2/video_540ss"
-test -s "${UID_FILE}"
-echo "selected EGO4D batch ${BATCH}/4"
+test -s "${UID_FILE}" && echo "selected EGO4D batch ${BATCH}/4"
 ```
 
 For batch 3, paste this selection block, then repeat Stage 4B **Pastes 2 through 7 and Paste 9**
@@ -958,8 +954,7 @@ in that order.
 export BATCH=3
 export UID_FILE="/workspace/ego4d_raw/manifests/batch_${BATCH}_uids.txt"
 export RAW_DIR="/workspace/ego4d_raw/v2/video_540ss"
-test -s "${UID_FILE}"
-echo "selected EGO4D batch ${BATCH}/4"
+test -s "${UID_FILE}" && echo "selected EGO4D batch ${BATCH}/4"
 ```
 
 For batch 4, paste this selection block, then repeat Stage 4B **Pastes 2 through 7 and Paste 9**
@@ -969,8 +964,7 @@ in that order.
 export BATCH=4
 export UID_FILE="/workspace/ego4d_raw/manifests/batch_${BATCH}_uids.txt"
 export RAW_DIR="/workspace/ego4d_raw/v2/video_540ss"
-test -s "${UID_FILE}"
-echo "selected EGO4D batch ${BATCH}/4"
+test -s "${UID_FILE}" && echo "selected EGO4D batch ${BATCH}/4"
 ```
 
 ### Stage 4D — final verification after all four batches
@@ -1026,8 +1020,8 @@ du -sh /workspace/data/ego4d
 **Paste 3 — confirm that no transient raw videos remain:**
 
 ```bash
-test "$(find /workspace/ego4d_raw/v2/video_540ss -maxdepth 1 -name '*.mp4' | wc -l | tr -d ' ')" = "0"
-echo "raw video_540ss mp4 files left: 0"
+test "$(find /workspace/ego4d_raw/v2/video_540ss -maxdepth 1 -name '*.mp4' | wc -l | tr -d ' ')" = "0" && \
+  echo "raw video_540ss mp4 files left: 0"
 ```
 
 ---
@@ -1093,9 +1087,9 @@ python make_ego4d_subset.py \
 **Paste 4 of 4 — confirm the rerun kept the exact requested counts:**
 
 ```bash
-test "$(find /workspace/data/ego4d_tiny/train -maxdepth 1 -name '*.mp4' | wc -l | tr -d ' ')" = "4000"
-test "$(find /workspace/data/ego4d_tiny/validation -maxdepth 1 -name '*.mp4' | wc -l | tr -d ' ')" = "350"
-echo "Stage 5 checks OK"
+test "$(find /workspace/data/ego4d_tiny/train -maxdepth 1 -name '*.mp4' | wc -l | tr -d ' ')" = "4000" && \
+  test "$(find /workspace/data/ego4d_tiny/validation -maxdepth 1 -name '*.mp4' | wc -l | tr -d ' ')" = "350" && \
+  echo "Stage 5 checks OK"
 ```
 
 ---
@@ -1159,8 +1153,7 @@ python train.py --data ego4d_tiny --steps 500 \
 **Paste 5 — verify the EGO4D checkpoint:**
 
 ```bash
-test -f /workspace/ckpt/ego4d_smoke/phase1_step500.pt
-echo "EGO4D checkpoint OK"
+test -f /workspace/ckpt/ego4d_smoke/phase1_step500.pt && echo "EGO4D checkpoint OK"
 ```
 
 **Paste 6 — run the 100-step SSv2 regression smoke:**
@@ -1173,8 +1166,8 @@ python train.py --data ssv2_tiny --steps 100 \
 **Paste 7 — verify the SSv2 checkpoint and finish Stage 6:**
 
 ```bash
-test -f /workspace/ckpt/ssv2_regression_smoke/phase1_step100.pt
-echo "Stage 6 switchability smoke passed"
+test -f /workspace/ckpt/ssv2_regression_smoke/phase1_step100.pt && \
+  echo "Stage 6 switchability smoke passed"
 ```
 
 **Verify Stage 6:** the block prints `Stage 6 switchability smoke passed`. At this point the
@@ -1347,8 +1340,8 @@ python train.py --data ego4d --steps 15000 --horizon-k 12 --lr-coarse-flow 1e-4 
 **Paste 4 of 4 — after training finishes, verify the final checkpoint:**
 
 ```bash
-test -f /workspace/ckpt/ego4d_run037_ab/phase1_step15000.pt
-echo "EGO4D 15k-step checkpoint OK"
+test -f /workspace/ckpt/ego4d_run037_ab/phase1_step15000.pt && \
+  echo "EGO4D 15k-step checkpoint OK"
 ```
 
 Do this in the W&B dashboard after the run appears:
@@ -1393,8 +1386,8 @@ python whiten_stats.py \
 **Paste 3 of 4 — verify the statistics file:**
 
 ```bash
-test -f logs/whiten/whiten_stats_ego4d_train_seed42.pt
-echo "EGO4D whitening statistics OK"
+test -f logs/whiten/whiten_stats_ego4d_train_seed42.pt && \
+  echo "EGO4D whitening statistics OK"
 ```
 
 **Paste 4 of 4 — example future whitening run:**
@@ -1420,7 +1413,7 @@ python train.py --data ego4d --whiten-features \
 | Repeated ffmpeg `Resource temporarily unavailable` / encoder-open failures | CPU-count process workers multiplied by ffmpeg's internal threads and exhausted pod resources. Press `Ctrl-C`, keep the raw videos, and rerun Stage 4B's idempotent chunk command with `--workers 2`. Current code also pins ffmpeg decoder/encoder threads to one. |
 | Stage 0 raises `B_EMA did not update` | The old visible-change assertion could reject a correct first-step EMA delta that rounded below fp32 resolution. Pull the current code, which validates the exact dtype-rounded EMA transition, then rerun Stage 6 Paste 3. |
 | `No .webm or .mp4 files found` from a probe script | Delta 1/3's twin change in `drift_probe.py` was missed — its glob is independent of `data.py`. |
-| Chunk decode returns ≠ 48 frames | ffmpeg trim landed on a stream edge; the chunker's idempotent rerun should re-encode flagged files; the loader's clamp makes stragglers non-fatal but they should be rare (< 0.1%). |
+| Chunk decode returns ≠ 48 frames | Do not merely rerun: a nonempty existing chunk is intentionally skipped. While its raw source is still present, delete only the flagged output chunk and rerun Stage 4B Paste 4. If raw files were already deleted, redownload that source UID first. Re-verify the replacement before deleting raw input. |
 | Val metrics implausibly good on EGO4D | Check the Stage-4 split-disjointness gate first — source-video leakage is the classic cause. |
 | First EGO4D run's `L_recon_*` incomparable to SSv2 runs | Expected — different substrate; and if whitening is on, also a different whitened space. Compare EGO4D runs to EGO4D runs. |
 
