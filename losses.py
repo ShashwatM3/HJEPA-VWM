@@ -127,10 +127,10 @@ def reconstruction_loss(
     information-rich — directly attacking the ~13 effective-rank ceiling and the
     identical-`c` representational collapse the variance floor alone cannot stop.
 
-    `mode="cosine"` is the current objective: each tubelet vector is L2-normalized
+    `mode="cosine"` is the current objective: each detailed token is L2-normalized
     along `D_e` before comparison, then scored as `mean(1 - cos(e_hat, e))`.
     Equivalently, this is one half of the squared distance between unit-normalized
-    tubelets. There is intentionally NO `Var(e)` denominator: the objective removes
+    token vectors. There is intentionally NO `Var(e)` denominator: the objective removes
     magnitude as an escape route and leaves only angular alignment with the frozen
     target features.
 
@@ -147,11 +147,11 @@ def reconstruction_loss(
     Args:
         pred_detailed: (B, N, D_e) decoder output `e_hat`.
         target_detailed: (B, N, D_e) frozen encoder features (context or future clip).
-        mode: `"cosine"` for per-tubelet cosine distance, or `"relative_mse"` for
+        mode: `"cosine"` for per-token cosine distance, or `"relative_mse"` for
             the legacy variance-normalized MSE.
-        eps: Numerical floor for per-tubelet L2 normalization.
+        eps: Numerical floor for per-token L2 normalization.
     Returns:
-        Scalar reconstruction loss averaged over batch and tubelets/features.
+        Scalar reconstruction loss averaged over batch and detailed tokens.
     """
     _require_torch()
     target = as_target(target_detailed)

@@ -9,6 +9,36 @@ import pytest
 torch = pytest.importorskip("torch")
 
 
+def _encoder_spec(*, frame_based: bool):
+    from encoders import EncoderSpec, FeatureLayout
+
+    layout = (
+        FeatureLayout(8, 16, 16, "time_y_x", "frame", 1, 1)
+        if frame_based
+        else FeatureLayout(4, 16, 16, "time_y_x", "tubelet", 2, 2)
+    )
+    return EncoderSpec(
+        family="fake-frame" if frame_based else "fake-tubelet",
+        repo_id="offline/fake",
+        requested_revision="a" * 40,
+        resolved_revision="a" * 40,
+        input_frames=8,
+        input_height=256,
+        input_width=256,
+        feature_dim=768 if frame_based else 1024,
+        layout=layout,
+        normalization_id="test",
+        normalization_mean=(0.0, 0.0, 0.0),
+        normalization_std=(1.0, 1.0, 1.0),
+        preprocess_version="test-v1",
+        inference_precision="fp32",
+        frame_microbatch=8,
+        attention_implementation="sdpa",
+        cache_dir="/tmp/cache",
+        parameter_count=0,
+    )
+
+
 def _small_cfg():
     config = importlib.import_module("config")
     cfg = config.Config()
@@ -75,3 +105,21 @@ def test_decoder_reconstruction_gradients_reach_latent_and_trainable_decoder_wei
     assert latent.grad.abs().sum().item() > 0.0
     assert decoder.fixed_pos.grad is None
     assert any(param.grad is not None for param in decoder.parameters())
+
+
+@pytest.mark.parametrize("frame_based", [False, True])
+def test_bottleneck_and_decoder_resolve_all_detailed_geometry_from_encoder_spec(frame_based):
+    """Tubelet and frame layouts traverse the same B/D modules without config geometry."""
+    models = importlib.import_module("models")
+    cfg = _small_cfg()
+    spec = _encoder_spec(frame_based=frame_based)
+    bottleneck = models.Bottleneck(cfg.model, spec)
+    decoder = models.Decoder(cfg.model, spec)
+    detailed = torch.randn(1, spec.layout.n_tokens, spec.feature_dim)
+
+    abstract = bottleneck(detailed)
+    reconstructed = decoder(abstract)
+
+    assert abstract.shape == (1, cfg.model.n_c, cfg.model.d_c)
+    assert reconstructed.shape == (1, spec.layout.n_tokens, spec.feature_dim)
+    assert decoder.fixed_pos.shape == (spec.layout.n_tokens, cfg.model.decoder_dim)

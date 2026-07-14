@@ -1,6 +1,6 @@
 """Within-video temporal drift probe for HJEPA-VWM (offline diagnostic).
 
-Measures how far the frozen V-JEPA embedding of a video window travels over time
+Measures how far the selected frozen detailed embedding travels over time
 (`1 - cos(e_t, e_{t+k})` for a ladder of temporal offsets `k`) and, optionally, how
 far the bottleneck's abstract latent travels over the SAME windows
 (`1 - cos(c_t, c_{t+k})`, with `c = B(e)` loaded from a training checkpoint).
@@ -10,7 +10,7 @@ video at different times. It never compares two different videos.
 
 Why it exists (KANBAN context): the Phase 1 copy baseline wins because `c` barely
 moves over the training horizon. The encoder-side drift curve is the ground-truth
-"signal budget" — how much change V-JEPA actually sees at each horizon — and the
+"signal budget" — how much change the encoder sees at each horizon — and the
 latent-side curve shows what fraction of that change survives the bottleneck. The
 encoder is frozen, so the e-side is a constant of the dataset: it is computed once
 on a fixed probe set and cached; each checkpoint evaluation afterwards only costs
@@ -22,9 +22,9 @@ Design contracts:
   code does not import this file and no training behavior changes.
 - The probe set is pinned by a manifest JSON (video paths + anchor windows), so
   every invocation — any run, any checkpoint, any time — measures identical inputs.
-- Windows follow the training data contract exactly: `t_ctx` frames at
-  `frame_stride`, validation-style transforms (resize-256, center crop, encoder
-  normalization, no jitter, no flips).
+- Windows follow the training data contract exactly: `t_ctx` raw frames at
+  `frame_stride`, with validation-style resize-256/center-crop and no jitter or
+  flips. Encoder-specific normalization happens later inside `FrozenEncoder`.
 - Checkpoints are self-describing: the bottleneck is rebuilt from the config
   serialized INSIDE the checkpoint, so no architecture flags are needed.
 
@@ -32,8 +32,8 @@ Outputs (per invocation, under --out-dir):
 
 - `results_<tag>.json` — the full raw drift matrices plus all aggregates.
 - `graph1_<tag>.png` — X = offset k, Y = mean drift across probe videos
-  (V-JEPA reference curve + one latent curve per checkpoint).
-- `graph2_<label>_<tag>.png` per checkpoint — X = probe videos sorted by V-JEPA
+  (frozen-feature reference curve + one latent curve per checkpoint).
+- `graph2_<label>_<tag>.png` per checkpoint — X = probe videos sorted by encoder
   drift, Y = per-video mean drift over --graph2-offsets (e staircase vs c dots).
 
 Typical usage (see README "Within-video drift probe"):
@@ -49,6 +49,7 @@ import dataclasses
 import json
 import random
 import re
+import warnings
 from pathlib import Path
 
 try:
@@ -62,7 +63,6 @@ from config import Config, ModelConfig
 from data import (
     _crop,
     _decode_frames,
-    _normalize_encoder,
     _open_video_reader,
     _resize_shorter_side,
 )
@@ -179,6 +179,21 @@ def select_probe_order(paths: list[str], seed: int) -> list[str]:
 def feature_key(rel_path: str, end_frame: int) -> str:
     """Cache key for one (video, window-end) pair of frozen encoder features."""
     return f"{rel_path}::end{end_frame}"
+
+
+def default_feature_cache_path(out_dir: Path, tag: str) -> Path:
+    """Return the shared default encoder-feature cache path for rank and drift.
+
+    The default tag already includes the encoder alias, so both tools use this one
+    helper and avoid an accidental duplicate alias or redundant re-encoding.
+
+    Args:
+        out_dir: Common probe output directory.
+        tag: Dataset/probe/seed tag, normally including the encoder alias.
+    Returns:
+        Default versioned feature-cache path.
+    """
+    return out_dir / f"encoder_features_{tag}.pt"
 
 
 def model_config_from_checkpoint_dict(model_dict: dict) -> ModelConfig:
@@ -314,7 +329,7 @@ def _average_ranks(x: Tensor) -> Tensor:
 def spearman_correlation(a: Tensor, b: Tensor) -> float:
     """Spearman rank correlation between two 1-D tensors (no scipy dependency).
 
-    Answers "does the latent move when and only when V-JEPA moves": average-ranks
+    Answers "does the latent move when and only when the encoder moves": average-ranks
     both sides (ties handled per the standard Spearman convention), then computes
     the Pearson correlation of the ranks.
 
@@ -361,12 +376,11 @@ def build_manifest(cfg: Config, split: str, n_videos: int, max_offset: int, seed
     split_dir = root / split
     # Same webm+mp4 union as data.SSV2Dataset so probe manifests cover EGO4D chunks too.
     paths = sorted(
-        str(p.relative_to(root))
-        for p in [*split_dir.glob("*.webm"), *split_dir.glob("*.mp4")]
+        str(p.relative_to(root)) for p in [*split_dir.glob("*.webm"), *split_dir.glob("*.mp4")]
     )
     if not paths:
         raise FileNotFoundError(f"No .webm or .mp4 files found in {split_dir}")
-    t_ctx, stride = cfg.model.t_ctx, cfg.train.frame_stride
+    t_ctx, stride = cfg.encoder.input_frames, cfg.train.frame_stride
     span = overlap_boundary(t_ctx, stride) + max_offset
     videos: list[dict] = []
     skipped = 0
@@ -427,7 +441,7 @@ def load_or_build_manifest(
         mismatches = {
             "dataset": (manifest.get("dataset"), cfg.data.dataset),
             "split": (manifest.get("split"), split),
-            "t_ctx": (manifest.get("t_ctx"), cfg.model.t_ctx),
+            "t_ctx": (manifest.get("t_ctx"), cfg.encoder.input_frames),
             "frame_stride": (manifest.get("frame_stride"), cfg.train.frame_stride),
         }
         bad = {k: v for k, v in mismatches.items() if v[0] != v[1]}
@@ -448,8 +462,9 @@ def load_or_build_manifest(
             )
         return manifest
     manifest = build_manifest(cfg, split, n_videos, max_offset, seed)
-    manifest_path.parent.mkdir(parents=True, exist_ok=True)
-    manifest_path.write_text(json.dumps(manifest, indent=2))
+    from provenance import atomic_json_save
+
+    atomic_json_save(manifest, manifest_path)
     print(f"Wrote probe manifest: {manifest_path} ({manifest['n_videos']} videos)")
     return manifest
 
@@ -467,15 +482,15 @@ def _load_window_clip(cfg: Config, video_path: Path, indices: list[int]) -> Tens
         video_path: Absolute path to the .webm file.
         indices: `t_ctx` frame indices from `window_frame_indices`.
     Returns:
-        clip: (T, 3, H, W) encoder-normalized float32 window.
+        clip: `(T,3,H,W)` raw `[0,1]` float32 window.
     """
     _require_torch()
     reader = _open_video_reader(video_path)
     frames = torch.from_numpy(_decode_frames(reader, indices))
     frames = frames.float().permute(0, 3, 1, 2) / 255.0
-    frames = _resize_shorter_side(frames, cfg.model.h)
-    frames = _crop(frames, cfg.model.h, "validation")
-    return _normalize_encoder(frames)
+    frames = _resize_shorter_side(frames, cfg.encoder.input_height)
+    frames = _crop(frames, cfg.encoder.input_height, "validation")
+    return frames
 
 
 def compute_encoder_features(
@@ -485,13 +500,13 @@ def compute_encoder_features(
     cache_path: Path,
     device: torch.device,
     encoder_batch: int,
+    cache_dtype: str = "fp16",
 ) -> dict[str, Tensor]:
-    """Return frozen V-JEPA features for every (probe video, window end), cached.
+    """Return frozen detailed features for every (probe video, window end), cached.
 
-    The encoder is frozen, so features never go stale: the cache is keyed by
-    (video path, window end) and only missing windows are computed. The heavy
-    encoder is not even constructed on a full cache hit, which is what makes
-    re-evaluating checkpoints cheap.
+    The encoder is frozen, but cache reuse is allowed only after resolving the
+    configured adapter and validating its complete feature fingerprint. The cache
+    is keyed by `(video path,window end)` and only missing windows are computed.
 
     Args:
         cfg: Global config.
@@ -504,14 +519,33 @@ def compute_encoder_features(
         `feature_key -> (N_ctx, D_e)` fp16 CPU tensors.
     """
     _require_torch()
+    from encoders import build_frozen_encoder
+    from provenance import (
+        atomic_torch_save,
+        build_dataset_identity,
+        build_feature_cache_envelope,
+        load_feature_cache_envelope,
+    )
+
+    if cache_dtype not in {"fp16", "fp32"}:
+        raise ValueError("cache_dtype must be fp16 or fp32.")
+    encoder = build_frozen_encoder(cfg.encoder).to(device)
+    dataset_identity = build_dataset_identity(cfg, require_complete=cfg.data.dataset == "ego4d")
     features: dict[str, Tensor] = {}
     if cache_path.exists():
         try:
-            features = torch.load(cache_path, map_location="cpu")
+            envelope = load_feature_cache_envelope(
+                cache_path,
+                expected_encoder_spec=encoder.spec,
+                expected_dataset_identity=dataset_identity,
+                expected_probe_manifest=manifest,
+                expected_offsets=offsets,
+                expected_storage_dtype=cache_dtype,
+            )
+            features = envelope["features"]
         except Exception as exc:
             raise RuntimeError(
-                f"Feature cache {cache_path} is unreadable (corrupt or wrong format). "
-                "Delete it and re-run; the probe will re-encode from the manifest."
+                f"Feature cache {cache_path} is incompatible or unreadable: {exc}"
             ) from exc
     needed: list[tuple[dict, int]] = []
     for video in manifest["videos"]:
@@ -521,9 +555,6 @@ def compute_encoder_features(
     if not needed:
         return features
     print(f"Encoding {len(needed)} probe windows with the frozen encoder (one-time cost)...")
-    from models import FrozenEncoder
-
-    encoder = FrozenEncoder(cfg.model).to(device)
     root = Path(cfg.data.dataset_root())
     t_ctx, stride = manifest["t_ctx"], manifest["frame_stride"]
     with torch.no_grad():
@@ -541,14 +572,18 @@ def compute_encoder_features(
             ).to(device)
             out = encoder(clips)
             for (video, end), tokens in zip(batch_items, out, strict=True):
-                features[feature_key(video["path"], end)] = tokens.detach().to("cpu", torch.float16)
+                dtype = torch.float16 if cache_dtype == "fp16" else torch.float32
+                features[feature_key(video["path"], end)] = tokens.detach().to("cpu", dtype)
             print(f"  encoded {min(i + encoder_batch, len(needed))}/{len(needed)} windows")
-    cache_path.parent.mkdir(parents=True, exist_ok=True)
-    # Atomic write: an interrupted save must not leave a truncated cache that
-    # poisons every later invocation. Write to a sibling temp file, then rename.
-    tmp_path = cache_path.with_suffix(cache_path.suffix + ".tmp")
-    torch.save(features, tmp_path)
-    tmp_path.replace(cache_path)
+    envelope = build_feature_cache_envelope(
+        features=features,
+        encoder_spec=encoder.spec,
+        dataset_identity=dataset_identity,
+        probe_manifest=manifest,
+        offsets=offsets,
+        storage_dtype=cache_dtype,
+    )
+    atomic_torch_save(envelope, cache_path)
     print(f"Wrote feature cache: {cache_path}")
     return features
 
@@ -573,13 +608,27 @@ def load_bottleneck_from_checkpoint(ckpt_path: Path, use_ema: bool = False):
         latents, so the whitener must travel with the module.
     """
     _require_torch()
-    from models import Bottleneck, FeatureWhitener
+    from models import Bottleneck, FeatureWhitener, _legacy_encoder_spec
+    from provenance import encoder_spec_from_dict, state_dict_hash
 
-    ckpt = torch.load(ckpt_path, map_location="cpu")
+    ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
     if "bottleneck" not in ckpt:
         raise RuntimeError(f"{ckpt_path} has no 'bottleneck' state; not a Phase 1 checkpoint.")
     model_cfg = model_config_from_checkpoint_dict((ckpt.get("config") or {}).get("model", {}))
-    bottleneck = Bottleneck(model_cfg)
+    serialized_spec = ckpt.get("encoder_spec")
+    if serialized_spec is None:
+        warnings.warn(
+            f"{ckpt_path} is a legacy V-JEPA checkpoint without EncoderSpec; "
+            "using the narrow historical V-JEPA geometry reader.",
+            stacklevel=2,
+        )
+        encoder_spec = _legacy_encoder_spec(model_cfg)
+        legacy_encoder_checkpoint = True
+    else:
+        encoder_spec = encoder_spec_from_dict(serialized_spec)
+        legacy_encoder_checkpoint = False
+    bottleneck = Bottleneck(model_cfg, encoder_spec=encoder_spec)
+    bottleneck.legacy_encoder_checkpoint = legacy_encoder_checkpoint
     if use_ema:
         if "target_bottleneck" not in ckpt:
             raise RuntimeError(
@@ -612,9 +661,21 @@ def load_bottleneck_from_checkpoint(ckpt_path: Path, use_ema: bool = False):
                 "'feature_whitener' state; latent drift in raw feature space would "
                 "be meaningless for this checkpoint."
             )
-        whitener = FeatureWhitener(model_cfg.d_e)
-        whitener.load_state_dict(ckpt["feature_whitener"])
-    step = int(ckpt.get("global_step", -1))
+        saved_whitener = ckpt["feature_whitener"]
+        expected_identity = ckpt.get("feature_whitener_identity")
+        actual_identity = state_dict_hash(saved_whitener)
+        if expected_identity is None:
+            raise RuntimeError(
+                f"{ckpt_path} has whitening state but no feature_whitener identity; "
+                "the latent-drift transform cannot be verified."
+            )
+        if actual_identity != expected_identity:
+            raise RuntimeError(
+                f"{ckpt_path} feature_whitener identity is invalid; refusing latent drift."
+            )
+        whitener = FeatureWhitener(encoder_spec.feature_dim)
+        whitener.load_state_dict(saved_whitener)
+    step = int(ckpt.get("next_step", ckpt.get("global_step", -1)))
     suffix = "-ema" if use_ema else ""
     label = f"{ckpt_path.parent.name}/step{step}{suffix}"
     return bottleneck, label, step, whitener
@@ -632,8 +693,8 @@ def compute_latent_unit_vectors(
 
     Args:
         bottleneck: Eval-mode Bottleneck from `load_bottleneck_from_checkpoint`.
-        features: Cached `feature_key -> (N_ctx, D_e)` fp16 tensors (always RAW
-            V-JEPA space — the cache is a dataset constant shared by all
+        features: Cached `feature_key -> (N,D)` tensors (always raw encoder
+            space — the cache is a dataset constant shared by all
             checkpoints; whitening is a per-checkpoint transform applied here).
         keys: Which cached windows to embed (probe order).
         device: Device for bottleneck forwards.
@@ -687,7 +748,7 @@ def plot_graph1(
     checkpoint_curves: list[tuple[str, dict[str, list[float]]]],
     boundary: int,
 ) -> None:
-    """Graph 1: mean drift vs temporal offset (V-JEPA reference + latent curves).
+    """Graph 1: mean drift vs temporal offset (encoder reference + latent curves).
 
     Args:
         out_path: PNG destination.
@@ -716,7 +777,13 @@ def plot_graph1(
             color="gray",
         )
     if encoder_summary is not None:
-        ax.plot(offsets, encoder_summary["mean"], "o-", color="black", label="V-JEPA e (frozen)")
+        ax.plot(
+            offsets,
+            encoder_summary["mean"],
+            "o-",
+            color="black",
+            label="detailed features (frozen)",
+        )
         ax.fill_between(
             offsets, encoder_summary["p25"], encoder_summary["p75"], color="black", alpha=0.12
         )
@@ -741,11 +808,11 @@ def plot_graph2(
     label: str,
     spearman: float,
 ) -> None:
-    """Graph 2: per-video drift, videos sorted by V-JEPA drift (staircase vs dots).
+    """Graph 2: per-video drift, sorted by encoder drift (staircase vs dots).
 
     Args:
         out_path: PNG destination.
-        e_summary: (V,) per-video V-JEPA drift over `graph2_offsets`.
+        e_summary: (V,) per-video encoder drift over `graph2_offsets`.
         c_summary: (V,) per-video latent drift over the same offsets.
         graph2_offsets: Offsets averaged into each point (for the title).
         label: Checkpoint label.
@@ -757,9 +824,16 @@ def plot_graph2(
     order = torch.argsort(e_summary)
     x = list(range(len(order)))
     fig, ax = plt.subplots(figsize=(9, 5.5))
-    ax.plot(x, e_summary[order].tolist(), "o", color="black", ms=4, label="V-JEPA e (frozen)")
+    ax.plot(
+        x,
+        e_summary[order].tolist(),
+        "o",
+        color="black",
+        ms=4,
+        label="detailed features (frozen)",
+    )
     ax.plot(x, c_summary[order].tolist(), "o", ms=4, alpha=0.8, label=f"latent c — {label}")
-    ax.set_xlabel("probe videos, sorted by V-JEPA drift →")
+    ax.set_xlabel("probe videos, sorted by detailed-feature drift →")
     ax.set_ylabel(f"mean drift over offsets {graph2_offsets} (1 − cosine)")
     ax.set_title(f"Per-video drift — {label}  (Spearman ρ = {spearman:.3f})")
     ax.legend(fontsize=8)
@@ -778,11 +852,21 @@ def plot_graph2(
 def parse_args() -> argparse.Namespace:
     """Parse the drift-probe CLI."""
     parser = argparse.ArgumentParser(
-        description="Within-video temporal drift probe (V-JEPA embeddings vs bottleneck latents)."
+        description="Within-video temporal drift probe (frozen detailed features vs latents)."
     )
     parser.add_argument(
         "--data", choices=["ssv2", "ssv2_tiny", "ego4d", "ego4d_tiny"], default="ssv2_tiny"
     )
+    parser.add_argument(
+        "--encoder",
+        choices=("vjepa2_vitl16", "dinov3_vitb16", "siglip2_vitb16"),
+        default="vjepa2_vitl16",
+    )
+    parser.add_argument("--encoder-revision", default=None)
+    parser.add_argument("--encoder-precision", choices=("fp32", "bf16"), default=None)
+    parser.add_argument("--encoder-frame-microbatch", type=int, default=None)
+    parser.add_argument("--encoder-attention-implementation", default=None)
+    parser.add_argument("--hf-cache-dir", default=None)
     parser.add_argument(
         "--split",
         default="validation",
@@ -816,7 +900,7 @@ def parse_args() -> argparse.Namespace:
         "--encoder-curve",
         choices=["on", "off"],
         default="on",
-        help="Include the V-JEPA drift curve in Graph 1 (features are "
+        help="Include the frozen detailed-feature curve in Graph 1 (features are "
         "computed/cached regardless — the latent side needs them).",
     )
     parser.add_argument(
@@ -858,15 +942,24 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--encoder-batch", type=int, default=4, help="Windows per frozen-encoder forward."
     )
+    parser.add_argument("--cache-dtype", choices=("fp16", "fp32"), default="fp16")
+    parser.add_argument(
+        "--exact-latent-comparison",
+        action="store_true",
+        help="Require an fp32 feature cache before comparing checkpoint latents.",
+    )
     parser.add_argument(
         "--latent-batch", type=int, default=16, help="Windows per bottleneck forward."
     )
     parser.add_argument(
         "--device",
         default=None,
-        choices=["cuda", "cpu"],
+        choices=["cuda", "cpu", "mps"],
         help="Override device (default: cuda if available).",
     )
+    parser.add_argument("--wandb-artifact", action="store_true")
+    parser.add_argument("--wandb-project", default="hjepa-vwm")
+    parser.add_argument("--wandb-entity", default=None)
     return parser.parse_args()
 
 
@@ -878,7 +971,19 @@ def main() -> None:
     offsets = parse_offset_list(args.offsets)
     cfg = Config()
     cfg.data.dataset = args.data
-    t_ctx, stride = cfg.model.t_ctx, cfg.train.frame_stride
+    cfg.encoder.alias = args.encoder
+    cfg.encoder.revision = args.encoder_revision
+    if args.encoder_precision:
+        cfg.encoder.precision = args.encoder_precision
+    if args.encoder_frame_microbatch is not None:
+        cfg.encoder.frame_microbatch = args.encoder_frame_microbatch
+    if args.encoder_attention_implementation:
+        cfg.encoder.attention_implementation = args.encoder_attention_implementation
+    if args.hf_cache_dir:
+        cfg.hf_cache_dir = args.hf_cache_dir
+    if args.exact_latent_comparison and args.cache_dtype != "fp32":
+        raise SystemExit("--exact-latent-comparison requires --cache-dtype fp32")
+    t_ctx, stride = cfg.encoder.input_frames, cfg.train.frame_stride
     graph2_offsets = (
         parse_offset_list(args.graph2_offsets)
         if args.graph2_offsets
@@ -891,25 +996,29 @@ def main() -> None:
     if args.latent_curve == "on" and not args.ckpt:
         raise SystemExit(
             "--latent-curve on requires at least one --ckpt "
-            "(or pass --latent-curve off for a V-JEPA-only probe)."
+            "(or pass --latent-curve off for an encoder-only probe)."
         )
     if args.latent_curve == "off" and args.ckpt:
         print("WARN: --latent-curve off; ignoring --ckpt arguments.")
     device = torch.device(args.device or ("cuda" if torch.cuda.is_available() else "cpu"))
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    tag = args.tag or f"{args.data}_{args.split}_n{args.probe_videos}_seed{args.seed}"
+    tag = args.tag or (
+        f"{args.encoder}_{args.data}_{args.split}_n{args.probe_videos}_seed{args.seed}"
+    )
     manifest_path = Path(args.manifest) if args.manifest else out_dir / f"manifest_{tag}.json"
     cache_path = (
-        Path(args.feature_cache) if args.feature_cache else out_dir / f"vjepa_features_{tag}.pt"
+        Path(args.feature_cache) if args.feature_cache else default_feature_cache_path(out_dir, tag)
     )
 
     manifest = load_or_build_manifest(
         manifest_path, cfg, args.split, args.probe_videos, max(offsets), args.seed
     )
     features = compute_encoder_features(
-        cfg, manifest, offsets, cache_path, device, args.encoder_batch
+        cfg, manifest, offsets, cache_path, device, args.encoder_batch, args.cache_dtype
     )
+    cache_envelope = torch.load(cache_path, map_location="cpu")
+    cache_metadata = cache_envelope["metadata"]
     videos = manifest["videos"]
     window_keys = [
         feature_key(v["path"], end)
@@ -921,13 +1030,17 @@ def main() -> None:
     e_drift = drift_matrix(encoder_units, videos, offsets)
     e_offset_summary = summarize_per_offset(e_drift)
     e_video_summary = per_video_summary(e_drift, offsets, graph2_offsets)
-    print("V-JEPA drift by offset (mean over probe videos):")
+    print(f"{args.encoder} detailed-feature drift by offset (mean over probe videos):")
     for k, mean in zip(offsets, e_offset_summary["mean"], strict=True):
         print(f"  k={k:>3}: {mean:.4f}")
 
     results = {
         "manifest_path": str(manifest_path),
         "feature_cache": str(cache_path),
+        "encoder_spec": cache_metadata["encoder_spec"],
+        "feature_fingerprint": cache_metadata["feature_fingerprint"],
+        "dataset_identity": cache_metadata["dataset_identity"],
+        "cache_payload_fingerprint": cache_envelope["payload_fingerprint"],
         "offsets": offsets,
         "graph2_offsets": graph2_offsets,
         "overlap_boundary": overlap_boundary(t_ctx, stride),
@@ -946,6 +1059,25 @@ def main() -> None:
             bottleneck, label, step, whitener = load_bottleneck_from_checkpoint(
                 ckpt_path, args.use_ema
             )
+            if bottleneck.encoder_spec.fingerprint != cache_metadata["feature_fingerprint"]:
+                cache_spec = cache_metadata["encoder_spec"]
+                shape_matches_legacy = (
+                    getattr(bottleneck, "legacy_encoder_checkpoint", False)
+                    and cache_spec.get("family") == "vjepa2"
+                    and cache_spec.get("repo_id") == "facebook/vjepa2-vitl-fpc64-256"
+                    and bottleneck.encoder_spec.feature_dim == cache_spec["feature_dim"]
+                    and dataclasses.asdict(bottleneck.encoder_spec.layout) == cache_spec["layout"]
+                )
+                if not shape_matches_legacy:
+                    raise RuntimeError(
+                        f"Checkpoint {ckpt_path} encoder fingerprint does not match the "
+                        "feature cache."
+                    )
+                warnings.warn(
+                    f"{ckpt_path} has no historical feature fingerprint; accepting the "
+                    "explicitly selected shape-compatible V-JEPA cache for legacy analysis.",
+                    stacklevel=2,
+                )
             latent_units = compute_latent_unit_vectors(
                 bottleneck, features, window_keys, device, args.latent_batch, whitener=whitener
             )
@@ -989,7 +1121,9 @@ def main() -> None:
             )
 
     results_path = out_dir / f"results_{tag}.json"
-    results_path.write_text(json.dumps(results, indent=2))
+    from provenance import atomic_json_save
+
+    atomic_json_save(results, results_path)
     print(f"Wrote {results_path}")
     plot_graph1(
         out_dir / f"graph1_{tag}.png",
@@ -998,6 +1132,17 @@ def main() -> None:
         checkpoint_curves,
         overlap_boundary(t_ctx, stride),
     )
+    if args.wandb_artifact:
+        import wandb
+
+        run = wandb.init(
+            project=args.wandb_project, entity=args.wandb_entity, job_type="drift-probe"
+        )
+        artifact = wandb.Artifact(f"drift-{tag}", type="probe-report")
+        artifact.add_file(str(results_path))
+        artifact.add_file(str(manifest_path))
+        run.log_artifact(artifact)
+        run.finish()
 
 
 if __name__ == "__main__":

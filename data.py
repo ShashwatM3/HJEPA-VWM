@@ -1,16 +1,19 @@
-"""SSv2 dataset and dataloader for HJEPA-VWM Phase 1 (v0.2).
+"""Canonical raw-video dataset and dataloader for HJEPA-VWM Phase 1.
 
 Each item is a `(context_clip, target_clip)` pair: an 8-frame context window ending
 at `t` and an 8-frame future window ending at `t+k` (`k = cfg.train.horizon_k`), both
-at stride 2, at 256x256, normalized with the frozen encoder's expected statistics
-(NOT [-1, 1]). The same geometric crop and color jitter are applied to both windows.
-There is no tubelet dropout in v0.2 — the dataloader returns full clips and the
-frozen encoder consumes all tokens.
+at stride 2, at 256x256, in canonical raw `[0,1]` RGB. The same geometric crop and
+color jitter are applied to both windows. Encoder-specific normalization belongs only
+to :mod:`encoders`.
+There is no detailed-token dropout in v0.2 — the dataloader returns full clips and
+the selected frozen encoder consumes every frame.
 """
 
 from __future__ import annotations
 
+import hashlib
 import random
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
@@ -28,7 +31,27 @@ except ModuleNotFoundError:  # pragma: no cover - lets docs/tests import without
     DataLoader = object  # type: ignore[misc,assignment]
     F = None  # type: ignore[assignment]
 
-from config import ENCODER_IMAGE_MEAN, ENCODER_IMAGE_STD, Config
+from config import Config
+
+TRANSFORM_VERSION = "raw-rgb-resize-crop-jitter-v2"
+
+
+@dataclass(frozen=True)
+class ClipSample:
+    """One deterministic dataset item before collation."""
+
+    context: Tensor
+    target: Tensor | None
+    sample_id: str
+
+
+@dataclass(frozen=True)
+class ClipBatch:
+    """One typed training batch with an optional future branch."""
+
+    context: Tensor
+    target: Tensor | None
+    sample_ids: tuple[str, ...]
 
 
 def _require_torch() -> None:
@@ -98,7 +121,12 @@ def _resize_shorter_side(frames: Tensor, size: int) -> Tensor:
     return F.interpolate(frames, size=(new_h, new_w), mode="bilinear", align_corners=False)
 
 
-def _crop(frames: Tensor, size: int, split: Literal["train", "validation"]) -> Tensor:
+def _crop(
+    frames: Tensor,
+    size: int,
+    split: Literal["train", "validation"],
+    rng: random.Random | None = None,
+) -> Tensor:
     """Crop a resized clip without flips or rotations.
 
     Args:
@@ -110,15 +138,16 @@ def _crop(frames: Tensor, size: int, split: Literal["train", "validation"]) -> T
     """
     _, _, h, w = frames.shape
     if split == "train":
-        top = random.randint(0, max(0, h - size))
-        left = random.randint(0, max(0, w - size))
+        source = rng or random
+        top = source.randint(0, max(0, h - size))
+        left = source.randint(0, max(0, w - size))
     else:
         top = max(0, (h - size) // 2)
         left = max(0, (w - size) // 2)
     return frames[:, :, top : top + size, left : left + size]
 
 
-def _color_jitter(frames: Tensor) -> Tensor:
+def _color_jitter(frames: Tensor, rng: random.Random | None = None) -> Tensor:
     """Apply brightness/contrast/saturation jitter without hue changes.
 
     One sampled set of params is applied to the whole stack so context and target
@@ -129,28 +158,16 @@ def _color_jitter(frames: Tensor) -> Tensor:
     Returns:
         jittered: (N, C, H, W) clipped to [0, 1].
     """
-    brightness = 1.0 + random.uniform(-0.4, 0.4)
-    contrast = 1.0 + random.uniform(-0.4, 0.4)
-    saturation = 1.0 + random.uniform(-0.4, 0.4)
+    source = rng or random
+    brightness = 1.0 + source.uniform(-0.4, 0.4)
+    contrast = 1.0 + source.uniform(-0.4, 0.4)
+    saturation = 1.0 + source.uniform(-0.4, 0.4)
     out = frames * brightness
     mean = out.mean(dim=(-2, -1), keepdim=True)
     out = (out - mean) * contrast + mean
     gray = out.mean(dim=1, keepdim=True)
     out = (out - gray) * saturation + gray
     return out.clamp(0.0, 1.0)
-
-
-def _normalize_encoder(frames: Tensor) -> Tensor:
-    """Normalize [0, 1] frames with the frozen encoder's ImageNet statistics.
-
-    Args:
-        frames: (N, C=3, H, W) float tensor in [0, 1].
-    Returns:
-        normalized: (N, 3, H, W) tensor in the encoder's expected range (not [-1, 1]).
-    """
-    mean = torch.tensor(ENCODER_IMAGE_MEAN, dtype=frames.dtype).view(1, 3, 1, 1)
-    std = torch.tensor(ENCODER_IMAGE_STD, dtype=frames.dtype).view(1, 3, 1, 1)
-    return (frames - mean) / std
 
 
 class SSV2Dataset(Dataset):
@@ -165,17 +182,28 @@ class SSV2Dataset(Dataset):
         split: `train` or `validation`.
         cfg: Global config with frame size, stride, and horizon constants.
     Returns:
-        Each item is `(context_clip, target_clip)`, both
-        (T=8, C=3, H=256, W=256) encoder-normalized float32 tensors. The context
-        window ends at `t`; the target window ends at `t + horizon_k`.
+        Each item is a :class:`ClipSample`. Context and optional target are
+        `(T=8,C=3,H=256,W=256)` raw `[0,1]` float32 tensors.
     """
 
-    def __init__(self, root: str | Path, split: Literal["train", "validation"], cfg: Config):
+    def __init__(
+        self,
+        root: str | Path,
+        split: Literal["train", "validation"],
+        cfg: Config,
+        *,
+        needs_target: bool = True,
+        epoch: int = 0,
+    ) -> None:
         """Index a split directory of video files (SSv2 .webm symlinks or EGO4D .mp4 chunks)."""
         _require_torch()
         self.root = Path(root)
         self.split = split
         self.cfg = cfg
+        self.needs_target = needs_target
+        self.epoch = epoch
+        if (cfg.encoder.input_height, cfg.encoder.input_width) != (256, 256):
+            raise ValueError("The v1 raw-video transform supports only a square 256 crop.")
         split_dir = self.root / split
         # One combined sort over both extensions keeps indexing deterministic across
         # datasets: SSv2 ships VP9 .webm symlinks, EGO4D chunks are H.264 .mp4 files.
@@ -187,7 +215,15 @@ class SSV2Dataset(Dataset):
         """Return the number of videos available in this split."""
         return len(self.paths)
 
-    def _window_indices(self, num_frames: int) -> tuple[list[int], list[int]]:
+    def _rng_for(self, sample_id: str) -> random.Random:
+        """Return the identity/epoch-scoped transform RNG for one clip."""
+        identity = f"{self.cfg.seed}:{self.epoch}:{sample_id}:{TRANSFORM_VERSION}".encode()
+        seed = int.from_bytes(hashlib.sha256(identity).digest()[:8], "big")
+        return random.Random(seed)
+
+    def _window_indices(
+        self, num_frames: int, rng: random.Random | None = None
+    ) -> tuple[list[int], list[int]]:
         """Compute context and target frame indices within one video.
 
         The context window is `T` frames at `stride` ending at `t`; the target window
@@ -199,48 +235,104 @@ class SSV2Dataset(Dataset):
         Returns:
             (context_indices, target_indices), each of length `T`.
         """
-        t_ctx = self.cfg.model.t_ctx
+        context, start = self._context_indices(num_frames, rng)
+        t_ctx = self.cfg.encoder.input_frames
         stride = self.cfg.train.frame_stride
         k = self.cfg.train.horizon_k
-        span = (t_ctx - 1) * stride + k  # first context frame -> last target frame
-        max_start = num_frames - 1 - span
-        if max_start < 0:
-            start = 0
-        elif self.split == "train":
-            start = random.randint(0, max_start)
-        else:
-            start = max_start // 2
         last = num_frames - 1
-        context = [min(last, start + i * stride) for i in range(t_ctx)]
         tgt_end = start + (t_ctx - 1) * stride + k
         target = [min(last, tgt_end - (t_ctx - 1 - i) * stride) for i in range(t_ctx)]
         return context, target
 
-    def __getitem__(self, index: int) -> tuple[Tensor, Tensor]:
-        """Return one encoder-normalized (context_clip, target_clip) pair.
+    def _context_indices(
+        self, num_frames: int, rng: random.Random | None = None
+    ) -> tuple[list[int], int]:
+        """Select context indices without constructing any future-index list.
 
-        Opens the video, reads frame count cheaply, computes the 16
-        context+target indices, then decodes only those indices (not every
-        frame in the clip).
+        The admissible start range still reserves the configured future horizon,
+        so context-only and full modes select identical contexts for a sample.
         """
-        reader = _open_video_reader(self.paths[index])
-        context_idx, target_idx = self._window_indices(len(reader))
-        t_ctx = self.cfg.model.t_ctx
-        frames_np = _decode_frames(reader, context_idx + target_idx)
+        if num_frames <= 0:
+            raise ValueError("A video must expose at least one frame.")
+        t_ctx = self.cfg.encoder.input_frames
+        stride = self.cfg.train.frame_stride
+        span = (t_ctx - 1) * stride + self.cfg.train.horizon_k
+        max_start = num_frames - 1 - span
+        if max_start < 0:
+            start = 0
+        elif self.split == "train":
+            start = (rng or random).randint(0, max_start)
+        else:
+            start = max_start // 2
+        last = num_frames - 1
+        context = [min(last, start + i * stride) for i in range(t_ctx)]
+        return context, start
+
+    def __getitem__(self, index: int) -> ClipSample:
+        """Return one raw context clip and, only when requested, its future clip.
+
+        Opens the video, reads frame count cheaply, computes either 8 context
+        indices or 16 shared context/target indices, and decodes only those
+        frames rather than the entire clip.
+        """
+        path = self.paths[index]
+        sample_id = str(path.relative_to(self.root))
+        rng = self._rng_for(sample_id)
+        reader = _open_video_reader(path)
+        if self.needs_target:
+            context_idx, target_idx = self._window_indices(len(reader), rng)
+        else:
+            context_idx, _ = self._context_indices(len(reader), rng)
+            target_idx = None
+        t_ctx = self.cfg.encoder.input_frames
+        decode_indices = context_idx + target_idx if target_idx is not None else context_idx
+        frames_np = _decode_frames(reader, decode_indices)
         stacked = torch.from_numpy(frames_np)
         stacked = stacked.float().permute(0, 3, 1, 2) / 255.0
-        stacked = _resize_shorter_side(stacked, self.cfg.model.h)
-        stacked = _crop(stacked, self.cfg.model.h, self.split)
+        stacked = _resize_shorter_side(stacked, self.cfg.encoder.input_height)
+        stacked = _crop(stacked, self.cfg.encoder.input_height, self.split, rng)
         if self.split == "train":
-            stacked = _color_jitter(stacked)
-        stacked = _normalize_encoder(stacked)
-        return stacked[:t_ctx], stacked[t_ctx:]
+            stacked = _color_jitter(stacked, rng)
+        context = stacked[:t_ctx]
+        target = stacked[t_ctx:] if self.needs_target else None
+        return ClipSample(context=context, target=target, sample_id=sample_id)
+
+
+def _collate_clip_samples(samples: list[ClipSample]) -> ClipBatch:
+    """Stack one homogeneous context-only or context/target sample list."""
+    _require_torch()
+    if not samples:
+        raise ValueError("Cannot collate an empty clip batch.")
+    has_target = samples[0].target is not None
+    if any((sample.target is not None) != has_target for sample in samples):
+        raise ValueError("Clip samples in one batch must use the same target mode.")
+    target = None
+    if has_target:
+        target = torch.stack([sample.target for sample in samples])
+    return ClipBatch(
+        context=torch.stack([sample.context for sample in samples]),
+        target=target,
+        sample_ids=tuple(sample.sample_id for sample in samples),
+    )
+
+
+def _worker_init(worker_id: int) -> None:
+    """Seed Python/NumPy from PyTorch's explicit per-worker seed."""
+    del worker_id
+    seed = torch.initial_seed() % (2**32)
+    random.seed(seed)
+    np.random.seed(seed)
 
 
 def build_dataloader(
     cfg: Config,
     split: Literal["train", "validation"] = "train",
     batch_size: int | None = None,
+    *,
+    needs_target: bool | None = None,
+    epoch: int = 0,
+    start_offset: int = 0,
+    drop_last: bool | None = None,
 ) -> DataLoader:
     """Build a Phase 1 dataloader.
 
@@ -248,19 +340,44 @@ def build_dataloader(
         cfg: Global config with selected data root and worker settings.
         split: Dataset split to read.
         batch_size: Optional override for smoke tests.
+        needs_target: Whether to decode the future window.
+        epoch: Deterministic shuffle/transform epoch.
+        start_offset: Number of epoch-order samples already consumed on resume.
+        drop_last: Override incomplete-batch handling. Training defaults to True;
+            offline statistics pass False so every requested clip remains eligible.
     Returns:
-        DataLoader yielding `(context_clip, target_clip)` batches, both
-        (B, 8, 3, 256, 256).
+        DataLoader yielding :class:`ClipBatch` values. Context and an optional
+        target have shape `(B,8,3,256,256)` in raw `[0,1]` RGB.
     """
     _require_torch()
-    dataset = SSV2Dataset(cfg.data.dataset_root(), split, cfg)
+    if batch_size is not None and batch_size <= 0:
+        raise ValueError("batch_size must be positive.")
+    selected_target_mode = (
+        not cfg.train.present_recon_only if needs_target is None else needs_target
+    )
+    dataset = SSV2Dataset(
+        cfg.data.dataset_root(), split, cfg, needs_target=selected_target_mode, epoch=epoch
+    )
+    generator = torch.Generator().manual_seed(
+        cfg.seed + (0 if split == "train" else 10_000) + epoch * 1_000_003
+    )
+    if split == "train":
+        order = torch.randperm(len(dataset), generator=generator).tolist()
+    else:
+        order = list(range(len(dataset)))
+    if not 0 <= start_offset <= len(order):
+        raise ValueError(f"start_offset must be in [0,{len(order)}]; got {start_offset}.")
+    sampler = order[start_offset:]
     return DataLoader(
         dataset,
         batch_size=batch_size or cfg.train.global_batch,
-        shuffle=(split == "train"),
+        sampler=sampler,
         num_workers=cfg.data.num_workers,
         pin_memory=cfg.data.pin_memory,
-        drop_last=(split == "train"),
+        drop_last=(split == "train") if drop_last is None else drop_last,
+        collate_fn=_collate_clip_samples,
+        worker_init_fn=_worker_init,
+        generator=generator,
     )
 
 
@@ -268,8 +385,15 @@ def smoke_test_dataloader() -> None:
     """Load two SSv2-tiny batches and assert Phase 1 v0.2 data contracts."""
     cfg = Config()
     loader = build_dataloader(cfg, "train", batch_size=2)
-    expected = (cfg.model.t_ctx, 3, cfg.model.h, cfg.model.w)
-    for i, (context_clip, target_clip) in enumerate(loader):
+    expected = (
+        cfg.encoder.input_frames,
+        3,
+        cfg.encoder.input_height,
+        cfg.encoder.input_width,
+    )
+    for i, batch in enumerate(loader):
+        context_clip, target_clip = batch.context, batch.target
+        assert target_clip is not None
         print(
             context_clip.shape,
             target_clip.shape,
@@ -279,7 +403,6 @@ def smoke_test_dataloader() -> None:
         assert context_clip.shape[1:] == expected, context_clip.shape
         assert target_clip.shape[1:] == expected, target_clip.shape
         assert torch.isfinite(context_clip).all() and torch.isfinite(target_clip).all()
-        # Encoder-normalized (ImageNet stats), so the range is NOT [-1, 1].
-        assert context_clip.min() < -1.0 or context_clip.max() > 1.0
+        assert 0.0 <= float(context_clip.min()) <= float(context_clip.max()) <= 1.0
         if i == 1:
             break

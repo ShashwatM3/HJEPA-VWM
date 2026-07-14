@@ -68,7 +68,7 @@ Use this order — **code always wins over prose**:
 
 1. **Root implementation files + tests** for anything implemented today:
    `config.py`, `data.py`, `encoders.py`, `models.py`, `losses.py`, `diagnostics.py`,
-   `train.py`, `make_subset.py`, `tests/`.
+   `provenance.py`, `train.py`, offline tools, dataset helpers, and `tests/`.
 2. **This file (`AGENTS.md`)** — implementation-grounded map of shapes, modules,
    training step, shipped defaults, invariants.
 3. **Living factual guides** (must stay aligned with code when it changes):
@@ -173,21 +173,22 @@ Root implementation files:
 | Path | Role |
 |---|---|
 | `config.py` | Dataclass configuration, path contract, dimensions, optimizer/loss knobs. |
-| `data.py` | Clip-per-file video dataset and dataloader. Produces context/target clip pairs from SSv2 `.webm` symlinks or EGO4D `.mp4` chunks. |
-| `encoders.py` | Encoder-independent raw-clip seam, immutable feature specs/fingerprints, private adapter registry, pinned V-JEPA2 adapter, and authenticated real-adapter smoke CLI. DINOv3/SigLIP2 aliases are reserved but intentionally unresolved. |
+| `data.py` | Deterministic clip-per-file loader. Produces typed raw `[0,1]` context-only or context/target `ClipBatch` values from SSv2 `.webm` or EGO4D `.mp4`. |
+| `encoders.py` | Only encoder seam: immutable specs/fingerprints, normalization/precision/frame microbatching, private registry, pinned V-JEPA2 and SigLIP2 adapters, real smoke CLI. DINO alone remains unresolved. |
 | `make_subset.py` | Builds `ssv2_tiny` as symlinks plus `manifest.json`. |
 | `select_ego4d_uids.py` | Selects scenario-diverse EGO4D source-video UIDs, train/validation split, and download batches from `ego4d.json`. |
 | `chunk_ego4d.py` | Chunks downloaded EGO4D 540ss videos into 4-second, 12 FPS, 256px-shorter-side H.264 `.mp4` clips under `data/ego4d`. |
 | `make_ego4d_subset.py` | Builds `ego4d_tiny` as symlinks into `data/ego4d` plus `manifest.json`. |
-| `models.py` | Phase-1 latent modules plus the temporary legacy normalized-input `FrozenEncoder` bridge. New encoder logic belongs in `encoders.py`, not here. |
+| `models.py` | `EncoderSpec`-driven Phase-1 trainable modules and fixed mean/whitener buffers. Contains only a narrow historical V-JEPA geometry reader, not an encoder backend. |
 | `losses.py` | Pure tensor losses and detach helper. No parameters. |
 | `diagnostics.py` | Collapse metrics, baseline comparisons, AGC, weight-decay grouping. |
-| `train.py` | Stage-0 sanity, Stage-1 training, CLI, optimizer, EMA, checkpoints. |
+| `provenance.py` | Frame-count-bound dataset/run identities, EncoderSpec serialization, atomic writes, strict whitening and feature-cache envelopes. |
+| `train.py` | Stage-0/1, CLI, optimizer/EMA, exact sampler/RNG atomic resume, parity/CUDA-event resource preflights, and strict/optional W&B policy. |
 | `parse_logs.py` | Parses `step=N {dict}` console logs into JSON. |
 | `run_history.py` | W&B Public API export/report helper for logged metrics. |
 | `drift_probe.py` | Offline within-video temporal drift probe: frozen-encoder drift vs bottleneck-latent drift over a pinned probe set, evaluated from checkpoints. |
-| `rank_probe.py` | Offline frozen-encoder effective-rank probe: applies the `c_effective_rank` covariance-rank formula to cached V-JEPA `e` tokens over the drift-probe manifest. |
-| `whiten_stats.py` | Offline whitening statistics for frozen V-JEPA features: single-pass fp64 mean/covariance over training-set encoder tokens, saved as the eigendecomposition consumed by `train.py --whiten-features`. |
+| `rank_probe.py` | Encoder-generic raw/effective-rank probe over the strict drift manifest/feature cache, including pre-concatenation frame-layout norms/ranks. |
+| `whiten_stats.py` | Deterministic context-only fp64 statistics through the same encoder/data seam; writes a strict encoder/dataset-bound eigensystem envelope. |
 | `requirements.txt` | Runtime and dev dependencies. |
 | `pyproject.toml` | Black and Ruff configuration. |
 | `tests/` | Unit tests for contracts, losses, optimizer grouping, AGC, decoder, modes. |
@@ -200,7 +201,7 @@ Agent and architecture docs:
 | `AGENT_FILES/AGENT-BEHAVIOUR/CODE_DESIGN.md` | Flat-file layout, naming, docstrings, detach rules. |
 | `AGENT_FILES/AGENT-BEHAVIOUR/WORKFLOW.md` | Redirect → [`GUIDES/EXPERIMENT_LIFECYCLE.md`](../GUIDES/EXPERIMENT_LIFECYCLE.md). |
 | `AGENT_FILES/SETUPS/VOLUME_LAYOUT.md` | RunPod `/workspace` data/checkpoint/cache layout. |
-| `AGENT_FILES/KNOWLEDGE/encoders/README.md` | Frozen-encoder research index: DINOv3-B and SigLIP 2-B dossiers plus the encoder-pluggability/parallel-experiment plan and segmented guide. Prompt 1C's foundation is shipped; later pipeline/adapter stages remain planned. |
+| `AGENT_FILES/KNOWLEDGE/encoders/README.md` | Encoder research/status index and RunPod guide. Common pluggability plus V-JEPA/SigLIP adapters are shipped; DINO and the real join remain gated. |
 | `GUIDES/latest_brief.md` | Architecture narrative (v0.3) — **historical intent, not ground truth**. |
 | `GUIDES/PROBLEMS_METRICS_AND_EXPERIMENTS.md` | Metric glossary + experiment problem history. |
 | `GUIDES/CODEBASE_STRUCTURE.md` | File map: training code, MLOps, docs, KANBAN. |
@@ -220,24 +221,23 @@ Names in code follow the symbol map from `CODE_DESIGN.md`.
 |---|---|---|---|
 | `x` | `context_clip` | Context video window ending at time `t` | `(B, 8, 3, 256, 256)` |
 | `x_{<=t+k}` | `target_clip` | Future clip window ending `horizon_k` frames later | `(B, 8, 3, 256, 256)` |
-| `E` | `encoder` | Frozen V-JEPA 2 ViT-L/16 video encoder | module |
-| `e_t` | `detailed` | Detailed context latent from frozen encoder | `(B, 1024, 1024)` |
+| `E` | `encoder` | Selected frozen backend behind the common `FrozenEncoder` seam | module |
+| `e_t` | `detailed` | Detailed context tokens from frozen encoder | `(B, N_e, D_e)` |
 | `B` | `bottleneck` | Trainable compressor from detailed to abstract | module |
 | `c_t` | `abstract` | Current abstract latent | `(B, 32, 256)` by default |
 | `B_EMA` | `target_bottleneck` | EMA copy of `B`, never backpropagated | module |
-| `e_plus` | `target_detailed` | Future detailed latent from frozen encoder | `(B, 1024, 1024)` |
+| `e_plus` | `target_detailed` | Future detailed tokens from the same frozen encoder | `(B, N_e, D_e)` |
 | `c_plus` | `target_abstract` | Future abstract EMA target | `(B, 32, 256)` |
 | `F_c` | `coarse_flow` | Rectified-flow velocity predictor for `c_plus` | module |
 | `D` in current code | `decoder` | Feature reconstruction decoder `c -> e_hat`; not the Phase-3 pixel generator | module |
 | `c_hat` | `c_hat` / endpoint | One-step estimate of future abstract latent | `(B, 32, 256)` |
 
-Shape derivation:
+Resolved feature contracts:
 
-- Encoder patch size is 16, tubelet size is 2.
-- Each 8-frame clip becomes 4 temporal tubelets.
-- Each 256x256 frame has a 16x16 spatial patch grid.
-- `N_ctx = (8 / 2) * (256 / 16)^2 = 4 * 256 = 1024`.
-- `D_e = 1024` comes from `facebook/vjepa2-vitl-fpc64-256`.
+- V-JEPA2-L: layout `4x16x16` tubelets, so `N_e=1024`, `D_e=1024`.
+- SigLIP2-B: layout `8x16x16` frame patches, so `N_e=2048`, `D_e=768`.
+- `EncoderSpec`, not `ModelConfig`, is the runtime source for `N_e`, `D_e`, temporal
+  slots, spatial height/width, normalization, precision, and feature fingerprint.
 - `N_c = 32` and `D_c = 256` are the abstract bottleneck defaults.
 
 Do not introduce functions that touch tensors without shape-contract docstrings.
@@ -292,31 +292,31 @@ EGO4D build helpers:
 2. `_open_video_reader` opens decord `VideoReader(..., num_threads=1)`. The
    single-thread setting avoids known VP9/decord packet errors while dataloader
    workers still parallelize across videos.
-3. `_window_indices` selects two 8-frame stride-2 windows:
+3. `_context_indices` selects the context; `_window_indices` adds the target only in full mode:
    - context indices: `start + i * frame_stride`
    - target window ends at `start + (T - 1) * stride + horizon_k`
    - too-short videos are padded by clamping to the last frame.
-4. `_decode_frames` decodes only the 16 needed frame indices, not the whole
-   video.
+4. `_decode_frames` decodes 8 context frames in present-only mode or 16 shared
+   context/target indices in full mode, not the whole video.
 5. Frames become float tensors in `[0, 1]`, channel-first.
 6. `_resize_shorter_side` resizes so the shorter side is 256.
 7. `_crop` uses random crop for train and center crop for validation.
 8. `_color_jitter` applies one brightness/contrast/saturation sample to the
    combined context+target stack for train only.
-9. `_normalize_encoder` applies V-JEPA/ImageNet mean/std:
-   `(0.485, 0.456, 0.406)` and `(0.229, 0.224, 0.225)`.
-10. The item returns `(context_clip, target_clip)`, both
-    `(8, 3, 256, 256)`.
+9. No encoder normalization occurs in `data.py`. The item becomes `ClipSample`; the
+   dataloader collates typed `ClipBatch(context,target,sample_ids)` values in raw `[0,1]`.
+10. Transform randomness is derived from seed, epoch, sample identity, and the versioned
+    transform recipe. Training order is generated explicitly and resumes by epoch/offset.
 
-No horizontal flip, temporal flip, rotation, tubelet dropout, or `[-1, 1]`
-normalization belongs on the encoder path. VAE `[-1, 1]` normalization is a
+No horizontal flip, temporal flip, rotation, detailed-token dropout, or VAE `[-1,1]`
+normalization belongs in the raw data path. Encoder normalization belongs only in
+`encoders.py`; VAE `[-1,1]` normalization is a
 future Stage-4 concern, not current code.
 
 ## 6. Current model components
 
-All current trainable latent modules live in `models.py`. The frozen-encoder foundation now
-lives in `encoders.py`, but the data/model/training hot path is deliberately not migrated to
-it yet; that is the next encoder-pluggability stage.
+All current trainable latent modules live in `models.py`. Every production data, training,
+stats, rank, and drift path now reaches a backend only through `encoders.py`.
 
 ### Encoder-independent foundation (`encoders.py`)
 
@@ -332,52 +332,41 @@ The private registry currently has:
 
 - `vjepa2_vitl16`: implemented at Hub commit
   `b3c1679b7c34d3255ef3547f27c7b226aefab26f`, layout `4x16x16`, `D_e=1024`;
-- `dinov3_vitb16` and `siglip2_vitb16`: stable reserved aliases that fail clearly because
-  no tested private adapter/default immutable revision is installed yet. They never fall
-  back to `main`.
+- `siglip2_vitb16`: implemented at Hub commit
+  `3f9f96cb90da5dbc758b01813f2f6f1aee24c1ab`, vision-only retained patch tower
+  `85,843,200` parameters, layout `8x16x16`, `D_e=768`;
+- `dinov3_vitb16`: stable reserved alias that fails clearly until its gated real lane
+  installs a tested adapter/default immutable revision. It never falls back to `main`.
 
 `transformers==4.57.6` is the shared dependency pin. Its installed source exposes the
 planned V-JEPA2, DINOv3 ViT, and SigLIP2 vision architectures. Any later dependency change
 invalidates the real-adapter evidence and requires all lanes to be rerun.
 
-### Legacy pipeline FrozenEncoder (`models.py`)
+### Narrow historical geometry reader (`models.py`)
 
-`FrozenEncoder` wraps `transformers.AutoModel.from_pretrained(
-"facebook/vjepa2-vitl-fpc64-256", attn_implementation="sdpa")`.
-
-Contracts:
-
-- Calls `model.get_vision_features(clip)`.
-- Input is `(B, 8, 3, 256, 256)`, already encoder-normalized.
-- Output is `(B, 1024, 1024)`.
-- All parameters have `requires_grad=False`.
-- `.train()` is overridden to keep the wrapped model in eval mode.
-- `forward` is decorated with `torch.no_grad()`.
-- The same instance encodes context and target clips.
-
-This class is a temporary compatibility bridge for the still-normalized current data path.
-Do not add new adapter, normalization, revision, or fingerprint logic here. The next stage
-replaces its call sites with `encoders.build_frozen_encoder`; until then, `train.py` and the
-offline probes remain V-JEPA-specific.
+There is no duplicate `models.FrozenEncoder`. `_legacy_encoder_spec` exists only to rebuild
+historical V-JEPA-shaped checkpoints and older synthetic tests. Production construction
+resolves a real `EncoderSpec` before creating B/D/mean/whitener state. No adapter,
+normalization, revision, processor, or token-selection logic may return to `models.py`.
 
 Never put encoder parameters in an optimizer. Never add a target encoder.
 
 ### Bottleneck
 
-`Bottleneck` maps `e_t` or `e_plus` from `(B, 1024, 1024)` to
-`(B, N_c, D_c)`.
+`Bottleneck` maps `e_t` or `e_plus` from the resolved `(B,N_e,D_e)` to
+`(B,N_c,D_c)`.
 
 Pipeline:
 
-1. `in_proj`: linear `D_e=1024 -> bottleneck_mixer_dim=256`.
-2. Reshape temporal-major tokens into `(B * 4, 256, 16, 16)`.
+1. `in_proj`: linear resolved `D_e -> bottleneck_mixer_dim=256`.
+2. Reshape time-major tokens with `FeatureLayout` into `(B*T_e,256,H_e,W_e)`.
 3. Apply two shared `ConvNeXtBlock`s per temporal slot.
-4. Flatten back to `(B, 1024, 256)` and add the learned `pos_emb` memory tags.
+4. Flatten back to `(B,N_e,256)` and add the learned `pos_emb` memory tags.
 5. `to_kv`: linear `256 -> D_c=256` produces the memory tokens.
 6. A Perceiver-style latent processor of `bottleneck_latent_blocks=3`
    `BottleneckLatentBlock`s refines the `N_c=32` learned query slots. Each
    block runs three zero-init residual updates on the slot stream:
-   sharpened-cosine cross-attention read from the 1024 memory tokens
+   sharpened-cosine cross-attention read from the `N_e` memory tokens
    (`SharpCrossAttention`, zero-init `o_proj`), slot self-attention for slot
    competition (zero-init `out_proj`), and a per-slot MLP (zero-init last
    layer).
@@ -397,7 +386,7 @@ Important current initialization:
 
 `Bottleneck(..., return_attn=True)` returns per-head attention weights of the
 FINAL latent block's cross-attention read for diagnostics:
-`(B, heads, N_c, N_ctx)`.
+`(B,heads,N_c,N_e)`.
 
 ### TargetBottleneck
 
@@ -454,8 +443,8 @@ Phase-3 pixel/frame generator.
 
 Purpose:
 
-- Decode an abstract latent `(B, N_c, D_c)` back to frozen detailed features
-  `(B, N_ctx, D_e)`.
+- Decode an abstract latent `(B,N_c,D_c)` back to resolved frozen detailed features
+  `(B,N_e,D_e)`.
 - Provide optional reconstruction pressure so `c_t` remains information-rich.
 - Support both present reconstruction `D(c_t) -> e_t` and prediction-side
   reconstruction `D(c_hat) -> e_plus`.
@@ -463,7 +452,7 @@ Purpose:
 Structure:
 
 - `kv_proj`: projects abstract slots to decoder width.
-- deterministic fixed 3D tubelet position codes are registered as the
+- deterministic fixed 3D lattice position codes are registered as the
   non-trainable buffer `fixed_pos`.
 - initial cross-attention queries are normalized fixed positions, values come
   from `c`.
@@ -471,7 +460,7 @@ Structure:
   position as output content.
 - output projects decoder width back to `D_e`.
 
-Invariant: the decoder may know where output tubelets are, but it must not use
+Invariant: the decoder may know where output lattice tokens are, but it must not use
 a learned per-output-token content template. Tests enforce that `fixed_pos` is
 a buffer and that zero latent cannot emit position-specific content.
 
@@ -482,7 +471,7 @@ a buffer and that zero latent cannot emit position-specific content.
 
 - Buffers only (`mean` fp32 `(N_ctx, D_e)`, `initialized` flag), zero
   parameters — it can never enter the optimizer, AGC, weight decay, or EMA.
-- `update(detailed)` folds a training batch into an EMA per-tubelet-position
+- `update(detailed)` folds a training batch into an EMA per-lattice-position
   mean; the first batch initializes it directly. Train-step only; diagnostics
   read it but never update it.
 - `subtract(features)` returns `features - mean` for the reconstruction target.
@@ -492,17 +481,19 @@ a buffer and that zero latent cannot emit position-specific content.
 
 ### FeatureWhitener
 
-`FeatureWhitener` supports fixed offline whitening of the frozen V-JEPA
-features (`cfg.train.whiten_features`, motivated by investigation_014's finding
-that `e` has pooled entropy rank ~193/1024 with a long low-energy tail):
+`FeatureWhitener` supports fixed offline whitening of the selected frozen features
+(`cfg.train.whiten_features`; originally motivated by V-JEPA investigation_014):
 
 - Buffers only (`mean`, `whiten_mat`, `unwhiten_mat` fp32, `initialized` flag),
   zero parameters — it can never enter the optimizer, AGC, weight decay, or EMA.
-- Statistics come from ONE offline pass over the training set
-  (`whiten_stats.py`); `configure` builds the ZCA pair
+- Statistics come from one deterministic context-only pass through the same encoder/data
+  seam (`whiten_stats.py`) and are accepted only in a strict encoder/dataset-bound envelope.
+  Fresh training additionally requires the exact configured transform seed, clip budget
+  (`whiten_expected_clips`, default 12,800), and eigensolver settings;
+  `configure` builds the ZCA pair
   `W = U (Lambda + eps I)^{-1/2} U^T` and its inverse. Never per-batch
   whitening.
-- `whiten`/`unwhiten` run the 1024x1024 matmul in fp32 with autocast disabled
+- `whiten`/`unwhiten` run the resolved `D_e x D_e` matmul in fp32 with autocast disabled
   (the SIGReg WALK_FIXES F2 precision rule) and return the input dtype.
 - It is applied at ONE seam — inside `train._coarse_forward` /
   `train._present_forward`, right after each frozen-encoder call — so `B`,
@@ -511,7 +502,8 @@ that `e` has pooled entropy rank ~193/1024 with a long low-energy tail):
 - It travels outside the five-module bundle as an optional keyword argument and
   is checkpointed under the optional `feature_whitener` key so checkpoints are
   self-describing; `drift_probe.py` rebuilds it from the checkpoint and refuses
-  to evaluate a whitened-space checkpoint on raw features.
+  to evaluate a whitened-space checkpoint on raw features or an invalid
+  `feature_whitener_identity`.
 
 ## 7. Flow math and implemented loss functions
 
@@ -579,7 +571,7 @@ The copy/no-change baseline remains comparable because "copy" becomes
 
 Modes:
 
-- `cosine` (default): L2-normalize each tubelet vector along `D_e`, then
+- `cosine` (default): L2-normalize each detailed token along `D_e`, then
   return `mean(1 - cosine(pred, target))`.
 - `relative_mse`: return raw MSE divided by `Var(target)`, retained as an
   explicit legacy comparison mode.
@@ -594,7 +586,7 @@ Current reconstruction paths:
 
 Residual reconstruction target (`recon_residual_target`, default off): both
 anchors score against the per-position residual `e - mean` instead of the
-absolute features, where `mean` is the `FeatureMeanTracker` EMA per-tubelet
+absolute features, where `mean` is the `FeatureMeanTracker` EMA per-lattice-position
 mean of `e_t`. This removes the video-independent template component from the
 objective so reconstruction pressure must route video-specific content through
 `c_t` (the run-052 collapse fix). Gradient routing is unchanged; requires an
@@ -764,20 +756,28 @@ target does not move.
 
 Checkpoints:
 
-- `save_checkpoint` writes `global_step`, `bottleneck`, `target_bottleneck`,
-  `coarse_flow`, `decoder`, `optimizer`, and serialized config, plus the
-  optional `recon_feature_mean` (mean tracker) and `feature_whitener`
-  (whitening buffers) keys when those modules are active.
-- The frozen encoder is never checkpointed; reload it from Hugging Face.
-- `load_checkpoint` supports older checkpoints without decoder state.
-- It rejects checkpoints from the old learned-query decoder architecture.
-- It skips incompatible optimizer state group counts with a warning and keeps
-  the model weights loaded.
+- Current schema is `hjepa-phase1-checkpoint-v2`, written atomically with unambiguous
+  `next_step`/`completed_updates`, B/B_EMA/F_c/D, optimizer, fixed buffers, config,
+  resolved EncoderSpec/fingerprint, dataset/run provenance, RNG/sampler state,
+  initialization hash, and W&B run ID.
+- Frozen encoder weights are excluded; immutable repository/revision/preprocessing and
+  feature identity are included and validated before any model state mutates.
+- Optimizer reset, dataset transfer, and the narrow legacy V-JEPA reader require explicit
+  flags. Dataset transfer drops only dataset fingerprint/order/config from the provenance
+  comparison; all other runtime, seed, schedule, and initialization guards remain, and the
+  source/destination fingerprints plus checkpoint checksum are recorded under `resume_policy`.
+  Incompatible optimizer/model/buffer shapes fail before model mutation.
+- Resume validates the saved sampler epoch/offset against the checkpoint's own
+  `next_step`, train count, and physical batch before mutating state, then passes that
+  exact saved position to the first resumed dataloader. It also restores RNG and resumes
+  at the saved `next_step`.
 
 ## 11. Diagnostics and what each one proves
 
 Diagnostics are pure functions in `diagnostics.py` and are run on a fixed
-validation batch in `train.run_diagnostics`.
+validation batch in `train.run_diagnostics`. The configured and realized validation batch
+must contain at least two videos; otherwise the shuffled-c honesty probe would be an identity
+operation and training fails loudly.
 
 Representation health:
 
@@ -831,17 +831,20 @@ Offline probes (not part of the training loop):
   checkpoint's bottleneck, plus Spearman faithfulness between the two. It
   compares windows of the SAME video only — never two different videos. It is
   an analysis helper like `run_history.py`; training code never imports it and
-  it logs nothing to W&B. Checkpoints trained with `whiten_features` carry
+  W&B artifact logging is opt-in. Checkpoints trained with `whiten_features` carry
   their whitener; the probe applies it to the cached raw features before the
-  bottleneck (the cache itself always stores raw V-JEPA features). See README
+  bottleneck (the cache itself stores raw selected-encoder features). See README
   "Within-video drift probe" for usage.
-- `rank_probe.py` measures the entropy effective rank of frozen V-JEPA `e`
-  features over the same pinned manifest/cache namespace as `drift_probe.py`.
+- `rank_probe.py` measures raw and entropy effective rank of selected frozen `e`
+  features over the same pinned manifest/cache namespace and the exact same default
+  `encoder_features_<tag>.pt` path as `drift_probe.py`.
   Its pooled-token metric is the direct `e`-side analog of
   `c_effective_rank`: stack `(B * N_ctx, D_e)` anchor-window tokens, center the
   covariance, rank eigenvalues via entropy. It also reports per-video token
-  ranks and cross-video mean-vector rank. It is an offline analysis helper;
-  training code never imports it and it logs nothing to W&B.
+  ranks, cross-video mean-vector rank, and rank/feature-dimension. For a frame layout it
+  also reshapes only from `FeatureLayout` and reports per-frame patch norms/effective rank
+  before temporal concatenation. It is an offline analysis helper; training code never
+  imports it and W&B artifact logging is opt-in.
 
 Future Phase-2/3 diagnostics, not implemented yet:
 
@@ -856,7 +859,7 @@ Future Phase-2/3 diagnostics, not implemented yet:
 
 `config.py` is the source of current implemented defaults.
 
-Model defaults:
+Trainable model defaults (legacy V-JEPA geometry fields remain only for historical readers/tests):
 
 | Field | Default |
 |---|---|
@@ -872,7 +875,7 @@ Model defaults:
 | `condition_dropout` | `0.10` |
 | reconstruction decoder dim / blocks / heads | `256`, `2`, `8` |
 
-Encoder-foundation defaults (`EncoderConfig`; not yet exposed by `train.py`):
+Encoder defaults (`EncoderConfig`; all exposed by `train.py`):
 
 | Field | Default |
 |---|---|
@@ -917,11 +920,10 @@ Data/path defaults:
 | `hf_cache_dir` | `/workspace/hf_cache` |
 | `seed` | `42` |
 
-Current `train.py` CLI flags include data selection, steps, resume, seed,
-logging cadence, `horizon_k`, all optional loss weights, reconstruction modes,
-residual/present-only switches, LRs, AGC toggles, gradient skip threshold,
-decoder capacity, `n_c`, and checkpoint directory. Read `parse_args()` before
-adding or changing any experiment knob.
+Current `train.py` CLI additionally exposes encoder alias/revision/precision/frame
+microbatch/attention/cache, physical batch, resource/no-step provenance preflight,
+provenance comparison, strict W&B identity, and explicit resume migration policy. Read
+`parse_args()` before adding or changing an experiment knob.
 
 ## 13. Stage and phase status
 
@@ -991,10 +993,9 @@ Do not violate these without explicit human approval:
 7. In future Stage 3, `c_hat` must be detached before feeding `F_e`.
 8. In future Stage 4, `e_hat` and the latent stack must be detached/frozen
    before training the pixel generator.
-9. The new `encoders.FrozenEncoder` accepts raw `[0,1]` clips and privately applies its
-   adapter normalization. The temporary current `data.py -> models.FrozenEncoder` path
-   still applies ImageNet/V-JEPA normalization in `data.py`; do not mix the two contracts.
-10. No tubelet dropout on frozen encoder inputs.
+9. `data.py` emits only raw `[0,1]` clips. `encoders.FrozenEncoder` privately applies the
+   selected adapter's normalization/precision exactly once. No second path exists.
+10. No detailed-token dropout on frozen encoder inputs.
 11. SSv2 direction-sensitive transforms must not include horizontal/temporal
     flips unless a human approves a changed data contract.
 12. `c_t` must remain a bottleneck. Do not casually widen `N_c`, `D_c`, or add
@@ -1021,7 +1022,7 @@ For any code change, trace the relevant path in this order:
 Useful local checks:
 
 ```bash
-python -m py_compile config.py data.py encoders.py models.py losses.py diagnostics.py train.py make_subset.py select_ego4d_uids.py chunk_ego4d.py make_ego4d_subset.py
+python -m py_compile config.py data.py encoders.py models.py losses.py diagnostics.py provenance.py train.py whiten_stats.py rank_probe.py drift_probe.py make_subset.py select_ego4d_uids.py chunk_ego4d.py make_ego4d_subset.py
 pytest -q
 python -c "from models import smoke_test_models; smoke_test_models()"
 python -c "from diagnostics import smoke_test_diagnostics; smoke_test_diagnostics()"
@@ -1031,6 +1032,7 @@ RunPod checks that may download or require data:
 
 ```bash
 python encoders.py --smoke --encoder vjepa2_vitl16 --batch-size 1
+python encoders.py --smoke --encoder siglip2_vitb16 --batch-size 1
 python -c "from data import smoke_test_dataloader; smoke_test_dataloader()"
 python -c "from models import smoke_test_encoder; smoke_test_encoder()"
 python train.py --stage0-only
@@ -1056,6 +1058,9 @@ optimizer grouping, reconstruction, decoder, SIGReg, or present-only mode.
 - Owns only clip-per-file video loading and preprocessing for SSv2 and EGO4D
   chunk roots.
 - Keep context/target transforms shared where intended.
+- Present-only mode must not compute or decode target indices. Preserve deterministic
+  sample-ID/epoch transforms and resumable train order.
+- Never add encoder-specific normalization here.
 - Do not change video sampling semantics without updating docs and tests.
 
 `encoders.py`:
@@ -1088,6 +1093,8 @@ optimizer grouping, reconstruction, decoder, SIGReg, or present-only mode.
 - Owns only modules with parameters/buffers.
 - Keep construction order `(encoder, bottleneck, target_bottleneck,
   coarse_flow, decoder)` consistent with `train.py`.
+- Production B/D/mean/whitener geometry comes from one resolved `EncoderSpec`; legacy
+  ModelConfig shape fields are not a runtime source of truth.
 - Do not put losses or optimizer logic here.
 
 `losses.py`:
@@ -1108,27 +1115,34 @@ optimizer grouping, reconstruction, decoder, SIGReg, or present-only mode.
 - Keep train-step gradient paths readable.
 - If a new loss is added, document exactly which modules it trains and add a
   test for the gradient contract.
+- Validate checkpoint/artifact/provenance compatibility before state mutation. Paid runs
+  use `--require-wandb`; never upload giant checkpoints silently.
+
+`provenance.py`:
+
+- Owns canonical fingerprints and atomic JSON/Torch writes used across training and tools.
+- Dataset identity schema v2 binds sorted clip paths, resolved sizes, decoded frame counts,
+  and the explicit EGO selection/download/chunk manifests; it rejects corrupt/zero-frame
+  clips and incomplete full-EGO stats/probes.
+- Strict envelopes validate metadata, payload hashes, tensor shape/dtype/finiteness, and
+  encoder/dataset fingerprints before reuse.
+- Run provenance records CUDA/cuDNN/GPU model plus explicit data-transform, epoch-0 order,
+  model-init, per-step training, and diagnostic seed streams.
 
 `parse_logs.py`, `run_history.py`, `drift_probe.py`, `rank_probe.py`, and
 `whiten_stats.py`:
 
 - Analysis helpers, not training dependencies.
 - Do not couple core training to these scripts.
-- `drift_probe.py` specifics: the probe set is pinned by a manifest JSON and the
-  frozen-encoder features are cached under `--out-dir` (default
-  `logs/drift_probe/`). Never regenerate an existing manifest in place —
-  checkpoint results are only comparable when the manifest is identical. The
-  bottleneck is rebuilt from the config serialized inside the checkpoint;
-  window sampling and transforms reuse `data.py` validation helpers. Pure
-  helpers are unit-tested in `tests/test_drift_probe.py`.
-- `whiten_stats.py` specifics: single-pass fp64 mean/covariance over training
-  split encoder tokens; saves raw eigenvalues so `cfg.train.whiten_eps` can be
-  swept at load time without recomputing. Training never imports the script —
-  `train._build_whitener` only reads its `.pt` artifact.
-- `rank_probe.py` specifics: it shares the drift-probe manifest/cache naming by
-  default, encodes only anchor windows, and builds manifests compatible with the
-  default drift offset ladder so a rank-only first run does not poison later
-  drift comparisons. Pure helpers are unit-tested in `tests/test_rank_probe.py`.
+- `drift_probe.py` pins a probe manifest and strict versioned feature-cache envelope.
+  Checkpoint B/whitener geometry comes from the saved EncoderSpec; only an explicitly
+  warned historical V-JEPA reader may lack one. The embedded whitener hash is mandatory
+  for whitened checkpoints. Exact latent comparison requires fp32 cache.
+- `whiten_stats.py` uses the same factory/context-only raw loader, accumulates fp64 moments,
+  and writes raw eigenvalues in an atomic strict envelope; training imports only provenance
+  validation, not this script.
+- `rank_probe.py` shares the strict drift manifest/cache path and retains the tested rank formulas
+  while reporting raw rank and effective-rank fraction with encoder/dataset identity.
 
 ## 18. Current limitations to keep visible
 

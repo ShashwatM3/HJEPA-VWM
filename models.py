@@ -1,15 +1,9 @@
-"""Phase 1 model modules for HJEPA-VWM (v0.2 — frozen encoder).
+"""Encoder-independent Phase 1 trainable model modules.
 
-Implements the frozen pretrained encoder `E` (V-JEPA 2 ViT-L/16), the trainable
-bottleneck `B`, the EMA bottleneck `B_EMA`, and the coarse flow `F_c`. Fine flow,
-VAE, and frame generator are out of scope for Phase 1.
-
-v0.2 changes from v0.1:
-- `E` is a frozen pretrained ViT (no from-scratch encoder, no PatchEmbed) — the
-  encoder owns tokenization, position encoding, and tubelet projection internally.
-- EMA is on the bottleneck only (`B_EMA`); there is no target encoder.
-- No tubelet dropout: all `N_ctx=1024` tokens are real, so the bottleneck no longer
-  scatters a kept-mask back to a full grid.
+The frozen detailed encoder lives exclusively in :mod:`encoders`. This module
+constructs the trainable bottleneck `B`, EMA bottleneck `B_EMA`, coarse flow `F_c`,
+and reconstruction decoder `D` from a resolved :class:`encoders.EncoderSpec`.
+Fine flow, the VAE, and the frame generator remain outside Phase 1.
 """
 
 from __future__ import annotations
@@ -28,6 +22,7 @@ except ModuleNotFoundError:  # pragma: no cover - local docs-only environments.
     F = None  # type: ignore[assignment]
 
 from config import Config, ModelConfig
+from encoders import EncoderSpec, FeatureLayout, build_frozen_encoder
 from losses import as_target
 
 
@@ -37,56 +32,41 @@ def _require_torch() -> None:
         raise RuntimeError("PyTorch is required for models.py. Install requirements.txt on RunPod.")
 
 
-class FrozenEncoder(nn.Module):
-    """Frozen pretrained V-JEPA 2 ViT-L/16 encoder, shared by both branches.
+def _legacy_encoder_spec(cfg: ModelConfig) -> EncoderSpec:
+    """Build the narrow V-JEPA-shaped spec used only by legacy/offline callers.
 
-    A thin wrapper around the HF `transformers` V-JEPA 2 model. We do NOT implement
-    a patchifier or position embeddings — tokenization, 3D-RoPE, and the tubelet
-    projection are internal to the encoder. The same frozen instance encodes the
-    context clip (`e_t`) and the future clip (`e_plus`).
-
-    Args:
-        clip: (B, T=8, C=3, H=256, W=256) pixel clip, encoder-normalized.
-    Returns:
-        detailed: (B, N_ctx=1024, D_e=1024) per-tubelet features (last_hidden_state).
+    Production construction resolves a real spec from :func:`build_frozen_encoder`.
+    This bridge keeps old checkpoints and tiny synthetic tests readable while they
+    migrate; no adapter selection or preprocessing decision depends on it.
     """
-
-    def __init__(self, cfg: ModelConfig):
-        """Load the pretrained encoder and freeze every parameter."""
-        _require_torch()
-        super().__init__()
-        try:
-            from transformers import AutoModel
-        except ModuleNotFoundError as exc:  # pragma: no cover - RunPod dependency.
-            raise RuntimeError(
-                "transformers==4.57.6 (with V-JEPA2 support) is required for FrozenEncoder."
-            ) from exc
-        self.cfg = cfg
-        self.model = AutoModel.from_pretrained(cfg.encoder_repo, attn_implementation="sdpa")
-        self.model.eval()
-        for param in self.model.parameters():
-            param.requires_grad = False
-        trainable = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
-        if trainable != 0:
-            raise RuntimeError(f"Frozen encoder has {trainable} trainable params; expected 0.")
-
-    def train(self, mode: bool = True) -> FrozenEncoder:
-        """Keep the encoder in eval mode regardless of the parent's train() call."""
-        super().train(mode)
-        self.model.eval()
-        return self
-
-    @torch.no_grad()
-    def forward(self, clip: Tensor) -> Tensor:
-        """Encode a pixel clip into detailed tokens (no grad).
-
-        Args:
-            clip: (B, T, C, H, W) encoder-normalized pixel clip.
-        Returns:
-            detailed: (B, N_ctx, D_e) per-tubelet features.
-        """
-        features = self.model.get_vision_features(clip)
-        return features
+    return EncoderSpec(
+        family="legacy-vjepa2",
+        repo_id=cfg.encoder_repo,
+        requested_revision="b3c1679b7c34d3255ef3547f27c7b226aefab26f",
+        resolved_revision="b3c1679b7c34d3255ef3547f27c7b226aefab26f",
+        input_frames=8,
+        input_height=256,
+        input_width=256,
+        feature_dim=cfg.d_e,
+        layout=FeatureLayout(
+            temporal=cfg.n_temporal_tokens,
+            height=cfg.grid_spatial,
+            width=cfg.grid_spatial,
+            order="time_y_x",
+            temporal_unit="tubelet",
+            temporal_stride_frames=cfg.encoder_tubelet,
+            temporal_support_frames=cfg.encoder_tubelet,
+        ),
+        normalization_id="legacy-pre-normalized",
+        normalization_mean=(0.485, 0.456, 0.406),
+        normalization_std=(0.229, 0.224, 0.225),
+        preprocess_version="legacy-model-config-v1",
+        inference_precision="fp32",
+        frame_microbatch=8,
+        attention_implementation="sdpa",
+        cache_dir="/workspace/hf_cache",
+        parameter_count=0,
+    )
 
 
 class ConvNeXtBlock(nn.Module):
@@ -130,8 +110,8 @@ class SharpCrossAttention(nn.Module):
 
     Normalizing queries and memory keys makes slot-token matching directional
     rather than norm-driven. The learned logit scale starts at CLIP-like
-    temperature 1/0.07, high enough that each slot can select among the 1024
-    memory tokens instead of averaging them uniformly.
+    temperature 1/0.07, high enough that each slot can select among a large
+    detailed-token memory instead of averaging it uniformly.
 
     Args:
         q: (B, N_q, D) query slots.
@@ -189,7 +169,7 @@ class BottleneckLatentBlock(nn.Module):
     Implements the recommended latent-processor step (tmp/changes_bottleneck <1>):
 
     ```text
-    s = s + CrossAttn(s, memory)   # read new evidence from the 1024 memory tokens
+    s = s + CrossAttn(s, memory)   # read new evidence from detailed tokens
     s = s + SelfAttn(s)            # slot competition / de-duplication
     s = s + MLP(s)                 # per-slot refinement
     ```
@@ -256,31 +236,35 @@ class BottleneckLatentBlock(nn.Module):
 class Bottleneck(nn.Module):
     """Compress detailed tokens into the low-bandwidth abstract latent `c_t`.
 
-    Projects the frozen `e_t` from `D_e` to the mixer width, mixes each of the 4
-    temporal-slot 16x16 grids with shared ConvNeXt blocks, adds learned memory
-    position tags, then runs a small Perceiver-style latent processor: 32
+    Projects the frozen `e_t` from its resolved `D_e` to the mixer width, mixes
+    each resolved temporal/spatial grid with shared ConvNeXt blocks, adds learned
+    memory position tags, then runs a small Perceiver-style latent processor. Its
     orthogonal slot identities are repeatedly updated by sharpened cosine
-    cross-attention reads from the 1024 memory tokens, slot self-attention
+    cross-attention reads from the detailed-token memory, slot self-attention
     (competition), and a per-slot MLP (`bottleneck_latent_blocks` rounds,
     tmp/changes_bottleneck <1>). All updates are zero-init residuals on the slot
     identities, so slot identity survives into `c_t` and the module starts as
     exactly `LayerNorm(queries)` for every input. The same module (and its EMA
     copy) is applied identically to `e_t` (-> `c_t`) and `e_plus` (-> `c_plus`);
-    both clips share the encoder's `N_ctx=1024` temporal-major geometry, so there
+    both clips share the selected encoder's resolved time-major geometry, so there
     is no separate target path and no kept-mask in v0.2.
     """
 
-    def __init__(self, cfg: ModelConfig):
+    def __init__(self, cfg: ModelConfig, encoder_spec: EncoderSpec | None = None):
         """Initialize input projection, ConvNeXt mixing, queries, and latent blocks."""
         _require_torch()
         super().__init__()
         self.cfg = cfg
+        self.encoder_spec = encoder_spec or _legacy_encoder_spec(cfg)
+        layout = self.encoder_spec.layout
+        if layout.order != "time_y_x":
+            raise ValueError("Bottleneck requires time_y_x detailed-token order.")
         mix = cfg.bottleneck_mixer_dim
-        self.in_proj = nn.Linear(cfg.d_e, mix)
+        self.in_proj = nn.Linear(self.encoder_spec.feature_dim, mix)
         self.mixers = nn.Sequential(
             *[ConvNeXtBlock(mix) for _ in range(cfg.bottleneck_convnext_blocks)]
         )
-        self.pos_emb = nn.Parameter(torch.empty(1, cfg.n_ctx, mix))
+        self.pos_emb = nn.Parameter(torch.empty(1, layout.n_tokens, mix))
         nn.init.trunc_normal_(self.pos_emb, std=0.5)
         self.to_kv = nn.Linear(mix, cfg.d_c)
         # Fix 1 (Plan Phase 04): orthogonal queries (unit-norm rows). The old
@@ -309,8 +293,8 @@ class Bottleneck(nn.Module):
         """Compress detailed tokens to abstract tokens.
 
         Args:
-            detailed: (B, N_ctx=1024, D_e=1024) frozen-encoder tokens (context or
-                future clip — identical geometry).
+            detailed: `(B,spec.layout.n_tokens,spec.feature_dim)` frozen-encoder
+                tokens for a context or future clip.
             return_attn: When True, also return the PER-HEAD cross-attention
                 weights (B, num_heads, N_c, N_ctx) of the FINAL latent block's
                 read (the most refined attention pattern) for diagnostics.
@@ -322,16 +306,20 @@ class Bottleneck(nn.Module):
             abstract: (B, N_c=32, D_c=256) abstract latent. When `return_attn`,
             a tuple `(abstract, attn_weights)` with attn (B, num_heads, N_c, N_ctx).
         """
-        b, n, _ = detailed.shape
+        b, n, d = detailed.shape
         cfg = self.cfg
-        if n != cfg.n_ctx:
-            raise ValueError(f"Expected {cfg.n_ctx} tokens, got {n}")
+        layout = self.encoder_spec.layout
+        if (n, d) != (layout.n_tokens, self.encoder_spec.feature_dim):
+            raise ValueError(
+                "Detailed features do not match EncoderSpec: expected "
+                f"(N,D)=({layout.n_tokens},{self.encoder_spec.feature_dim}), got ({n},{d})."
+            )
         mix = cfg.bottleneck_mixer_dim
         tokens = self.in_proj(detailed)
-        t, g = cfg.n_temporal_tokens, cfg.grid_spatial
-        # Temporal-major token order from the encoder: index = t*(g*g) + h*g + w.
-        grid = tokens.reshape(b * t, g, g, mix).permute(0, 3, 1, 2)
-        mixed = self.mixers(grid).permute(0, 2, 3, 1).reshape(b, t * g * g, mix)
+        t, h, w = layout.temporal, layout.height, layout.width
+        # Canonical time-major order: index = t*(h*w) + y*w + x.
+        grid = tokens.reshape(b * t, h, w, mix).permute(0, 3, 1, 2)
+        mixed = self.mixers(grid).permute(0, 2, 3, 1).reshape(b, layout.n_tokens, mix)
         mixed = mixed + self.pos_emb
         memory = self.to_kv(mixed)
         slots = self.queries[None].expand(b, -1, -1)
@@ -356,8 +344,8 @@ class TargetBottleneck(nn.Module):
     frozen `e_plus`.
 
     Args:
-        target_detailed: (B, N_tgt=1024, D_e=1024) frozen encoder output on the
-            future clip.
+        target_detailed: `(B,spec.layout.n_tokens,spec.feature_dim)` frozen
+            encoder output on the future clip.
     Returns:
         target_abstract: (B, N_c=32, D_c=256), detached.
     """
@@ -553,10 +541,10 @@ class CoarseFlow(nn.Module):
 
 
 def _axis_sincos_position_code(position: Tensor, dim: int) -> Tensor:
-    """Encode one tubelet-coordinate axis with deterministic sin/cos features.
+    """Encode one lattice-coordinate axis with deterministic sin/cos features.
 
     Args:
-        position: (N_ctx,) tubelet coordinates for one axis.
+        position: (N,) lattice coordinates for one axis.
         dim: Number of decoder channels assigned to this axis.
     Returns:
         code: (N_ctx, dim) non-trainable positional features.
@@ -574,22 +562,22 @@ def _axis_sincos_position_code(position: Tensor, dim: int) -> Tensor:
     return code[:, :dim]
 
 
-def _fixed_tubelet_position_codes(cfg: ModelConfig, dim: int) -> Tensor:
-    """Build fixed 3D codes for V-JEPA's temporal-major tubelet grid.
+def _fixed_detailed_position_codes(layout: FeatureLayout, dim: int) -> Tensor:
+    """Build fixed 3D codes for a canonical temporal-major detailed-token grid.
 
     The decoder may know *where* each detailed token lives, but the position code
     must not become a learned content template. The returned tensor is registered
     as a buffer by `Decoder`, never as an `nn.Parameter`.
 
     Args:
-        cfg: Model configuration defining `(T/2, H/16, W/16)` geometry.
+        layout: Resolved `(temporal,height,width)` feature geometry.
         dim: Decoder hidden width.
     Returns:
-        fixed_pos: (N_ctx, dim) deterministic tubelet position codes.
+        fixed_pos: (N, dim) deterministic detailed-lattice position codes.
     """
-    temporal = torch.arange(cfg.n_temporal_tokens, dtype=torch.float32)
-    row = torch.arange(cfg.grid_spatial, dtype=torch.float32)
-    col = torch.arange(cfg.grid_spatial, dtype=torch.float32)
+    temporal = torch.arange(layout.temporal, dtype=torch.float32)
+    row = torch.arange(layout.height, dtype=torch.float32)
+    col = torch.arange(layout.width, dtype=torch.float32)
     tt, yy, xx = torch.meshgrid(temporal, row, col, indexing="ij")
     t_pos = tt.reshape(-1)
     y_pos = yy.reshape(-1)
@@ -606,7 +594,7 @@ def _fixed_tubelet_position_codes(cfg: ModelConfig, dim: int) -> Tensor:
         ],
         dim=-1,
     )
-    if fixed_pos.shape != (cfg.n_ctx, dim):
+    if fixed_pos.shape != (layout.n_tokens, dim):
         raise RuntimeError(f"Bad decoder position-code shape: {tuple(fixed_pos.shape)}")
     return fixed_pos
 
@@ -617,7 +605,7 @@ class DecoderBlock(nn.Module):
     Args:
         hidden: (B, N_ctx, dim) output-token content derived from `c`.
         memory: (B, N_c, dim) projected abstract latent (keys/values).
-        fixed_pos: (N_ctx, dim) non-trainable tubelet position codes.
+        fixed_pos: (N, dim) non-trainable detailed-lattice position codes.
     Returns:
         hidden: (B, N_ctx, dim) updated c-derived output-token content.
     """
@@ -639,7 +627,7 @@ class DecoderBlock(nn.Module):
         Args:
             hidden: (B, N_ctx, dim) current output-token content, already derived from `c`.
             memory: (B, N_c, dim) projected abstract latent used as keys/values.
-            fixed_pos: (N_ctx, dim) non-trainable tubelet position codes.
+            fixed_pos: (N, dim) non-trainable detailed-lattice position codes.
         Returns:
             hidden: (B, N_ctx, dim) updated output-token content.
         """
@@ -652,7 +640,7 @@ class DecoderBlock(nn.Module):
 class Decoder(nn.Module):
     """Reconstruct frozen detailed features from the abstract latent (richness anchor).
 
-    A deliberately small cross-attention expander: fixed 3D tubelet-position codes
+    A deliberately small cross-attention expander: fixed 3D lattice-position codes
     query the `N_c` abstract slots and project the resulting c-derived content to
     `D_e`, giving `e_hat` (B, N_ctx, D_e). Position tells the decoder where to
     write; the abstract latent `c` tells it what to write. There is no learned
@@ -671,21 +659,24 @@ class Decoder(nn.Module):
         pred_detailed: (B, N_ctx, D_e) reconstructed detailed features `e_hat`.
     """
 
-    def __init__(self, cfg: ModelConfig):
+    def __init__(self, cfg: ModelConfig, encoder_spec: EncoderSpec | None = None):
         """Initialize the latent projection, fixed position buffer, blocks, and head."""
         _require_torch()
         super().__init__()
         self.cfg = cfg
+        self.encoder_spec = encoder_spec or _legacy_encoder_spec(cfg)
         dim = cfg.decoder_dim
         self.kv_proj = nn.Linear(cfg.d_c, dim)
         self.initial_pos_norm = nn.LayerNorm(dim, elementwise_affine=False)
         self.initial_cross_attn = nn.MultiheadAttention(dim, cfg.decoder_heads, batch_first=True)
-        self.register_buffer("fixed_pos", _fixed_tubelet_position_codes(cfg, dim))
+        self.register_buffer(
+            "fixed_pos", _fixed_detailed_position_codes(self.encoder_spec.layout, dim)
+        )
         self.blocks = nn.ModuleList(
             [DecoderBlock(dim, cfg.decoder_heads) for _ in range(cfg.decoder_blocks)]
         )
         self.out_norm = nn.LayerNorm(dim)
-        self.out_proj = nn.Linear(dim, cfg.d_e)
+        self.out_proj = nn.Linear(dim, self.encoder_spec.feature_dim)
 
     def forward(self, latent: Tensor) -> Tensor:
         """Expand the abstract latent back to detailed features `e_hat`.
@@ -708,12 +699,12 @@ class Decoder(nn.Module):
 
 
 class FeatureMeanTracker(nn.Module):
-    """EMA per-tubelet-position mean of the frozen detailed features (no parameters).
+    """EMA per-lattice-position mean of the frozen detailed features (no parameters).
 
     Supports the residual reconstruction target (cfg.train.recon_residual_target,
     the run-052 fix): the reconstruction anchor trains `D` against `e - mean`
     instead of the absolute `e`, so the video-independent "template" component of
-    the V-JEPA features earns zero loss and all reconstruction pressure must route
+    the selected encoder's mean feature field earns zero loss, so reconstruction pressure routes
     video-specific information through `c_t`.
 
     Contracts:
@@ -729,8 +720,8 @@ class FeatureMeanTracker(nn.Module):
       cold start); later updates apply `mean <- m * mean + (1 - m) * batch_mean`.
 
     Args:
-        n_ctx: Number of tubelet positions (1024 at full resolution).
-        d_e: Frozen encoder feature dimension (1024 for ViT-L).
+        n_ctx: Number of detailed lattice positions.
+        d_e: Frozen encoder feature dimension.
         momentum: EMA momentum `m` for the running mean.
     """
 
@@ -779,11 +770,11 @@ class FeatureMeanTracker(nn.Module):
 
 
 class FeatureWhitener(nn.Module):
-    """Fixed offline ZCA whitening of the frozen V-JEPA features (no parameters).
+    """Fixed offline ZCA whitening of selected frozen detailed features (no parameters).
 
-    Implements tmp/changes_bottleneck <2>, motivated by investigation_014: the
-    frozen `e` token cloud is strongly anisotropic (pooled entropy rank ~193/1024
-    with a long low-energy tail), so `e -> c` compression otherwise weighs
+    Implements tmp/changes_bottleneck <2>, originally motivated by the V-JEPA
+    investigation_014 result: its frozen `e` token cloud was strongly anisotropic
+    (pooled entropy rank ~193/1024 with a long low-energy tail), so `e -> c` compression otherwise weighs
     dominant-direction energy and tail noise with the same metric. Whitening with
     FIXED training-set statistics equalizes the retained directions:
 
@@ -799,14 +790,14 @@ class FeatureWhitener(nn.Module):
     - Statistics are computed ONCE offline over the training set
       (`whiten_stats.py`) and reused unchanged for train/val/inference. Never
       per-batch whitening.
-    - `whiten`/`unwhiten` compute in fp32 regardless of autocast (the 1024x1024
+    - `whiten`/`unwhiten` compute in fp32 regardless of autocast (the `D_e x D_e`
       matmul is precision-sensitive in bf16) and return the input dtype.
     - The eigenvalue floor `eps` is applied at `configure` time, so it can be
       swept from config without recomputing the offline stats.
     - Applied to frozen no-grad encoder outputs only; no new gradient path exists.
 
     Args:
-        d_e: Frozen encoder feature dimension (1024 for ViT-L).
+        d_e: Frozen encoder feature dimension.
     """
 
     def __init__(self, d_e: int):
@@ -861,18 +852,18 @@ class FeatureWhitener(nn.Module):
         """
         self._require_initialized()
         # Autocast would downcast even an fp32 @ fp32 matmul to bf16 (the SIGReg
-        # WALK_FIXES F2 trap); the 1024x1024 whitening product must stay fp32.
+        # WALK_FIXES F2 trap); the D_e x D_e whitening product must stay fp32.
         with torch.autocast(device_type=features.device.type, enabled=False):
             out = (features.float() - self.mean) @ self.whiten_mat
         return out.to(dtype=features.dtype)
 
     def unwhiten(self, features: Tensor) -> Tensor:
-        """Map whitened-space features back to raw V-JEPA space, `e_w @ W^-1 + mu`.
+        """Map whitened-space features back to raw encoder space, `e_w @ W^-1 + mu`.
 
         Args:
             features: (..., D_e) whitened-space features (e.g. a decoded e_hat_w).
         Returns:
-            raw: (..., D_e) features in the original V-JEPA space, input dtype.
+            raw: (..., D_e) features in the original encoder space, input dtype.
         """
         self._require_initialized()
         with torch.autocast(device_type=features.device.type, enabled=False):
@@ -881,7 +872,7 @@ class FeatureWhitener(nn.Module):
 
 
 def build_phase1_modules(
-    cfg: Config, *, load_encoder: bool = True
+    cfg: Config, *, load_encoder: bool = True, encoder_spec: EncoderSpec | None = None
 ) -> tuple[nn.Module | None, Bottleneck, TargetBottleneck, CoarseFlow, Decoder]:
     """Construct all Phase 1 modules in data-path order.
 
@@ -896,11 +887,13 @@ def build_phase1_modules(
         Modules `(encoder, bottleneck, target_bottleneck, coarse_flow, decoder)`;
         `encoder` is None when `load_encoder=False`.
     """
-    encoder = FrozenEncoder(cfg.model) if load_encoder else None
-    bottleneck = Bottleneck(cfg.model)
+    encoder = build_frozen_encoder(cfg.encoder) if load_encoder else None
+    resolved_spec = encoder.spec if encoder is not None else encoder_spec
+    resolved_spec = resolved_spec or _legacy_encoder_spec(cfg.model)
+    bottleneck = Bottleneck(cfg.model, resolved_spec)
     target_bottleneck = TargetBottleneck(bottleneck)
     coarse_flow = CoarseFlow(cfg.model)
-    decoder = Decoder(cfg.model)
+    decoder = Decoder(cfg.model, resolved_spec)
     return encoder, bottleneck, target_bottleneck, coarse_flow, decoder
 
 
@@ -1055,15 +1048,23 @@ def smoke_test_models() -> None:
 def smoke_test_encoder() -> None:
     """Load the real frozen encoder and verify it is frozen and shaped correctly.
 
-    Downloads the V-JEPA 2 ViT-L checkpoint on first run; intended for RunPod or a
-    machine willing to fetch the weights. Confirms 0 trainable params and the
+    Downloads the configured encoder checkpoint on first run; intended for RunPod
+    or a machine willing to fetch the weights. Confirms 0 trainable params and the
     `(B, N_ctx, D_e)` output contract.
     """
     cfg = Config()
-    encoder = FrozenEncoder(cfg.model)
+    if not torch.cuda.is_available():
+        cfg.encoder.precision = "fp32"
+    encoder = build_frozen_encoder(cfg.encoder)
     trainable = sum(p.numel() for p in encoder.parameters() if p.requires_grad)
     assert trainable == 0, trainable
-    clip = torch.randn(1, cfg.model.t_ctx, 3, cfg.model.h, cfg.model.w)
+    clip = torch.rand(
+        1,
+        cfg.encoder.input_frames,
+        3,
+        cfg.encoder.input_height,
+        cfg.encoder.input_width,
+    )
     out = encoder(clip)
-    assert out.shape == (1, cfg.model.n_ctx, cfg.model.d_e), out.shape
+    assert out.shape == (1, encoder.spec.layout.n_tokens, encoder.spec.feature_dim), out.shape
     print(f"Frozen encoder smoke test passed: output {tuple(out.shape)}")

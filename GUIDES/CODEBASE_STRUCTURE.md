@@ -16,19 +16,20 @@ HJEPA-VWM/
 ├── config.py              # All defaults, paths, dimensions
 ├── data.py                # Video dataset + dataloader (SSv2 .webm / EGO4D .mp4 chunks)
 ├── encoders.py            # Generic raw-clip frozen-encoder seam + private adapters
+├── provenance.py          # Dataset/run identity + atomic checkpoint/artifact envelopes
 ├── make_subset.py         # Build ssv2_tiny symlink subset
 ├── select_ego4d_uids.py   # Pick EGO4D source UIDs + download batches from ego4d.json
 ├── chunk_ego4d.py         # Chunk EGO4D 540ss videos into 4s/12fps/256px .mp4 clips
 ├── make_ego4d_subset.py   # Build ego4d_tiny symlink subset
-├── models.py              # Phase-1 modules + temporary legacy encoder bridge
+├── models.py              # EncoderSpec-driven Phase-1 trainable modules
 ├── losses.py              # Pure tensor losses (no parameters)
 ├── diagnostics.py         # Collapse probes, baselines, AGC helpers
 ├── train.py               # Training loop, CLI, checkpoints, W&B logging
 ├── parse_logs.py          # Console log → JSON
 ├── run_history.py         # W&B Public API export + reports
-├── drift_probe.py         # Offline within-video drift probe (V-JEPA vs latent)
-├── rank_probe.py          # Offline effective-rank probe for frozen V-JEPA embeddings
-├── whiten_stats.py        # Offline whitening stats for frozen V-JEPA features
+├── drift_probe.py         # Encoder-generic within-video feature-vs-latent drift probe
+├── rank_probe.py          # Encoder-generic effective-rank probe over the shared cache
+├── whiten_stats.py        # Encoder/dataset/seed-bound offline whitening statistics
 ├── tests/                 # Contract and gradient-routing tests
 ├── requirements.txt
 ├── pyproject.toml         # Black + Ruff
@@ -50,12 +51,13 @@ These flat files are the entire Phase 1 implementation. There is no `src/` packa
 | File | Owns | Does not own |
 |---|---|---|
 | `config.py` | `EncoderConfig`, `ModelConfig`, `TrainConfig`, `Config`; path defaults; locked dimensions | CLI parsing (that is `train.py`) |
-| `data.py` | `SSV2Dataset`, clip windows, and—temporarily—legacy V-JEPA normalization | Model forward passes or new-backend selection |
-| `encoders.py` | Raw `[0,1]` clip contract, normalization/precision/microbatching, immutable `EncoderSpec`, private registry/adapters, real smoke CLI | Latent architecture, losses, or training orchestration |
-| `models.py` | `Bottleneck` (+ `BottleneckLatentBlock`), `TargetBottleneck`, `CoarseFlow`, `Decoder`, `FeatureMeanTracker`, `FeatureWhitener`, and the temporary legacy `FrozenEncoder` bridge | New encoder adapter logic, loss math, optimizer |
+| `data.py` | Deterministic raw `[0,1]` `ClipBatch` values, context/future windows, shared transforms, resumable sample order | Encoder normalization or backend selection |
+| `encoders.py` | Raw-clip contract, normalization/precision/frame-microbatching, immutable `EncoderSpec`, private registry/adapters, real smoke CLI | Latent architecture, losses, or training orchestration |
+| `models.py` | `EncoderSpec`-driven `Bottleneck`, `TargetBottleneck`, `CoarseFlow`, `Decoder`, `FeatureMeanTracker`, and `FeatureWhitener`; narrow historical V-JEPA geometry reader | Encoder loading/preprocessing, loss math, optimizer |
 | `losses.py` | `flow_matching_loss`, `variance_floor`, `reconstruction_loss`, `as_target`, … | Any `nn.Parameter` |
 | `diagnostics.py` | `variance_stats`, `coarse_baselines`, `reconstruction_readouts`, AGC/decay grouping | Training loop |
-| `train.py` | `train_step`, `run_diagnostics`, EMA, checkpoints, `argparse`, `wandb.init` | New module architectures |
+| `provenance.py` | Dataset/run fingerprints, EncoderSpec serialization, atomic JSON/Torch writes, strict whitening/cache envelopes | Model math or network authentication |
+| `train.py` | `train_step`, diagnostics, EMA, strict resume/checkpoints, parity/resource preflight, CLI, W&B policy | Encoder backend classes or new module architectures |
 
 **Typical read order for a change:**
 
@@ -81,15 +83,16 @@ encoder, bottleneck, target_bottleneck, coarse_flow, decoder
 | `select_ego4d_uids.py` | One-time: reads `ego4d.json`, picks scenario-diverse source UIDs (~210 h), splits train/val by SOURCE video, emits hour-balanced download batch files |
 | `chunk_ego4d.py` | One-time (per batch): ffmpeg-chunks downloaded EGO4D 540ss videos into 4 s / 12 fps / 256 px `.mp4` clips under `data/ego4d/`; idempotent, batch-friendly |
 | `make_ego4d_subset.py` | One-time: symlinks ~4k train / ~350 val chunks into `ego4d_tiny/` + `manifest.json` (≤10 chunks per source video) |
-| `data.py` | Loads `.webm`/`.mp4` via decord; yields `(context_clip, target_clip)` tensors `(8,3,256,256)` |
+| `data.py` | Loads `.webm`/`.mp4` via decord; yields typed raw `ClipBatch` values with context and optional target tensors `(B,8,3,256,256)` |
 
 Key semantics:
 
 - Context window ends at time `t`; target window ends `horizon_k` **original** frames later.
 - Only the 16 frame indices needed are decoded (not full videos).
-- The current hot path still uses ImageNet/V-JEPA mean/std in `data.py`. The new
-  `encoders.FrozenEncoder` instead accepts raw `[0,1]` clips and owns adapter normalization;
-  do not feed the current normalized dataset output into that seam until the next migration stage.
+- `data.py` emits canonical raw `[0,1]` pixels. `encoders.FrozenEncoder` owns the
+  selected adapter's normalization exactly once; no common caller imports processor rules.
+- Present-only mode decodes context frames only. Full mode decodes context and target
+  together so one deterministic crop/jitter is shared by both windows.
 - Datasets: `--data ssv2 | ssv2_tiny | ego4d | ego4d_tiny`. EGO4D chunks are pre-encoded to
   12 fps, so `frame_stride`/`horizon_k` keep the same real-time meaning as on SSv2
   (build procedure: [`AGENT_FILES/KNOWLEDGE/ego4d/GUIDE.md`](../AGENT_FILES/KNOWLEDGE/ego4d/GUIDE.md)).
@@ -103,16 +106,25 @@ Override dataset parent locally: `export JEPA_DATA_ROOT=/path/to/data`.
 | Command | Purpose |
 |---|---|
 | `python encoders.py --smoke --encoder vjepa2_vitl16 --batch-size 1` | Real pinned-adapter shape/revision/freeze/memory report (downloads weights if absent) |
+| `python encoders.py --smoke --encoder siglip2_vitb16 --batch-size 1` | Real pinned SigLIP 2 vision-only patch-tower smoke |
 | `python train.py --stage0-only` | Synthetic one-step sanity (encoder load + shapes) |
+| `python train.py --resource-preflight ...` | Exact one-step forward/backward/diagnostic memory and throughput report |
+| `python train.py --preflight-only --provenance-out run.json ...` | Materialize a no-step immutable run identity for paired comparison |
 | `python train.py --data ssv2_tiny --steps 500` | Short smoke run |
 | `python train.py --data ssv2 --steps 15000 --horizon-k 12 --lambda-var 0.5` | Typical full Phase 1 experiment (CLI overrides defaults) |
 
 Important CLI groups (full list in `train.py` `parse_args()`):
 
-- **Data:** `--data`, `--horizon-k`, `--seed`
+- **Encoder/data:** `--encoder`, immutable revision, precision, frame microbatch,
+  attention implementation, cache, `--data`, `--batch-size`, `--horizon-k`, `--seed`
 - **Schedule:** `--steps`, `--resume`, `--log-every`, `--diag-every`, `--checkpoint-dir`
 - **Losses:** `--lambda-var`, `--lambda-recon`, `--lambda-recon-pred`, `--lambda-sigreg`, …
-- **Modes:** `--present-recon-only`, `--predict-residual`, `--recon-residual-target`, `--recon-loss-mode`, `--whiten-features` (+ `--whiten-stats-path`, `--whiten-eps`)
+- **Modes:** `--present-recon-only`, `--predict-residual`, `--recon-residual-target`,
+  `--recon-loss-mode`, strict encoder-bound `--whiten-features` plus
+  `--whiten-expected-clips`
+- **Operations:** strict W&B, atomic RNG/sampler resume, explicit optimizer reset/dataset
+  transfer/legacy flags, frame-count-bound provenance comparison, CUDA-event resource
+  preflight with examples/frames/tokens throughput
 - **Optimizer:** `--lr-bottleneck`, `--lr-coarse-flow`, `--no-agc`, `--grad-skip-threshold`
 
 Checkpoints write to `checkpoint_dir` (default `/workspace/checkpoints`). The frozen encoder is
@@ -129,9 +141,9 @@ KANBAN evidence.
 |---|---|
 | `parse_logs.py` | Parses `step=N {dict}` console lines → structured JSON |
 | `run_history.py` | Pulls full metric history from W&B Public API; `--report` for Phase 1 summaries |
-| `drift_probe.py` | Within-video temporal drift: frozen V-JEPA embedding drift vs bottleneck latent drift (loaded from checkpoints) on a pinned probe set; writes JSON + PNGs, no W&B logging |
-| `rank_probe.py` | Frozen-encoder effective rank: applies the `c_effective_rank` covariance-rank formula to cached V-JEPA `e` tokens over the drift-probe manifest; writes JSON + optional PNG, no W&B logging |
-| `whiten_stats.py` | Offline whitening statistics (mean + covariance eigendecomposition) of frozen V-JEPA training-set features; `train.py --whiten-features` consumes its `.pt` output (never imports the script), no W&B logging |
+| `drift_probe.py` | Encoder-generic within-video detailed/latent drift; strict versioned feature cache; checkpoint EncoderSpec/whitener reconstruction; JSON/PNG plus optional W&B artifact |
+| `rank_probe.py` | Encoder-generic raw/effective rank over the shared strict probe manifest/cache; frame layouts add pre-concatenation per-frame norms/ranks; identity-bearing JSON/plot plus optional W&B artifact |
+| `whiten_stats.py` | Deterministic context-only stats through the same factory/preprocessing; atomic encoder/dataset-bound envelope consumed strictly by training; inspect and optional W&B artifact modes |
 
 W&B project: **`smahalanobis-uc-davis/hjepa-vwm`**.
 
@@ -142,13 +154,13 @@ python run_history.py --run <run_id> --report
 # Parse a saved console log
 python parse_logs.py logs/my_run.txt -o logs/my_run.json
 
-# Within-video drift probe: V-JEPA reference curve + latent curves from checkpoints
+# Within-video drift probe: selected encoder reference + checkpoint latent curves
 # (usage details in README "Within-video drift probe")
 python drift_probe.py --data ssv2 --probe-videos 64 \
   --ckpt /workspace/ckpt/<run-dir>/phase1_step15000.pt
 
-# V-JEPA effective-rank budget over the same fixed probe-set namespace
-python rank_probe.py --data ssv2 --probe-videos 64
+# SigLIP effective-rank budget over the same fixed probe-set namespace
+python rank_probe.py --data ssv2 --encoder siglip2_vitb16 --probe-videos 64
 ```
 
 Prefer the **W&B MCP server** in Cursor for interactive metric pulls (see
@@ -162,6 +174,8 @@ Prefer the **W&B MCP server** in Cursor for interactive metric pulls (see
 |---|---|
 | `tests/test_phase1_contract.py` | Config, subset manifest, flat-file deliverables |
 | `tests/test_encoders.py` | Raw-input validation, normalization once, both dense layouts, frame ordering/microbatching, fingerprints, sticky freeze, registry/revision failures, and V-JEPA legacy parity |
+| `tests/test_encoder_run_contract.py` | Paired initialization, deterministic resume/transfer, checkpoint-before-mutation, B>1 honesty, CLI and diagnostic RNG contracts |
+| `tests/test_provenance.py` | Dataset/runtime/seed identity, narrow transfer, and strict atomic whitening/feature-cache envelope validation |
 | `tests/test_reconstruction_loss.py` | Reconstruction loss modes and detach behaviour |
 | `tests/test_optimizer_and_flow.py` | Optimizer groups and flow loss contracts |
 | `tests/test_agc.py` | Adaptive gradient clipping contracts |
@@ -193,7 +207,7 @@ python -c "from diagnostics import smoke_test_diagnostics; smoke_test_diagnostic
 | [`AGENT_FILES/AGENTS.md`](../AGENT_FILES/AGENTS.md) | **Agents (start here)** | Architecture, shapes, training step, invariants, doc precedence |
 | [`AGENT_FILES/AGENT-BEHAVIOUR/PROTOCOL.md`](../AGENT_FILES/AGENT-BEHAVIOUR/PROTOCOL.md) | Agents | Phase discipline, escalation |
 | [`AGENT_FILES/AGENT-BEHAVIOUR/CODE_DESIGN.md`](../AGENT_FILES/AGENT-BEHAVIOUR/CODE_DESIGN.md) | Agents | Naming map, docstrings, detach rules |
-| [`AGENT_FILES/KNOWLEDGE/encoders/README.md`](../AGENT_FILES/KNOWLEDGE/encoders/README.md) | Both | DINOv3-B and SigLIP 2-B research plus the proposed encoder-pluggability and parallel-run plan; not shipped code |
+| [`AGENT_FILES/KNOWLEDGE/encoders/README.md`](../AGENT_FILES/KNOWLEDGE/encoders/README.md) | Both | Encoder research, shipped SigLIP/V-JEPA status, DINO gate, and paired-run execution plan |
 | [`GUIDES/README.md`](README.md) | Humans + agents | Index of all guides (this folder) |
 | [`GUIDES/latest_brief.md`](latest_brief.md) | Both | Architecture narrative v0.3 — **not ground truth** |
 | [`GUIDES/PROBLEMS_METRICS_AND_EXPERIMENTS.md`](PROBLEMS_METRICS_AND_EXPERIMENTS.md) | Both | Metric glossary + experiment problem history |

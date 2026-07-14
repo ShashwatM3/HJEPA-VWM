@@ -41,6 +41,31 @@ def _configured_whitener(d: int, rows: int = 4096, seed: int = 0):
     return whitener, data
 
 
+def _encoder_spec(d: int):
+    from encoders import EncoderSpec, FeatureLayout
+
+    return EncoderSpec(
+        family="fake",
+        repo_id="offline/whitening",
+        requested_revision="a" * 40,
+        resolved_revision="a" * 40,
+        input_frames=8,
+        input_height=256,
+        input_width=256,
+        feature_dim=d,
+        layout=FeatureLayout(8, 2, 2, "time_y_x", "frame", 1, 1),
+        normalization_id="test",
+        normalization_mean=(0.5, 0.5, 0.5),
+        normalization_std=(0.5, 0.5, 0.5),
+        preprocess_version="test-v1",
+        inference_precision="fp32",
+        frame_microbatch=4,
+        attention_implementation="sdpa",
+        cache_dir="/tmp/cache",
+        parameter_count=0,
+    )
+
+
 def test_whitener_has_no_parameters_and_requires_configure():
     """Buffers only (never optimizable), and use-before-configure fails loudly."""
     models = importlib.import_module("models")
@@ -91,6 +116,9 @@ def test_finalize_training_config_validates_whitening():
         train.finalize_training_config(cfg)
     cfg.train.whiten_eps = 1e-4
     train.finalize_training_config(cfg)
+    cfg.train.whiten_expected_clips = 0
+    with pytest.raises(ValueError, match="whiten_expected_clips"):
+        train.finalize_training_config(cfg)
 
 
 def test_build_whitener_loads_stats_file_and_checks_shape(tmp_path):
@@ -102,26 +130,169 @@ def test_build_whitener_loads_stats_file_and_checks_shape(tmp_path):
     assert train._build_whitener(cfg, device) is None
 
     cfg.train.whiten_features = True
+    cfg.train.whiten_expected_clips = 2
     cfg.train.whiten_stats_path = str(tmp_path / "missing.pt")
+    spec = _encoder_spec(cfg.model.d_e)
+    dataset = {"dataset": "fake", "fingerprint": "d" * 64}
     with pytest.raises(FileNotFoundError, match="whiten_stats.py"):
-        train._build_whitener(cfg, device)
+        train._build_whitener(cfg, device, spec, dataset)
 
     d = cfg.model.d_e
     torch.manual_seed(0)
     data = torch.randn(2048, d) * torch.linspace(0.1, 2.0, d)
     eigvals, eigvecs = torch.linalg.eigh(torch.cov(data.t()))
     stats_path = tmp_path / "stats.pt"
-    torch.save({"mean": data.mean(dim=0), "eigvals": eigvals, "eigvecs": eigvecs}, stats_path)
+    import provenance
+
+    envelope = provenance.build_whitening_envelope(
+        mean=data.mean(dim=0),
+        eigenvalues=eigvals,
+        eigenvectors=eigvecs,
+        encoder_spec=spec,
+        dataset_identity=dataset,
+        split="train",
+        transform_seed=42,
+        clip_count=2,
+        token_row_count=64,
+        eigensolver={
+            "name": "torch.linalg.eigh",
+            "covariance": "biased-mle",
+            "accumulation_dtype": "float64",
+        },
+    )
+    provenance.atomic_torch_save(envelope, stats_path)
     cfg.train.whiten_stats_path = str(stats_path)
-    whitener = train._build_whitener(cfg, device)
+    whitener = train._build_whitener(cfg, device, spec, dataset)
     assert bool(whitener.initialized)
 
-    torch.save(
-        {"mean": torch.zeros(d + 1), "eigvals": torch.ones(d + 1), "eigvecs": torch.eye(d + 1)},
-        stats_path,
+    wrong_spec = _encoder_spec(d + 1)
+    with pytest.raises(ValueError, match="feature fingerprint"):
+        train._build_whitener(cfg, device, wrong_spec, dataset)
+
+
+def test_resume_prefers_and_verifies_checkpoint_whitener_over_external_stats(tmp_path):
+    """Resume preserves the trained coordinate system even during dataset transfer."""
+    import provenance
+    import train
+    from models import FeatureWhitener, build_phase1_modules
+
+    cfg = _small_cfg()
+    cfg.train.whiten_features = True
+    cfg.train.whiten_expected_clips = 2
+    spec = _encoder_spec(cfg.model.d_e)
+    dataset = {"dataset": "fake", "fingerprint": "d" * 64}
+    external_path = tmp_path / "external.pt"
+    external = provenance.build_whitening_envelope(
+        mean=torch.zeros(spec.feature_dim),
+        eigenvalues=torch.ones(spec.feature_dim),
+        eigenvectors=torch.eye(spec.feature_dim),
+        encoder_spec=spec,
+        dataset_identity=dataset,
+        split="train",
+        transform_seed=cfg.seed,
+        clip_count=2,
+        token_row_count=2 * spec.layout.n_tokens,
+        eigensolver=provenance.WHITENING_EIGENSOLVER,
     )
-    with pytest.raises(ValueError, match="d_e"):
-        train._build_whitener(cfg, device)
+    provenance.atomic_torch_save(external, external_path)
+    cfg.train.whiten_stats_path = str(external_path)
+
+    source_whitener = FeatureWhitener(spec.feature_dim)
+    source_whitener.configure(
+        torch.ones(spec.feature_dim),
+        torch.ones(spec.feature_dim),
+        torch.eye(spec.feature_dim),
+        cfg.train.whiten_eps,
+    )
+    modules = build_phase1_modules(cfg, load_encoder=False, encoder_spec=spec)
+    optimizer = train.make_optimizer(modules[1], modules[3], modules[4], cfg)
+    checkpoint_path = tmp_path / "resume.pt"
+    train.save_checkpoint(
+        checkpoint_path,
+        1,
+        modules,
+        optimizer,
+        cfg,
+        whitener=source_whitener,
+    )
+
+    rebuilt = train._build_whitener(
+        cfg,
+        torch.device("cpu"),
+        spec,
+        dataset,
+        checkpoint_path=checkpoint_path,
+    )
+    assert torch.equal(rebuilt.mean, source_whitener.mean)
+    assert not torch.equal(rebuilt.mean, external["tensors"]["mean"])
+
+    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    checkpoint["feature_whitener"]["mean"][0] = 9.0
+    torch.save(checkpoint, checkpoint_path)
+    with pytest.raises(RuntimeError, match="feature_whitener identity"):
+        train._build_whitener(
+            cfg,
+            torch.device("cpu"),
+            spec,
+            dataset,
+            checkpoint_path=checkpoint_path,
+        )
+
+
+def test_stats_factory_path_is_context_only_and_counts_clips_and_token_rows():
+    """The offline fit consumes raw context batches and records both sampling counts."""
+    import whiten_stats
+    from data import ClipBatch
+    from encoders import EncoderSpec, FeatureLayout
+
+    spec = EncoderSpec(
+        family="fake",
+        repo_id="offline/stats",
+        requested_revision="b" * 40,
+        resolved_revision="b" * 40,
+        input_frames=8,
+        input_height=256,
+        input_width=256,
+        feature_dim=2,
+        layout=FeatureLayout(8, 1, 1, "time_y_x", "frame", 1, 1),
+        normalization_id="test",
+        normalization_mean=(0.5, 0.5, 0.5),
+        normalization_std=(0.5, 0.5, 0.5),
+        preprocess_version="test-v1",
+        inference_precision="fp32",
+        frame_microbatch=2,
+        attention_implementation="sdpa",
+        cache_dir="/tmp/cache",
+        parameter_count=0,
+    )
+
+    class FakeEncoder(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.spec = spec
+
+        def forward(self, clips):
+            assert clips.min() >= 0 and clips.max() <= 1
+            base = clips.mean(dim=(2, 3, 4))
+            return torch.stack((base, base.square()), dim=-1)
+
+    loader = [
+        ClipBatch(torch.rand(2, 8, 3, 2, 2), None, ("a", "b")),
+        ClipBatch(torch.rand(2, 8, 3, 2, 2), None, ("c", "d")),
+    ]
+    cfg = _small_cfg()
+    dataset = {"dataset": "fake", "fingerprint": "d" * 64}
+    envelope = whiten_stats.compute_whitening_stats(
+        cfg,
+        "train",
+        3,
+        torch.device("cpu"),
+        _encoder=FakeEncoder(),
+        _loader=loader,
+        _dataset_identity=dataset,
+    )
+    assert envelope["metadata"]["clip_count"] == 3
+    assert envelope["metadata"]["token_row_count"] == 24
 
 
 class _IdentityEncoder(torch.nn.Module):

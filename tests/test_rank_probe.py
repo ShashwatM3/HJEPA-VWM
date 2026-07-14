@@ -71,6 +71,50 @@ def test_rank_report_returns_json_ready_views_and_ceilings():
     assert math.isfinite(report["e_cross_video_rank"])
 
 
+def test_rank_report_preserves_pre_concatenation_frame_statistics():
+    probe = _probe()
+    from encoders import FeatureLayout
+
+    layout = FeatureLayout(2, 2, 1, "time_y_x", "frame", 1, 1)
+    generator = torch.Generator().manual_seed(3)
+    video_tokens = [torch.randn(4, 3, generator=generator) for _ in range(5)]
+
+    report = probe.rank_report(video_tokens, layout=layout)
+    stacked = torch.stack(video_tokens).reshape(5, 2, 2, 3)
+    expected_norms = stacked.norm(dim=-1).mean(dim=(0, 2))
+
+    assert report["detailed_temporal_unit"] == "frame"
+    assert report["detailed_frame_count"] == 2
+    assert report["per_frame_token_norm_mean"] == pytest.approx(expected_norms.tolist())
+    assert len(report["per_frame_token_norm_std"]) == 2
+    assert len(report["per_frame_effective_rank"]) == 2
+    assert len(report["per_frame_effective_rank_fraction"]) == 2
+    assert report["per_frame_effective_rank_mean"] == pytest.approx(
+        sum(report["per_frame_effective_rank"]) / 2
+    )
+
+
+def test_rank_report_rejects_layout_token_mismatch():
+    probe = _probe()
+    from encoders import FeatureLayout
+
+    layout = FeatureLayout(2, 2, 1, "time_y_x", "frame", 1, 1)
+    with pytest.raises(ValueError, match="layout token count"):
+        probe.rank_report([torch.randn(5, 3)], layout=layout)
+
+
+def test_rank_report_keeps_tubelet_layout_generic_without_frame_claims():
+    probe = _probe()
+    from encoders import FeatureLayout
+
+    layout = FeatureLayout(2, 2, 1, "time_y_x", "tubelet", 2, 2)
+    report = probe.rank_report([torch.randn(4, 3) for _ in range(3)], layout=layout)
+
+    assert report["detailed_temporal_unit"] == "tubelet"
+    assert report["detailed_temporal_count"] == 2
+    assert "per_frame_effective_rank" not in report
+
+
 def test_rank_report_rejects_empty_or_mismatched_inputs():
     probe = _probe()
 
@@ -87,3 +131,13 @@ def test_rank_probe_manifest_default_matches_drift_probe_default_offsets():
     drift_probe = importlib.import_module("drift_probe")
 
     assert probe.DEFAULT_MANIFEST_MAX_OFFSET == max(drift_probe.DEFAULT_OFFSETS)
+
+
+def test_rank_probe_cache_offsets_require_a_manifest_that_covers_them():
+    probe = _probe()
+
+    assert probe.rank_cache_offsets(probe.DEFAULT_MANIFEST_MAX_OFFSET) == list(
+        probe.DEFAULT_OFFSETS
+    )
+    with pytest.raises(ValueError, match="must be at least"):
+        probe.rank_cache_offsets(probe.DEFAULT_MANIFEST_MAX_OFFSET - 1)

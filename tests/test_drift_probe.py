@@ -59,6 +59,14 @@ def test_select_probe_order_is_deterministic_and_seed_sensitive():
     assert probe.select_probe_order(paths, 42) is not paths  # input never mutated in place
 
 
+def test_rank_and_drift_share_one_default_feature_cache_path(tmp_path):
+    """Both offline tools must converge on the same cache without re-encoding."""
+    probe = _probe()
+    tag = "siglip2_vitb16_ssv2_validation_n64_seed42"
+    expected = tmp_path / f"encoder_features_{tag}.pt"
+    assert probe.default_feature_cache_path(tmp_path, tag) == expected
+
+
 def test_drift_matrix_recovers_known_cosine_distances():
     probe = _probe()
     videos = [{"path": "a.webm", "anchor_end": 14}]
@@ -165,3 +173,50 @@ def test_latent_drift_through_real_bottleneck_small_geometry():
     # The measurement path is no-grad: no gradient may accumulate on the module.
     assert all(p.grad is None for p in bottleneck.parameters())
     assert not bottleneck.training  # compute_latent_unit_vectors pins eval mode
+
+
+def test_checkpoint_whitener_identity_is_verified_before_drift_use(tmp_path):
+    """Latent drift refuses a self-inconsistent embedded whitening transform."""
+    probe = _probe()
+    import train
+    from config import Config
+    from models import FeatureWhitener, _legacy_encoder_spec, build_phase1_modules
+
+    cfg = Config()
+    cfg.model.h = 64
+    cfg.model.w = 64
+    cfg.model.n_c = 4
+    cfg.model.d_c = 8
+    cfg.model.bottleneck_mixer_dim = 8
+    cfg.model.bottleneck_cross_attn_heads = 2
+    cfg.model.bottleneck_latent_blocks = 1
+    cfg.model.f_c_blocks = 1
+    cfg.model.f_c_heads = 2
+    cfg.model.decoder_dim = 8
+    cfg.model.decoder_blocks = 1
+    cfg.model.decoder_heads = 2
+    cfg.train.whiten_features = True
+    built = build_phase1_modules(cfg, load_encoder=False)
+
+    class SpecOnlyEncoder(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.spec = _legacy_encoder_spec(cfg.model)
+
+    modules = (SpecOnlyEncoder(), *built[1:])
+    optimizer = train.make_optimizer(modules[1], modules[3], modules[4], cfg)
+    whitener = FeatureWhitener(cfg.model.d_e)
+    whitener.configure(
+        torch.zeros(cfg.model.d_e),
+        torch.ones(cfg.model.d_e),
+        torch.eye(cfg.model.d_e),
+        1e-4,
+    )
+    path = tmp_path / "checkpoint.pt"
+    train.save_checkpoint(path, 1, modules, optimizer, cfg, whitener=whitener)
+    checkpoint = torch.load(path, map_location="cpu", weights_only=False)
+    checkpoint["feature_whitener"]["mean"][0] = 7.0
+    torch.save(checkpoint, path)
+
+    with pytest.raises(RuntimeError, match="feature_whitener identity"):
+        probe.load_bottleneck_from_checkpoint(path)

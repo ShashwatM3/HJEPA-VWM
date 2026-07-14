@@ -155,8 +155,8 @@ def test_stage0_ema_transition_rejects_a_missing_representable_update():
         )
 
 
-def test_load_checkpoint_skips_incompatible_optimizer_state(tmp_path):
-    """Old 3-group optimizer checkpoints resume model weights with a fresh optimizer."""
+def test_load_checkpoint_requires_explicit_incompatible_optimizer_reset(tmp_path):
+    """An incompatible legacy optimizer resets only when the caller says so."""
     models = importlib.import_module("models")
     train = importlib.import_module("train")
     cfg = _small_cfg()
@@ -177,7 +177,9 @@ def test_load_checkpoint_skips_incompatible_optimizer_state(tmp_path):
         path,
     )
 
-    assert train.load_checkpoint(path, modules, optimizer) == 123
+    with pytest.raises(RuntimeError, match="reset_optimizer=True"):
+        train.load_checkpoint(path, modules, optimizer)
+    assert train.load_checkpoint(path, modules, optimizer, reset_optimizer=True) == 123
 
 
 def test_load_checkpoint_rejects_learned_query_decoder_state(tmp_path):

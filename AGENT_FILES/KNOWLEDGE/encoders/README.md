@@ -22,7 +22,13 @@ The first pair is intentionally shape-matched: both frame encoders produce an
 present-only reconstruction is a substrate test; a later full-prediction control is needed
 to evaluate the loss of V-JEPA2's tubelet-level temporal modeling.
 
-Implementation status (2026-07-14): Prompt 1C is complete. `encoders.py` provides the
-strict two-layout seam and the pinned V-JEPA2 adapter on `transformers==4.57.6`; the
-DINOv3/SigLIP2 aliases remain deliberately unresolved, and the current training hot path
-still uses the temporary `models.FrozenEncoder` bridge until Prompt 2.
+Implementation status (2026-07-14): the encoder-independent data/model/training,
+determinism/checkpoint, whitening/rank/drift, artifact, and preflight stages are complete.
+`encoders.py` provides pinned real V-JEPA2 and SigLIP 2 adapters on
+`transformers==4.57.6`; SigLIP's vision-only 8x16x16x768 path has passed a real Mac/MPS
+smoke. Dataset identities include container frame counts, exact resume consumes the saved
+sampler position, resource reports include CUDA-event examples/frames/tokens rates, and
+frame encoders receive pre-concatenation frame rank/norm diagnostics. DINO remains the only
+deliberately unresolved alias until its separate offline and gated-real lane pins and
+validates an immutable snapshot. CUDA, real SSv2/EGO4D, stats, resource, and paid-run
+evidence must be produced on the authenticated RunPod using `GUIDE_encoders.md`.

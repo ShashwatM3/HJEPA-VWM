@@ -12,9 +12,9 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-# V-JEPA 2 / ViT-L processor normalization (ImageNet stats). Confirmed against
-# transformers AutoVideoProcessor("facebook/vjepa2-vitl-fpc64-256"): the encoder
-# expects these, NOT [-1, 1]. The VAE's [-1, 1] is a separate Stage-4 concern.
+# Shared ImageNet constants used by adapters whose tested preprocessing requires
+# them (currently V-JEPA2; the unresolved DINO registration reserves the same
+# values). SigLIP owns its separate 0.5/0.5 mapping inside encoders.py.
 ENCODER_IMAGE_MEAN: tuple[float, float, float] = (0.485, 0.456, 0.406)
 ENCODER_IMAGE_STD: tuple[float, float, float] = (0.229, 0.224, 0.225)
 
@@ -40,11 +40,16 @@ class EncoderConfig:
 
 @dataclass
 class ModelConfig:
-    """Locked architecture constants (see AGENT_FILES/AGENTS.md §4, §12)."""
+    """Trainable Phase 1 architecture plus a narrow legacy V-JEPA shape bridge.
 
-    # Frozen encoder (V-JEPA 2 ViT-L/16). Native resolution 256 == our resolution.
-    # The ViT-B/16 (D_e=768) checkpoint has no transformers repo (torch.hub only);
-    # ViT-L via HF is the verified clean path. Verify the repo id at load.
+    Production code resolves all detailed-feature geometry from ``EncoderSpec``.
+    The encoder fields/properties below remain only for historical checkpoint
+    reconstruction and older small-geometry unit tests; they are not consulted
+    when a real encoder is selected.
+    """
+
+    # Deprecated compatibility geometry for historical V-JEPA checkpoints/tests.
+    # New runtime paths must use cfg.encoder plus the factory-resolved EncoderSpec.
     encoder_repo: str = "facebook/vjepa2-vitl-fpc64-256"
     encoder_frozen: bool = True
     encoder_patch: int = 16  # spatial patch (V-JEPA 2 native)
@@ -82,7 +87,7 @@ class ModelConfig:
 
     # Reconstruction decoder D (reconstruction anchor, option 1). A deliberately
     # small fixed-position cross-attention expander: c_t (N_c x D_c) -> e_hat
-    # (N_ctx x D_e). Fixed tubelet position codes tell D where to write; c-derived
+    # (N_e x D_e). Fixed lattice position codes tell D where to write; c-derived
     # values tell it what to write. There is no trainable per-output-token content
     # query table. It exists only to supply an information-richness gradient to B,
     # NOT as a showpiece generator (that is the separate Phase 3 frame generator on
@@ -92,7 +97,7 @@ class ModelConfig:
     decoder_blocks: int = 2
     decoder_heads: int = 8
 
-    # NOTE: no tubelet_dropout (removed in v0.2 — frozen encoder).
+    # NOTE: no detailed-token dropout (removed in v0.2 — frozen encoder).
     # NOTE: no encoder_depth/heads — fixed by the pretrained checkpoint.
 
     @property
@@ -197,7 +202,7 @@ class TrainConfig:
     # Nonzero is the primary knob after Run A showed c_slot_diversity_rank≈1.6/32.
     lambda_slot: float = 0.0
     # Reconstruction anchor (option 1: gradient through B only, NOT through F_c).
-    # Decode c_t back to the frozen detailed features e_t and penalize per-tubelet
+    # Decode c_t back to the frozen detailed features e_t and penalize per-token
     # cosine distance, forcing c_t to stay information-rich without letting D game
     # the feature norm. Default 0.0 -> the decoder is NOT run in the train step
     # (avoids the heavy N_ctx x D_e forward) so the baseline is byte-identical;
@@ -208,7 +213,7 @@ class TrainConfig:
     # scope whether it is warranted.
     lambda_recon: float = 0.0
     # Reconstruction loss formula switch. "cosine" is the current norm-invariant
-    # per-tubelet objective; "relative_mse" restores the legacy MSE / Var(e)
+    # per-token objective; "relative_mse" restores the legacy MSE / Var(e)
     # objective used before the norm-cheating fix.
     recon_loss_mode: str = "cosine"
     # Present-only reconstruction bottleneck test. When True, Stage 1 trains
@@ -221,7 +226,7 @@ class TrainConfig:
     agc_lambda_decoder: float = 0.20  # AGC λ for D (mirrors the bottleneck)
     # Prediction-side reconstruction anchor (option 3, the VITA-style joint objective).
     # Decode the PREDICTED future latent c_hat back to the future detailed features
-    # e_{t+k} and penalize per-tubelet cosine distance, with the gradient flowing
+    # e_{t+k} and penalize per-token cosine distance, with the gradient flowing
     # THROUGH F_c — and into B via the F_c conditioning on c_t (not detached) — so
     # the objective rewards a c that is PREDICTABLE, not merely reconstructable.
     # Runs ALONGSIDE the present anchor (lambda_recon), reusing the same decoder D
@@ -234,7 +239,7 @@ class TrainConfig:
     lambda_recon_pred: float = 0.0
     # Residual reconstruction target (investigation_013, the run-052 fix). When True,
     # the reconstruction anchors train D against the PER-POSITION RESIDUAL e - e_mean
-    # instead of the absolute frozen features e, where e_mean is an EMA per-tubelet-
+    # instead of the absolute frozen features e, where e_mean is an EMA per-lattice-
     # position mean of e_t tracked across training batches (models.FeatureMeanTracker).
     # Run 052 proved the absolute cosine objective is ~85% satisfiable by a video-
     # independent "template" (decode the average feature field), so reconstruction
@@ -260,21 +265,25 @@ class TrainConfig:
     # zero residual" (copy_loss = ‖Δ‖²), so coarse_vs_copy_ratio stays directly comparable
     # to the full-latent runs. Default False -> full-latent prediction, byte-identical.
     predict_residual: bool = False
-    # Fixed offline whitening of the frozen V-JEPA features (investigation_014 /
-    # tmp/changes_bottleneck <2>). The rank probe showed `e` is strongly anisotropic
-    # (pooled entropy rank ~193/1024 with a long low-energy tail), so the bottleneck
+    # Fixed offline whitening of selected frozen features (investigation_014 /
+    # tmp/changes_bottleneck <2>). The original V-JEPA rank probe showed `e` is
+    # strongly anisotropic (pooled entropy rank ~193/1024 with a long low-energy tail), so the bottleneck
     # and decoder otherwise compress dominant-direction energy AND tail noise with the
     # same weighting. When True, every encoder output (context AND future clip) is
     # mapped e_w = (e - mu) @ W with W = U (Lambda + eps I)^{-1/2} U^T computed ONCE
     # offline over the training set (whiten_stats.py) — B, B_EMA, F_c targets, and D
     # all live in whitened space; unwhitening exists only for readouts that need raw
-    # V-JEPA space. NEVER per-batch whitening: mu/U/Lambda are fixed training-set
+    # raw encoder space. NEVER per-batch whitening: mu/U/Lambda are fixed training-set
     # statistics reused for train/val/inference. Default False -> byte-identical
     # baseline (whitener never built).
     whiten_features: bool = False
     # Path to the stats file written by whiten_stats.py ({"mean","eigvals","eigvecs"}).
     # Required (and validated in finalize_training_config) when whiten_features=True.
     whiten_stats_path: str = ""
+    # Exact number of clips that the selected whitening artifact must represent.
+    # This is identity-bearing: a tiny smoke artifact may never satisfy a paid run
+    # simply because its feature dimension and filename happen to match.
+    whiten_expected_clips: int = 12_800
     # Eigenvalue floor added to Lambda before the inverse square root so tiny-variance
     # tail directions do not explode to huge whitened coordinates. Applied at whitener
     # build time, so eps can be swept without recomputing the offline stats.
@@ -297,6 +306,11 @@ class DataConfig:
     dataset: str = "ssv2_tiny"  # CLI override: ssv2 | ssv2_tiny | ego4d | ego4d_tiny
     num_workers: int = 8
     pin_memory: bool = True
+    # Retained acquisition manifests are provenance inputs, not discovery hints.
+    # Keep these explicit so a pod relocation cannot silently bind a different
+    # EGO4D selection or authoritative download tier.
+    ego4d_selection_manifest: str = "/workspace/ego4d_raw/manifests/selection_manifest.json"
+    ego4d_download_manifest: str = "/workspace/ego4d_raw/video_540ss_manifest.csv"
 
     @property
     def full_root(self) -> str:

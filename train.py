@@ -1,7 +1,7 @@
-"""Phase 1 training entry point for HJEPA-VWM (v0.2 — frozen encoder).
+"""Phase 1 training entry point for HJEPA-VWM (v0.2 — pluggable frozen encoder).
 
 Implements Stage 0 synthetic sanity and Stage 1 coarse-dynamics training only:
-frozen V-JEPA 2 encoder + trainable bottleneck + EMA bottleneck + coarse flow F_c,
+frozen dense encoder + trainable bottleneck + EMA bottleneck + coarse flow F_c,
 with a variance floor on c_t. Fine flow, Stages 2-4, VAE, and the frame generator
 are intentionally out of scope.
 """
@@ -12,7 +12,11 @@ import argparse
 import json
 import math
 import random
+import time
+import warnings
+from collections.abc import Callable
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 try:
     import numpy as np
@@ -25,7 +29,7 @@ except ModuleNotFoundError:  # pragma: no cover
     nn = None  # type: ignore[assignment]
 
 from config import Config
-from data import build_dataloader
+from data import ClipBatch, build_dataloader
 from diagnostics import (
     _no_drop,
     apply_trainable_agc,
@@ -50,6 +54,9 @@ from losses import (
     velocity_target,
 )
 from models import build_phase1_modules
+
+if TYPE_CHECKING:
+    from encoders import EncoderSpec
 
 # Module bundle order throughout: (encoder E, bottleneck B, target_bottleneck B_EMA,
 # coarse_flow F_c, decoder D). D is the reconstruction-anchor decoder (option 1);
@@ -267,6 +274,15 @@ def autocast_context(device: torch.device, cfg: Config):
     return nullcontext()
 
 
+def _batch_clips(batch: ClipBatch | tuple[Tensor, Tensor]) -> tuple[Tensor, Tensor | None]:
+    """Normalize legacy tuple and typed raw dataloader batches at the train seam."""
+    if isinstance(batch, ClipBatch):
+        return batch.context, batch.target
+    if isinstance(batch, tuple) and len(batch) == 2:
+        return batch[0], batch[1]
+    raise TypeError("Training batches must be data.ClipBatch or a legacy two-tensor tuple.")
+
+
 def _coarse_forward(
     encoder: nn.Module,
     bottleneck: nn.Module,
@@ -278,11 +294,11 @@ def _coarse_forward(
     """Compute the online `c_t`, the detached target `c_plus`, and both detailed tensors.
 
     Args:
-        encoder: Frozen V-JEPA 2 encoder E.
+        encoder: Selected frozen dense encoder E.
         bottleneck: Trainable bottleneck B.
         target_bottleneck: EMA bottleneck B_EMA.
-        context_clip: (B, 8, 3, 256, 256) encoder-normalized context window.
-        target_clip: (B, 8, 3, 256, 256) encoder-normalized future window.
+        context_clip: (B, 8, 3, 256, 256) raw `[0,1]` context window.
+        target_clip: (B, 8, 3, 256, 256) raw `[0,1]` future window.
         whitener: Optional `models.FeatureWhitener`. When given, BOTH encoder
             outputs are mapped to whitened space here, at the single seam where
             frozen features enter the trainable stack — so `B`, `B_EMA`, the flow
@@ -320,9 +336,9 @@ def _present_forward(
     prediction path, so it should not encode the target clip or construct c_plus.
 
     Args:
-        encoder: Frozen V-JEPA 2 encoder E.
+        encoder: Selected frozen dense encoder E.
         bottleneck: Trainable bottleneck B.
-        context_clip: (B, 8, 3, 256, 256) encoder-normalized context window.
+        context_clip: (B, 8, 3, 256, 256) raw `[0,1]` context window.
         whitener: Optional `models.FeatureWhitener`; same seam as `_coarse_forward`.
     Returns:
         (abstract, detailed): c_t (grad) and frozen e_t (no-grad, whitened when a
@@ -366,6 +382,12 @@ def train_step(
     Returns:
         Scalar metrics for logging.
     """
+    # Every stochastic training draw (flow noise/tau, dropout, model dropout) is
+    # a pure function of seed+step. Diagnostics and backend construction therefore
+    # cannot perturb continuation, and a checkpoint resumes exact future draws.
+    torch.manual_seed(cfg.seed * 1_000_003 + step)
+    if device.type == "cuda":
+        torch.cuda.manual_seed_all(cfg.seed * 1_000_003 + step)
     encoder, bottleneck, target_bottleneck, coarse_flow, decoder = modules
     # Residual reconstruction target (investigation_013): active only when the flag is
     # set AND a reconstruction anchor actually trains (finalize_training_config enforces
@@ -388,8 +410,13 @@ def train_step(
             "build one via train._build_whitener (offline stats from whiten_stats.py)."
         )
     step_whitener = whitener if whiten_active else None
-    context_clip = batch[0].to(device, non_blocking=True)
-    target_clip = None if cfg.train.present_recon_only else batch[1].to(device, non_blocking=True)
+    context_source, target_source = _batch_clips(batch)
+    context_clip = context_source.to(device, non_blocking=True)
+    target_clip = None
+    if not cfg.train.present_recon_only:
+        if target_source is None:
+            raise RuntimeError("Full prediction requires a target clip in the batch.")
+        target_clip = target_source.to(device, non_blocking=True)
     optimizer.zero_grad(set_to_none=True)
     with autocast_context(device, cfg):
         if cfg.train.present_recon_only:
@@ -468,7 +495,7 @@ def train_step(
             sigreg_scale = linear_ramp_scale(step, cfg.train.sigreg_warmup_steps)
             loss = loss + cfg.train.lambda_sigreg * sigreg_scale * sigreg_l
         # Reconstruction anchor (option 1): decode the ONLINE c_t back to e_hat and
-        # penalize per-tubelet cosine distance against the frozen e_t. The gradient
+        # penalize per-token cosine distance against the frozen e_t. The gradient
         # flows into D and B only (abstract is online; detailed is frozen/no-grad;
         # F_c is untouched because we decode c_t, not c_hat). Ramp linearly over
         # recon_warmup_steps to protect the fragile early phase. Default off =>
@@ -495,7 +522,7 @@ def train_step(
             loss = loss + cfg.train.lambda_recon * recon_scale * recon_loss
             recon_loss_val = float(recon_loss.detach().float().item())
         # Reconstruction anchor (option 3): decode the PREDICTED future latent c_hat and
-        # penalize per-tubelet cosine distance against the frozen future features
+        # penalize per-token cosine distance against the frozen future features
         # e_{t+k} (target_detailed). c_hat is the rectified-flow one-step endpoint
         # estimate built from the SAME u_c_hat already computed for flow_loss (no extra
         # F_c forward), so the gradient flows through F_c AND — via the F_c conditioning
@@ -583,6 +610,29 @@ def train_step(
     }
 
 
+def _sampler_position(step: int, train_count: int, batch_size: int) -> dict[str, int]:
+    """Map the next global update to its exact drop-last shuffled-epoch position.
+
+    Args:
+        step: Next global optimizer update.
+        train_count: Number of training clips in the bound dataset inventory.
+        batch_size: Physical training batch size.
+    Returns:
+        Epoch number and number of already-consumed samples in that epoch.
+    """
+    if step < 0:
+        raise ValueError("Sampler step cannot be negative.")
+    if train_count <= 0 or batch_size <= 0:
+        raise ValueError("Sampler train count and batch size must be positive.")
+    batches_per_epoch = train_count // batch_size
+    if batches_per_epoch <= 0:
+        raise ValueError("Training split is smaller than one drop-last physical batch.")
+    return {
+        "epoch": step // batches_per_epoch,
+        "batch_offset": (step % batches_per_epoch) * batch_size,
+    }
+
+
 def save_checkpoint(
     path: Path,
     step: int,
@@ -591,6 +641,10 @@ def save_checkpoint(
     cfg: Config,
     mean_tracker: nn.Module | None = None,
     whitener: nn.Module | None = None,
+    dataset_identity: dict[str, Any] | None = None,
+    trainable_init_hash: str | None = None,
+    wandb_run_id: str | None = None,
+    run_provenance: dict[str, Any] | None = None,
 ) -> None:
     """Save a Phase 1 checkpoint (encoder excluded — reloaded from HF).
 
@@ -607,10 +661,23 @@ def save_checkpoint(
             "feature_whitener" so the checkpoint is self-describing — offline
             evaluators (drift_probe.py) and resumes reproduce the exact whitened
             space the bottleneck was trained in without needing the stats file.
+        dataset_identity: Exact dataset inventory/manifests bound to the run.
+        trainable_init_hash: Initialization fingerprint for the trainable stack.
+        wandb_run_id: Optional W&B continuation identity, never a credential.
+        run_provenance: Fully resolved scientific and runtime provenance.
+    Returns:
+        None.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     _, bottleneck, target_bottleneck, coarse_flow, decoder = modules
+    from provenance import atomic_torch_save, encoder_spec_to_dict, state_dict_hash
+
+    encoder_spec = getattr(modules[0], "spec", None)
     payload = {
+        "schema": "hjepa-phase1-checkpoint-v2",
+        "next_step": step,
+        "completed_updates": step,
+        # Retained only for the narrow reader used by historical checkpoints.
         "global_step": step,
         "bottleneck": bottleneck.state_dict(),
         "target_bottleneck": target_bottleneck.state_dict(),
@@ -618,12 +685,35 @@ def save_checkpoint(
         "decoder": decoder.state_dict(),
         "optimizer": optimizer.state_dict(),
         "config": json.loads(json.dumps(cfg, default=lambda o: getattr(o, "__dict__", str(o)))),
+        "encoder_spec": encoder_spec_to_dict(encoder_spec) if encoder_spec is not None else None,
+        "feature_fingerprint": encoder_spec.fingerprint if encoder_spec is not None else None,
+        "dataset_identity": dataset_identity,
+        "trainable_init_hash": trainable_init_hash,
+        "wandb_run_id": wandb_run_id,
+        "run_provenance": run_provenance,
+        "sampler_state": (
+            _sampler_position(
+                step,
+                dataset_identity["splits"]["train"]["count"],
+                cfg.train.global_batch,
+            )
+            if dataset_identity is not None and "splits" in dataset_identity
+            else None
+        ),
+        "rng_state": {
+            "python": random.getstate(),
+            "numpy": np.random.get_state() if np is not None else None,
+            "torch_cpu": torch.get_rng_state(),
+            "torch_cuda": torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None,
+        },
     }
     if mean_tracker is not None:
         payload["recon_feature_mean"] = mean_tracker.state_dict()
+        payload["recon_feature_mean_identity"] = state_dict_hash(mean_tracker.state_dict())
     if whitener is not None:
         payload["feature_whitener"] = whitener.state_dict()
-    torch.save(payload, path)
+        payload["feature_whitener_identity"] = state_dict_hash(whitener.state_dict())
+    atomic_torch_save(payload, path)
 
 
 def load_checkpoint(
@@ -632,6 +722,14 @@ def load_checkpoint(
     optimizer: torch.optim.Optimizer | None = None,
     mean_tracker: nn.Module | None = None,
     whitener: nn.Module | None = None,
+    *,
+    expected_encoder_spec: EncoderSpec | None = None,
+    expected_dataset_identity: dict[str, Any] | None = None,
+    reset_optimizer: bool = False,
+    allow_legacy: bool = True,
+    allow_dataset_transfer: bool = False,
+    expected_run_provenance: dict[str, Any] | None = None,
+    sampler_state_out: dict[str, int] | None = None,
 ) -> int:
     """Load a Phase 1 checkpoint and return its global step (encoder untouched).
 
@@ -641,9 +739,199 @@ def load_checkpoint(
     Checkpoints saved with whitening carry "feature_whitener"; when a whitener is
     passed, that saved state overrides the stats-file-derived buffers so a resume
     reproduces the exact training-time whitened space.
+
+    Args:
+        path: Checkpoint path written by :func:`save_checkpoint`.
+        modules: Live `(E,B,B_EMA,F_c,D)` module bundle.
+        optimizer: Optional optimizer whose compatible state should be restored.
+        mean_tracker: Optional residual-target feature-mean module.
+        whitener: Optional fixed whitening module to restore exactly.
+        expected_encoder_spec: Exact selected encoder identity.
+        expected_dataset_identity: Exact selected dataset identity.
+        reset_optimizer: Intentionally keep a fresh optimizer state.
+        allow_legacy: Permit the narrow historical V-JEPA checkpoint reader.
+        allow_dataset_transfer: Permit only explicitly scoped dataset differences.
+        expected_run_provenance: Resolved continuation provenance contract.
+        sampler_state_out: Optional mutable mapping populated with the validated
+            saved epoch/offset after a successful exact-dataset load. Dataset
+            transfers and legacy checkpoints intentionally leave it empty.
+    Returns:
+        Next global training step stored by the checkpoint.
     """
-    ckpt = torch.load(path, map_location="cpu")
+    from provenance import (
+        compare_checkpoint_provenance,
+        encoder_spec_from_dict,
+        state_dict_hash,
+    )
+
+    # Checkpoints contain Python/NumPy RNG tuples in addition to tensors. They are
+    # trusted local run artifacts, so opt into the full loader explicitly rather
+    # than relying on PyTorch's version-dependent default.
+    ckpt = torch.load(path, map_location="cpu", weights_only=False)
+    is_current = ckpt.get("schema") == "hjepa-phase1-checkpoint-v2"
+    if not is_current:
+        if not allow_legacy:
+            raise ValueError("Legacy checkpoint requires explicit allow_legacy=True.")
+        warnings.warn(
+            "Loading a legacy V-JEPA checkpoint without strict encoder/dataset identity.",
+            stacklevel=2,
+        )
+    if expected_encoder_spec is None:
+        expected_encoder_spec = getattr(modules[0], "spec", None)
+    validated_sampler_state: dict[str, int] | None = None
+    dataset_transfer_active = False
+    if is_current:
+        serialized = ckpt.get("encoder_spec")
+        if serialized is not None:
+            saved_spec = encoder_spec_from_dict(serialized)
+            if (
+                expected_encoder_spec is not None
+                and saved_spec.fingerprint != expected_encoder_spec.fingerprint
+            ):
+                raise ValueError(
+                    "Checkpoint encoder fingerprint does not match the selected encoder."
+                )
+        elif expected_encoder_spec is not None:
+            raise ValueError("Checkpoint is missing its encoder fingerprint.")
+        saved_dataset = ckpt.get("dataset_identity")
+        dataset_transfer_active = bool(
+            expected_dataset_identity is not None
+            and isinstance(saved_dataset, dict)
+            and saved_dataset.get("fingerprint") != expected_dataset_identity.get("fingerprint")
+        )
+        if expected_dataset_identity is not None and not allow_dataset_transfer:
+            if not isinstance(saved_dataset, dict) or saved_dataset.get(
+                "fingerprint"
+            ) != expected_dataset_identity.get("fingerprint"):
+                raise ValueError("Checkpoint dataset fingerprint does not match this run.")
+        saved_provenance = ckpt.get("run_provenance")
+        if expected_run_provenance is not None:
+            compare_checkpoint_provenance(
+                saved_provenance,
+                expected_run_provenance,
+                allow_dataset_transfer=allow_dataset_transfer,
+            )
+        saved_sampler = ckpt.get("sampler_state")
+        if saved_sampler is not None:
+            if not isinstance(saved_sampler, dict) or set(saved_sampler) != {
+                "epoch",
+                "batch_offset",
+            }:
+                raise RuntimeError("Checkpoint sampler state is malformed.")
+            saved_config = ckpt.get("config")
+            try:
+                saved_train_count = int(saved_dataset["splits"]["train"]["count"])
+                saved_batch_size = int(saved_config["train"]["global_batch"])
+                expected_sampler = _sampler_position(
+                    int(ckpt.get("next_step", ckpt.get("global_step", 0))),
+                    saved_train_count,
+                    saved_batch_size,
+                )
+            except (KeyError, TypeError, ValueError) as exc:
+                raise RuntimeError(
+                    "Checkpoint sampler state cannot be validated against its saved "
+                    "dataset/config contract."
+                ) from exc
+            if saved_sampler != expected_sampler:
+                raise RuntimeError(
+                    "Checkpoint sampler state does not match its saved next step, "
+                    "dataset size, and physical batch."
+                )
+            if not dataset_transfer_active:
+                validated_sampler_state = dict(expected_sampler)
+        elif sampler_state_out is not None:
+            raise RuntimeError(
+                "Current-format checkpoint is missing the sampler state required "
+                "for an exact dataloader resume."
+            )
+
+    def require_state_compatible(
+        label: str,
+        module: nn.Module,
+        saved: dict[str, Tensor],
+    ) -> None:
+        """Reject incompatible module state before mutating any live parameter.
+
+        Args:
+            label: Human-readable checkpoint component name.
+            module: Live destination module.
+            saved: Named tensor state read from the checkpoint.
+        Returns:
+            None. Key or shape differences raise before any load operation.
+        """
+        current = module.state_dict()
+        if set(saved) != set(current):
+            raise RuntimeError(f"Checkpoint {label} state keys do not match this architecture.")
+        bad_shapes = {
+            name: (tuple(saved[name].shape), tuple(current[name].shape))
+            for name in current
+            if saved[name].shape != current[name].shape
+        }
+        if bad_shapes:
+            raise RuntimeError(
+                f"Checkpoint {label} tensor shapes do not match this architecture: {bad_shapes}."
+            )
+
+    # Every compatibility check above happens before the first parameter mutation.
     _, bottleneck, target_bottleneck, coarse_flow, decoder = modules
+    require_state_compatible("bottleneck", bottleneck, ckpt["bottleneck"])
+    require_state_compatible("target_bottleneck", target_bottleneck, ckpt["target_bottleneck"])
+    require_state_compatible("coarse_flow", coarse_flow, ckpt["coarse_flow"])
+    if "decoder" in ckpt:
+        decoder_state = ckpt["decoder"]
+        if "queries" in decoder_state or "fixed_pos" not in decoder_state:
+            raise RuntimeError(
+                "Checkpoint uses the old learned-query reconstruction decoder. "
+                "Start a fresh run, or load a checkpoint without decoder state, when using "
+                "the fixed-position decoder architecture."
+            )
+        require_state_compatible("decoder", decoder, decoder_state)
+    if optimizer is not None and "optimizer" in ckpt and not reset_optimizer:
+        saved_optimizer = ckpt["optimizer"]
+        current_optimizer = optimizer.state_dict()
+        saved_groups = saved_optimizer.get("param_groups", [])
+        current_groups = current_optimizer.get("param_groups", [])
+        if len(current_groups) != len(saved_groups):
+            raise RuntimeError(
+                "Checkpoint optimizer state is incompatible. Pass reset_optimizer=True "
+                "only for an intentional optimizer reset."
+            )
+        parameter_by_saved_id: dict[int, Tensor] = {}
+        for live_group, current_group, saved_group in zip(
+            optimizer.param_groups, current_groups, saved_groups, strict=True
+        ):
+            current_ids = current_group.get("params", [])
+            saved_ids = saved_group.get("params", [])
+            live_parameters = live_group.get("params", [])
+            if len(current_ids) != len(saved_ids) or len(live_parameters) != len(saved_ids):
+                raise RuntimeError(
+                    "Checkpoint optimizer parameter groups are incompatible. Pass "
+                    "reset_optimizer=True only for an intentional optimizer reset."
+                )
+            parameter_by_saved_id.update(zip(saved_ids, live_parameters, strict=True))
+        for saved_id, state in saved_optimizer.get("state", {}).items():
+            parameter = parameter_by_saved_id.get(saved_id)
+            if parameter is None or not isinstance(state, dict):
+                raise RuntimeError("Checkpoint optimizer state references an unknown parameter.")
+            for state_name, value in state.items():
+                if isinstance(value, Tensor) and value.ndim > 0 and value.shape != parameter.shape:
+                    raise RuntimeError(
+                        "Checkpoint optimizer state tensor shape is incompatible: "
+                        f"parameter={saved_id}, state={state_name}, "
+                        f"saved={tuple(value.shape)}, expected={tuple(parameter.shape)}."
+                    )
+    if mean_tracker is not None and "recon_feature_mean" in ckpt:
+        saved_mean = ckpt["recon_feature_mean"]
+        require_state_compatible("recon_feature_mean", mean_tracker, saved_mean)
+        expected_identity = ckpt.get("recon_feature_mean_identity")
+        if expected_identity is not None and state_dict_hash(saved_mean) != expected_identity:
+            raise RuntimeError("Checkpoint recon_feature_mean identity is invalid.")
+    if whitener is not None and "feature_whitener" in ckpt:
+        saved_whitener = ckpt["feature_whitener"]
+        require_state_compatible("feature_whitener", whitener, saved_whitener)
+        expected_identity = ckpt.get("feature_whitener_identity")
+        if expected_identity is not None and state_dict_hash(saved_whitener) != expected_identity:
+            raise RuntimeError("Checkpoint feature_whitener identity is invalid.")
     bottleneck.load_state_dict(ckpt["bottleneck"])
     target_bottleneck.load_state_dict(ckpt["target_bottleneck"])
     coarse_flow.load_state_dict(ckpt["coarse_flow"])
@@ -653,26 +941,32 @@ def load_checkpoint(
     # those stored a trainable per-output-token content table (`queries`), while the
     # fixed-position decoder must start from a non-trainable `fixed_pos` buffer.
     if "decoder" in ckpt:
-        decoder_state = ckpt["decoder"]
-        if "queries" in decoder_state or "fixed_pos" not in decoder_state:
-            raise RuntimeError(
-                "Checkpoint uses the old learned-query reconstruction decoder. "
-                "Start a fresh run, or load a checkpoint without decoder state, when using "
-                "the fixed-position decoder architecture."
-            )
         decoder.load_state_dict(decoder_state)
     if mean_tracker is not None and "recon_feature_mean" in ckpt:
         mean_tracker.load_state_dict(ckpt["recon_feature_mean"])
     if whitener is not None and "feature_whitener" in ckpt:
         whitener.load_state_dict(ckpt["feature_whitener"])
-    if optimizer is not None and "optimizer" in ckpt:
+    if optimizer is not None and "optimizer" in ckpt and not reset_optimizer:
         try:
             optimizer.load_state_dict(ckpt["optimizer"])
         except ValueError as exc:
-            # Optimizer group count changed when Issue 9 split decay/no-decay groups.
-            # Keep the model resume usable and continue with a fresh optimizer state.
-            print(f"WARN: skipped incompatible optimizer state from {path}: {exc}")
-    return int(ckpt.get("global_step", 0))
+            raise RuntimeError(
+                "Checkpoint optimizer state is incompatible. Pass reset_optimizer=True "
+                "only for an intentional optimizer reset."
+            ) from exc
+    rng_state = ckpt.get("rng_state")
+    if isinstance(rng_state, dict):
+        random.setstate(rng_state["python"])
+        if np is not None and rng_state.get("numpy") is not None:
+            np.random.set_state(rng_state["numpy"])
+        torch.set_rng_state(rng_state["torch_cpu"])
+        if torch.cuda.is_available() and rng_state.get("torch_cuda") is not None:
+            torch.cuda.set_rng_state_all(rng_state["torch_cuda"])
+    if sampler_state_out is not None:
+        sampler_state_out.clear()
+        if validated_sampler_state is not None:
+            sampler_state_out.update(validated_sampler_state)
+    return int(ckpt.get("next_step", ckpt.get("global_step", 0)))
 
 
 def _build_and_init(cfg: Config, device: torch.device, load_encoder: bool = True):
@@ -685,25 +979,52 @@ def _build_and_init(cfg: Config, device: torch.device, load_encoder: bool = True
     Returns:
         Module bundle `(encoder, bottleneck, target_bottleneck, coarse_flow)`.
     """
-    encoder, bottleneck, target_bottleneck, coarse_flow, decoder = build_phase1_modules(
-        cfg, load_encoder=load_encoder
-    )
+    encoder = None
+    encoder_spec = None
+    if load_encoder:
+        from encoders import build_frozen_encoder
+
+        encoder = build_frozen_encoder(cfg.encoder).to(device)
+        encoder_spec = encoder.spec
+    # Loading a backend may consume global RNG internally. Downstream initialization
+    # is isolated so shape-matched encoder arms start from byte-identical trainable state.
+    devices = [device.index or 0] if device.type == "cuda" else []
+    with torch.random.fork_rng(devices=devices):
+        torch.manual_seed(cfg.seed + 1_000)
+        if device.type == "cuda":
+            torch.cuda.manual_seed_all(cfg.seed + 1_000)
+        _, bottleneck, target_bottleneck, coarse_flow, decoder = build_phase1_modules(
+            cfg, load_encoder=False, encoder_spec=encoder_spec
+        )
     bottleneck = bottleneck.to(device)
     target_bottleneck = target_bottleneck.to(device)
     coarse_flow = coarse_flow.to(device)
     decoder = decoder.to(device)
-    if encoder is not None:
-        encoder = encoder.to(device)
     target_bottleneck.copy_weights_from(bottleneck)
     return encoder, bottleneck, target_bottleneck, coarse_flow, decoder
 
 
-def _build_whitener(cfg: Config, device: torch.device) -> nn.Module | None:
+def _build_whitener(
+    cfg: Config,
+    device: torch.device,
+    encoder_spec: EncoderSpec | None = None,
+    dataset_identity: dict[str, Any] | None = None,
+    checkpoint_path: str | Path | None = None,
+) -> nn.Module | None:
     """Build the fixed-stats feature whitener, or None when whitening is off.
 
     Loads the offline training-set statistics written by `whiten_stats.py` and
     applies the config eigenvalue floor. Returns None on the default path so the
     baseline stays byte-identical (no module built, no checkpoint key written).
+
+    Args:
+        cfg: Finalized runtime configuration with the expected stats contract.
+        device: Destination device for the fixed whitening buffers.
+        encoder_spec: Exact encoder feature identity and geometry.
+        dataset_identity: Exact dataset inventory/manifests identity.
+        checkpoint_path: Optional resume checkpoint containing saved whitener state.
+    Returns:
+        Configured fixed FeatureWhitener, or ``None`` when whitening is disabled.
 
     Raises:
         FileNotFoundError: `cfg.train.whiten_stats_path` does not exist.
@@ -712,40 +1033,79 @@ def _build_whitener(cfg: Config, device: torch.device) -> nn.Module | None:
     if not cfg.train.whiten_features:
         return None
     from models import FeatureWhitener
+    from provenance import (
+        WHITENING_EIGENSOLVER,
+        load_whitening_envelope,
+        state_dict_hash,
+    )
+
+    if encoder_spec is None:
+        raise ValueError("Whitening requires the resolved EncoderSpec, not ModelConfig dimensions.")
 
     stats_path = Path(cfg.train.whiten_stats_path)
+    if checkpoint_path is not None:
+        checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+        embedded = checkpoint.get("feature_whitener")
+        if embedded is None:
+            raise RuntimeError("Whitened resume checkpoint has no embedded feature_whitener state.")
+        expected_identity = checkpoint.get("feature_whitener_identity")
+        if expected_identity is None or state_dict_hash(embedded) != expected_identity:
+            raise RuntimeError("Resume checkpoint feature_whitener identity is missing or invalid.")
+        whitener = FeatureWhitener(encoder_spec.feature_dim)
+        whitener.load_state_dict(embedded)
+        return whitener.to(device)
     if not stats_path.is_file():
         raise FileNotFoundError(
             f"whiten_features is on but the stats file {stats_path} does not exist; "
             "run `python whiten_stats.py --data <dataset>` first and pass its output "
             "via --whiten-stats-path."
         )
-    stats = torch.load(stats_path, map_location="cpu")
-    for key in ("mean", "eigvals", "eigvecs"):
-        if key not in stats:
-            raise ValueError(f"Whitening stats file {stats_path} is missing '{key}'.")
-    if stats["mean"].shape[0] != cfg.model.d_e:
-        raise ValueError(
-            f"Whitening stats in {stats_path} are for d_e={stats['mean'].shape[0]}, "
-            f"but the model uses d_e={cfg.model.d_e}."
-        )
-    whitener = FeatureWhitener(cfg.model.d_e)
-    whitener.configure(stats["mean"], stats["eigvals"], stats["eigvecs"], cfg.train.whiten_eps)
+    envelope = load_whitening_envelope(
+        stats_path,
+        expected_encoder_spec=encoder_spec,
+        expected_dataset_identity=dataset_identity,
+        expected_transform_seed=cfg.seed,
+        expected_clip_count=cfg.train.whiten_expected_clips,
+        expected_eigensolver=WHITENING_EIGENSOLVER,
+    )
+    tensors = envelope["tensors"]
+    whitener = FeatureWhitener(encoder_spec.feature_dim)
+    whitener.configure(
+        tensors["mean"],
+        tensors["eigenvalues"],
+        tensors["eigenvectors"],
+        cfg.train.whiten_eps,
+    )
     return whitener.to(device)
 
 
-def _build_mean_tracker(cfg: Config, device: torch.device) -> nn.Module:
+def _build_mean_tracker(
+    cfg: Config,
+    device: torch.device,
+    encoder_spec: EncoderSpec,
+) -> nn.Module:
     """Construct the per-position feature-mean tracker on the training device.
 
     Always built (4 MB of fp32 buffers) so checkpoints and call signatures have one
     shape; it is only UPDATED and USED when `cfg.train.recon_residual_target` is on,
     which keeps the default path byte-identical to the pre-tracker baseline.
+
+    Args:
+        cfg: Runtime configuration containing the mean-tracker momentum.
+        device: Destination device for the tracker buffers.
+        encoder_spec: Resolved detailed-token geometry.
+    Returns:
+        Uninitialized parameter-free FeatureMeanTracker.
     """
     from models import FeatureMeanTracker
 
-    return FeatureMeanTracker(cfg.model.n_ctx, cfg.model.d_e, cfg.train.recon_mean_momentum).to(
-        device
-    )
+    if encoder_spec is None:
+        raise ValueError("FeatureMeanTracker requires the resolved EncoderSpec.")
+    return FeatureMeanTracker(
+        encoder_spec.layout.n_tokens,
+        encoder_spec.feature_dim,
+        cfg.train.recon_mean_momentum,
+    ).to(device)
 
 
 def run_stage0(cfg: Config) -> None:
@@ -757,11 +1117,30 @@ def run_stage0(cfg: Config) -> None:
     encoder, bottleneck, target_bottleneck, coarse_flow, decoder = modules
     assert sum(p.numel() for p in encoder.parameters() if p.requires_grad) == 0, "E not frozen"
     optimizer = make_optimizer(bottleneck, coarse_flow, decoder, cfg)
-    mean_tracker = _build_mean_tracker(cfg, device)
-    whitener = _build_whitener(cfg, device)
+    mean_tracker = _build_mean_tracker(cfg, device, encoder.spec)
+    dataset_identity = None
+    if cfg.train.whiten_features:
+        from provenance import build_dataset_identity
+
+        dataset_identity = build_dataset_identity(cfg, require_complete=cfg.data.dataset == "ego4d")
+    whitener = _build_whitener(cfg, device, encoder.spec, dataset_identity)
     batch = (
-        torch.randn(2, cfg.model.t_ctx, 3, cfg.model.h, cfg.model.w, device=device),
-        torch.randn(2, cfg.model.t_ctx, 3, cfg.model.h, cfg.model.w, device=device),
+        torch.rand(
+            2,
+            cfg.encoder.input_frames,
+            3,
+            cfg.encoder.input_height,
+            cfg.encoder.input_width,
+            device=device,
+        ),
+        torch.rand(
+            2,
+            cfg.encoder.input_frames,
+            3,
+            cfg.encoder.input_height,
+            cfg.encoder.input_width,
+            device=device,
+        ),
     )
     enc_before = next(encoder.parameters()).detach().clone()
     # Snapshot every target parameter so Stage 0 can replay the exact EMA lerp.
@@ -785,7 +1164,7 @@ def run_stage0(cfg: Config) -> None:
     print(f"Stage 0 sanity passed: {metrics}")
 
 
-def run_diagnostics(
+def _run_diagnostics_impl(
     batch: tuple[Tensor, Tensor],
     modules: tuple[nn.Module, nn.Module, nn.Module, nn.Module, nn.Module],
     cfg: Config,
@@ -819,7 +1198,13 @@ def run_diagnostics(
             "a bottleneck trained in whitened space."
         )
     diag_whitener = whitener if whiten_active else None
-    context_clip = batch[0].to(device, non_blocking=True)
+    context_source, target_source = _batch_clips(batch)
+    context_clip = context_source.to(device, non_blocking=True)
+    if context_clip.shape[0] <= 1:
+        raise RuntimeError(
+            "Diagnostics require validation batch size > 1 so shuffled-c pairs "
+            "different videos instead of becoming an identity operation."
+        )
     if cfg.train.present_recon_only:
         with torch.no_grad():
             abstract, detailed = _present_forward(
@@ -859,7 +1244,9 @@ def run_diagnostics(
         metrics["prediction_active"] = 0.0
         metrics.update(attention_entropy(bottleneck, detailed))
         return metrics
-    target_clip = batch[1].to(device, non_blocking=True)
+    if target_source is None:
+        raise RuntimeError("Full diagnostics require a target clip in the batch.")
+    target_clip = target_source.to(device, non_blocking=True)
     with torch.no_grad():
         abstract, target_abstract, detailed, target_detailed = _coarse_forward(
             encoder,
@@ -924,6 +1311,30 @@ def run_diagnostics(
     # Reuse the detailed tensor from `_coarse_forward` (no second encoder forward).
     metrics.update(attention_entropy(bottleneck, detailed))
     return metrics
+
+
+def run_diagnostics(
+    batch: tuple[Tensor, Tensor] | ClipBatch,
+    modules: tuple[nn.Module, nn.Module, nn.Module, nn.Module, nn.Module],
+    cfg: Config,
+    device: torch.device,
+    mean_tracker: nn.Module | None = None,
+    whitener: nn.Module | None = None,
+) -> dict[str, float]:
+    """Run diagnostics in a forked RNG stream and restore training RNG exactly."""
+    devices = [device.index or 0] if device.type == "cuda" else []
+    with torch.random.fork_rng(devices=devices):
+        torch.manual_seed(cfg.seed * 1_000_003 + 900_001)
+        if device.type == "cuda":
+            torch.cuda.manual_seed_all(cfg.seed * 1_000_003 + 900_001)
+        return _run_diagnostics_impl(
+            batch,
+            modules,
+            cfg,
+            device,
+            mean_tracker=mean_tracker,
+            whitener=whitener,
+        )
 
 
 def reconstruction_readouts(
@@ -1012,21 +1423,356 @@ def reconstruction_readouts(
         }
 
 
-def run_training(cfg: Config, steps: int, resume: str | None = None) -> None:
-    """Run Stage 1 training on SSv2 or SSv2-tiny."""
-    _require_torch()
+def _prepare_run(
+    cfg: Config,
+    device: torch.device,
+    resume: str | None = None,
+    tracking_identity: dict[str, Any] | None = None,
+):
+    """Resolve all identities before training state is loaded or mutated.
+
+    This ordering guarantees encoder/data/stats/provenance validation occurs before a
+    checkpoint can alter the live trainable stack.
+
+    Args:
+        cfg: Fully finalized run configuration.
+        device: Training device.
+        resume: Optional checkpoint path supplying compatible auxiliary state.
+        tracking_identity: Credential-free W&B identity fields.
+    Returns:
+        Modules, optimizer, auxiliary state, dataset identity, initialization hash,
+        and resolved run provenance.
+    """
+    from provenance import (
+        WHITENING_EIGENSOLVER,
+        build_dataset_identity,
+        build_run_provenance,
+        load_whitening_envelope,
+        trainable_state_hash,
+    )
+
+    dataset_identity = build_dataset_identity(cfg, require_complete=cfg.data.dataset == "ego4d")
+    modules = _build_and_init(cfg, device, load_encoder=True)
+    encoder, bottleneck, _, coarse_flow, decoder = modules
+    init_hash = trainable_state_hash((bottleneck, coarse_flow, decoder))
+    optimizer = make_optimizer(bottleneck, coarse_flow, decoder, cfg)
+    mean_tracker = _build_mean_tracker(cfg, device, encoder.spec)
+    whitener = _build_whitener(
+        cfg,
+        device,
+        encoder.spec,
+        dataset_identity,
+        checkpoint_path=resume,
+    )
+    whitening_fingerprint = None
+    stats_path = Path(cfg.train.whiten_stats_path)
+    if cfg.train.whiten_features and resume:
+        saved = torch.load(resume, map_location="cpu", weights_only=False)
+        whitening_fingerprint = (saved.get("run_provenance") or {}).get(
+            "whitening_payload_fingerprint"
+        )
+        if not whitening_fingerprint:
+            raise RuntimeError(
+                "Whitened resume checkpoint is missing its whitening payload fingerprint."
+            )
+    elif cfg.train.whiten_features and stats_path.is_file():
+        whitening_fingerprint = load_whitening_envelope(
+            stats_path,
+            expected_encoder_spec=encoder.spec,
+            expected_dataset_identity=dataset_identity,
+            expected_transform_seed=cfg.seed,
+            expected_clip_count=cfg.train.whiten_expected_clips,
+            expected_eigensolver=WHITENING_EIGENSOLVER,
+        )["payload_fingerprint"]
+    provenance = build_run_provenance(
+        cfg,
+        encoder_spec=encoder.spec,
+        dataset_identity=dataset_identity,
+        trainable_init=init_hash,
+        whitening_payload_fingerprint=whitening_fingerprint,
+        tracking_identity=tracking_identity,
+    )
+    return modules, optimizer, mean_tracker, whitener, dataset_identity, init_hash, provenance
+
+
+def materialize_preflight(
+    cfg: Config,
+    output: str | Path,
+    tracking_identity: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build the exact no-step run and atomically write its resolved provenance.
+
+    No optimizer step is taken; this validates immutable identities before paid work.
+
+    Args:
+        cfg: Fully finalized run configuration.
+        output: Destination provenance JSON path.
+        tracking_identity: Credential-free W&B identity fields.
+    Returns:
+        Resolved run-provenance envelope.
+    """
+    from provenance import atomic_json_save
+
     set_seed(cfg.seed)
     device = device_for_training()
-    modules = _build_and_init(cfg, device, load_encoder=True)
-    _, bottleneck, target_bottleneck, coarse_flow, decoder = modules
-    optimizer = make_optimizer(bottleneck, coarse_flow, decoder, cfg)
-    mean_tracker = _build_mean_tracker(cfg, device)
-    whitener = _build_whitener(cfg, device)
+    *_, provenance = _prepare_run(cfg, device, tracking_identity=tracking_identity)
+    atomic_json_save(provenance, output)
+    print(f"Wrote resolved run provenance: {output}")
+    return provenance
+
+
+def _throughput_rates(
+    seconds: float,
+    batch_size: int,
+    input_frames: int,
+    detailed_tokens_per_clip: int,
+    encoder_passes: int,
+) -> dict[str, float]:
+    """Convert one measured operation into comparable work-normalized rates.
+
+    Args:
+        seconds: Synchronized elapsed device time.
+        batch_size: Number of distinct video examples in the operation.
+        input_frames: Frames in each raw clip.
+        detailed_tokens_per_clip: Dense encoder tokens produced per clip.
+        encoder_passes: Encoder clip forwards per example (one in present-only,
+            two in full present/future mode).
+    Returns:
+        Examples, input frames, and dense output tokens processed per second.
+    """
+    if not math.isfinite(seconds) or seconds <= 0.0:
+        raise ValueError("Throughput seconds must be finite and positive.")
+    counts = (batch_size, input_frames, detailed_tokens_per_clip, encoder_passes)
+    if any(not isinstance(value, int) or value <= 0 for value in counts):
+        raise ValueError("Throughput work counts must be positive integers.")
+    return {
+        "examples_per_second": batch_size / seconds,
+        "frames_per_second": batch_size * input_frames * encoder_passes / seconds,
+        "detailed_tokens_per_second": (
+            batch_size * detailed_tokens_per_clip * encoder_passes / seconds
+        ),
+    }
+
+
+def _timed_operation(device: torch.device, operation: Callable[[], Any]) -> tuple[Any, float]:
+    """Run one operation with synchronized CUDA-event timing when available.
+
+    CUDA events measure device execution without adding a synchronization to the
+    real training loop; CPU/MPS preflights use a synchronized wall-clock fallback.
+    This helper is intentionally confined to explicit resource preflight.
+
+    Args:
+        device: Device on which the measured operation executes.
+        operation: Zero-argument callable containing only the interval to measure.
+    Returns:
+        Operation result and synchronized elapsed seconds.
+    """
+    if device.type == "cuda":
+        torch.cuda.synchronize(device)
+        start = torch.cuda.Event(enable_timing=True)
+        end = torch.cuda.Event(enable_timing=True)
+        start.record()
+        result = operation()
+        end.record()
+        torch.cuda.synchronize(device)
+        seconds = start.elapsed_time(end) / 1_000.0
+    else:
+        if device.type == "mps" and hasattr(torch, "mps"):
+            torch.mps.synchronize()
+        started = time.perf_counter()
+        result = operation()
+        if device.type == "mps" and hasattr(torch, "mps"):
+            torch.mps.synchronize()
+        seconds = time.perf_counter() - started
+    if seconds <= 0.0:
+        raise RuntimeError("Resource preflight produced a non-positive elapsed time.")
+    return result, seconds
+
+
+def run_resource_preflight(cfg: Config, output: str | Path) -> dict[str, Any]:
+    """Exercise one exact recipe step and diagnostic without W&B/checkpoint research state.
+
+    The report captures throughput and peak memory for selecting one common paired-run
+    batch and frame-microbatch before whitening or paid training.
+
+    Args:
+        cfg: Fully finalized candidate recipe.
+        output: Destination resource-report JSON path.
+    Returns:
+        Provenance envelope extended with resource measurements and metrics.
+    """
+    from provenance import atomic_json_save
+
+    set_seed(cfg.seed)
+    device = device_for_training()
+    if device.type == "cuda":
+        torch.cuda.reset_peak_memory_stats(device)
+    prepared = _prepare_run(cfg, device)
+    modules, optimizer, mean_tracker, whitener, _, _, provenance = prepared
+    encoder = modules[0]
+    train_batch = next(
+        iter(
+            build_dataloader(
+                cfg,
+                "train",
+                batch_size=cfg.train.global_batch,
+                needs_target=not cfg.train.present_recon_only,
+            )
+        )
+    )
+    validation_batch = next(
+        iter(
+            build_dataloader(
+                cfg,
+                "validation",
+                batch_size=min(16, cfg.train.global_batch),
+                needs_target=not cfg.train.present_recon_only,
+            )
+        )
+    )
+    if device.type == "cuda":
+        torch.cuda.synchronize(device)
+        encoder_baseline = torch.cuda.memory_allocated(device)
+        torch.cuda.reset_peak_memory_stats(device)
+    _, encoder_seconds = _timed_operation(
+        device,
+        lambda: encoder(train_batch.context.to(device, non_blocking=True)),
+    )
+    encoder_peak = (
+        torch.cuda.max_memory_allocated(device) - encoder_baseline
+        if device.type == "cuda"
+        else None
+    )
+    if device.type == "cuda":
+        torch.cuda.reset_peak_memory_stats(device)
+    metrics, elapsed = _timed_operation(
+        device,
+        lambda: train_step(
+            train_batch,
+            modules,
+            optimizer,
+            0,
+            cfg,
+            device,
+            mean_tracker=mean_tracker,
+            whitener=whitener,
+        ),
+    )
+    total_peak = torch.cuda.max_memory_allocated(device) if device.type == "cuda" else None
+    # Validation diagnostics are deliberately outside the timed/peak training-step
+    # interval so their extra encoder/decoder forwards cannot contaminate throughput.
+    metrics.update(
+        run_diagnostics(
+            validation_batch,
+            modules,
+            cfg,
+            device,
+            mean_tracker=mean_tracker,
+            whitener=whitener,
+        )
+    )
+    encoder_passes = 1 if cfg.train.present_recon_only else 2
+    encoder_rates = _throughput_rates(
+        encoder_seconds,
+        cfg.train.global_batch,
+        cfg.encoder.input_frames,
+        encoder.spec.layout.n_tokens,
+        1,
+    )
+    training_rates = _throughput_rates(
+        elapsed,
+        cfg.train.global_batch,
+        cfg.encoder.input_frames,
+        encoder.spec.layout.n_tokens,
+        encoder_passes,
+    )
+    report = {
+        **provenance,
+        "resource_preflight": {
+            "device": str(device),
+            "timing_method": (
+                "cuda_events" if device.type == "cuda" else "synchronized_wall_clock"
+            ),
+            "batch_size": cfg.train.global_batch,
+            "encoder_peak_memory_bytes": encoder_peak,
+            "total_peak_memory_bytes": total_peak,
+            "encoder_seconds": encoder_seconds,
+            "encoder_throughput": encoder_rates,
+            "step_seconds": elapsed,
+            "encoder_passes_per_example": encoder_passes,
+            "training_step_throughput": training_rates,
+            # Retained for existing report consumers; examples/s is the precise name.
+            "clips_per_second": training_rates["examples_per_second"],
+            "metrics": metrics,
+        },
+    }
+    atomic_json_save(report, output)
+    print(f"Wrote resource preflight: {output}")
+    return report
+
+
+def run_training(
+    cfg: Config,
+    steps: int,
+    resume: str | None = None,
+    *,
+    require_wandb: bool = False,
+    wandb_options: dict[str, Any] | None = None,
+    provenance_out: str | None = None,
+    reset_optimizer: bool = False,
+    allow_dataset_transfer: bool = False,
+    allow_legacy_checkpoint: bool = False,
+) -> None:
+    """Run strict, resumable Stage 1 training on the selected dataset/encoder."""
+    _require_torch()
+    from provenance import atomic_json_save, sha256_file
+
+    set_seed(cfg.seed)
+    device = device_for_training()
+    prepared = _prepare_run(cfg, device, resume, tracking_identity=wandb_options)
+    modules, optimizer, mean_tracker, whitener, dataset_identity, init_hash, provenance = prepared
+    encoder, bottleneck, target_bottleneck, coarse_flow, decoder = modules
+    encoder_spec = encoder.spec
+    restored_sampler_state: dict[str, int] = {}
     start_step = (
-        load_checkpoint(resume, modules, optimizer, mean_tracker=mean_tracker, whitener=whitener)
+        load_checkpoint(
+            resume,
+            modules,
+            optimizer,
+            mean_tracker=mean_tracker,
+            whitener=whitener,
+            expected_encoder_spec=encoder_spec,
+            expected_dataset_identity=dataset_identity,
+            reset_optimizer=reset_optimizer,
+            allow_legacy=allow_legacy_checkpoint,
+            allow_dataset_transfer=allow_dataset_transfer,
+            expected_run_provenance=provenance,
+            sampler_state_out=restored_sampler_state,
+        )
         if resume
         else 0
     )
+    transfer_active = False
+    if resume:
+        resume_checkpoint = torch.load(resume, map_location="cpu", weights_only=False)
+        source_dataset = resume_checkpoint.get("dataset_identity") or {}
+        source_fingerprint = source_dataset.get("fingerprint")
+        destination_fingerprint = dataset_identity.get("fingerprint")
+        transfer_active = source_fingerprint != destination_fingerprint
+        provenance["resume_policy"] = {
+            "checkpoint_sha256": sha256_file(resume),
+            "allow_dataset_transfer": allow_dataset_transfer,
+            "dataset_transfer_active": transfer_active,
+            "source_dataset_fingerprint": source_fingerprint,
+            "destination_dataset_fingerprint": destination_fingerprint,
+            "reset_optimizer": reset_optimizer,
+            "allow_legacy_checkpoint": allow_legacy_checkpoint,
+        }
+        if transfer_active:
+            print(
+                "WARN: explicit dataset transfer active: "
+                f"{source_fingerprint} -> {destination_fingerprint}."
+            )
     # Peak LRs always come from config/CLI — not checkpoint param_group["lr"], which
     # stores the *scheduled* LR at save time and would double-apply cosine decay on resume.
     base_lrs = peak_base_lrs(bottleneck, coarse_flow, decoder, cfg)
@@ -1040,22 +1786,96 @@ def run_training(cfg: Config, steps: int, resume: str | None = None) -> None:
                 "WARN: residual reconstruction target is on but the checkpoint has no "
                 "recon_feature_mean state; the per-position mean re-warms from live batches."
             )
-    train_loader = build_dataloader(cfg, "train")
-    val_loader = build_dataloader(cfg, "validation", batch_size=min(16, cfg.train.global_batch))
+    val_loader = build_dataloader(
+        cfg,
+        "validation",
+        batch_size=min(16, cfg.train.global_batch),
+        needs_target=not cfg.train.present_recon_only,
+    )
     val_batch = next(iter(val_loader))
     checkpoint_dir = Path(cfg.checkpoint_dir)
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    resolved_provenance_path = Path(provenance_out or checkpoint_dir / "run_provenance.json")
+    atomic_json_save(provenance, resolved_provenance_path)
+    options = dict(wandb_options or {})
+    if resume and not options.get("id"):
+        options["id"] = torch.load(resume, map_location="cpu", weights_only=False).get(
+            "wandb_run_id"
+        )
+    if options.get("id"):
+        options["resume"] = "must"
     try:
         import wandb
 
-        wandb.init(
-            project="hjepa-vwm",
-            config=json.loads(json.dumps(cfg, default=lambda o: getattr(o, "__dict__", str(o)))),
+        run = wandb.init(
+            project=options.pop("project", "hjepa-vwm"),
+            entity=options.pop("entity", None),
+            group=options.pop("group", None),
+            name=options.pop("name", None),
+            config=provenance["resolved_config"],
+            **options,
         )
-    except Exception as exc:  # pragma: no cover - W&B optional for smoke.
+        run.config.update({"resolved_provenance": provenance}, allow_val_change=True)
+        artifact = wandb.Artifact(f"{run.id}-provenance", type="run-provenance")
+        artifact.add_file(str(resolved_provenance_path))
+        run.log_artifact(artifact)
+        if require_wandb and cfg.train.whiten_features:
+            if resume:
+                run.summary["whitening_payload_fingerprint"] = provenance[
+                    "whitening_payload_fingerprint"
+                ]
+            else:
+                stats_artifact = wandb.Artifact(f"{run.id}-whitening", type="whitening-stats")
+                stats_artifact.add_file(cfg.train.whiten_stats_path)
+                run.log_artifact(stats_artifact)
+        wandb_run_id = run.id
+    except Exception as exc:  # pragma: no cover - network/auth dependent
+        if require_wandb:
+            raise RuntimeError(f"Required W&B initialization failed: {exc}") from exc
         wandb = None
+        run = None
+        wandb_run_id = None
         print(f"WARN: W&B disabled: {exc}")
+
+    def log_to_wandb(metrics: dict[str, float], current_step: int) -> None:
+        """Apply identical strict/optional failure policy at every logging cadence."""
+        nonlocal wandb, run
+        if wandb is None:
+            return
+        try:
+            wandb.log(metrics, step=current_step)
+        except Exception as exc:  # pragma: no cover - network/auth dependent
+            if require_wandb:
+                raise RuntimeError(f"Required W&B logging failed: {exc}") from exc
+            print(f"WARN: W&B logging disabled: {exc}")
+            wandb = None
+            run = None
+
     step = start_step
+    train_count = dataset_identity["splits"]["train"]["count"]
+    batches_per_epoch = train_count // cfg.train.global_batch
+    if batches_per_epoch <= 0:
+        raise RuntimeError("Training split is smaller than one drop-last physical batch.")
+    first_resume_position = restored_sampler_state if not transfer_active else {}
     while step < steps:
+        if first_resume_position:
+            # The checkpointed position—not a fresh derivation—is the authority for
+            # the first resumed loader. Its exact step/count/batch consistency was
+            # validated before any checkpoint tensor mutated live state.
+            epoch = first_resume_position["epoch"]
+            batch_offset = first_resume_position["batch_offset"]
+            first_resume_position = {}
+        else:
+            position = _sampler_position(step, train_count, cfg.train.global_batch)
+            epoch = position["epoch"]
+            batch_offset = position["batch_offset"]
+        train_loader = build_dataloader(
+            cfg,
+            "train",
+            needs_target=not cfg.train.present_recon_only,
+            epoch=epoch,
+            start_offset=batch_offset,
+        )
         for batch in train_loader:
             if step >= steps:
                 break
@@ -1071,7 +1891,8 @@ def run_training(cfg: Config, steps: int, resume: str | None = None) -> None:
                 whitener=whitener,
             )
             metrics["lr_mult"] = lr_mult
-            if step % cfg.train.diag_every == 0:
+            diagnostic_due = step % cfg.train.diag_every == 0
+            if diagnostic_due:
                 metrics.update(
                     run_diagnostics(
                         val_batch,
@@ -1084,28 +1905,50 @@ def run_training(cfg: Config, steps: int, resume: str | None = None) -> None:
                 )
             if step % cfg.train.log_every == 0:
                 print(f"step={step} {metrics}")
-                if wandb is not None:
-                    wandb.log(metrics, step=step)
-            if step > 0 and step % cfg.train.checkpoint_every == 0:
+                log_to_wandb(metrics, step)
+            elif diagnostic_due:
+                log_to_wandb(metrics, step)
+            next_step = step + 1
+            if next_step % cfg.train.checkpoint_every == 0:
                 save_checkpoint(
-                    checkpoint_dir / f"phase1_step{step}.pt",
-                    step,
+                    checkpoint_dir / f"phase1_step{next_step}.pt",
+                    next_step,
                     modules,
                     optimizer,
                     cfg,
                     mean_tracker=mean_tracker,
                     whitener=whitener,
+                    dataset_identity=dataset_identity,
+                    trainable_init_hash=init_hash,
+                    wandb_run_id=wandb_run_id,
+                    run_provenance=provenance,
                 )
-            step += 1
+            step = next_step
+    final_checkpoint = checkpoint_dir / f"phase1_step{steps}.pt"
     save_checkpoint(
-        checkpoint_dir / f"phase1_step{steps}.pt",
+        final_checkpoint,
         steps,
         modules,
         optimizer,
         cfg,
         mean_tracker=mean_tracker,
         whitener=whitener,
+        dataset_identity=dataset_identity,
+        trainable_init_hash=init_hash,
+        wandb_run_id=wandb_run_id,
+        run_provenance=provenance,
     )
+    checksum = sha256_file(final_checkpoint)
+    if run is not None:
+        try:
+            run.summary["final_checkpoint_path"] = str(final_checkpoint)
+            run.summary["final_checkpoint_sha256"] = checksum
+            run.finish()
+        except Exception as exc:  # pragma: no cover - network/auth dependent
+            if require_wandb:
+                raise RuntimeError(f"Required W&B finalization failed: {exc}") from exc
+            print(f"WARN: W&B finalization failed: {exc}")
+    print(f"Final checkpoint: {final_checkpoint} sha256={checksum}")
 
 
 def parse_args() -> argparse.Namespace:
@@ -1118,6 +1961,40 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--resume", default=None)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--stage0-only", action="store_true")
+    parser.add_argument(
+        "--encoder",
+        choices=("vjepa2_vitl16", "dinov3_vitb16", "siglip2_vitb16"),
+        default="vjepa2_vitl16",
+        help="Stable frozen-encoder alias. DINO remains unavailable until its gated lane lands.",
+    )
+    parser.add_argument("--encoder-revision", default=None)
+    parser.add_argument("--encoder-precision", choices=("fp32", "bf16"), default=None)
+    parser.add_argument("--encoder-frame-microbatch", type=int, default=None)
+    parser.add_argument("--encoder-attention-implementation", default=None)
+    parser.add_argument("--hf-cache-dir", default=None)
+    parser.add_argument("--batch-size", type=int, default=None)
+    parser.add_argument("--lr-decoder", type=float, default=None)
+    parser.add_argument(
+        "--resource-preflight",
+        action="store_true",
+        help="Run one exact forward/backward/optimizer/diagnostic recipe and write provenance.",
+    )
+    parser.add_argument(
+        "--preflight-only",
+        action="store_true",
+        help="Materialize and validate resolved provenance without taking a training step.",
+    )
+    parser.add_argument("--provenance-out", default=None)
+    parser.add_argument("--compare-provenance", nargs=2, metavar=("LEFT", "RIGHT"))
+    parser.add_argument("--require-wandb", action="store_true")
+    parser.add_argument("--wandb-entity", default=None)
+    parser.add_argument("--wandb-project", default="hjepa-vwm")
+    parser.add_argument("--wandb-group", default=None)
+    parser.add_argument("--wandb-name", default=None)
+    parser.add_argument("--wandb-run-id", default=None)
+    parser.add_argument("--reset-optimizer", action="store_true")
+    parser.add_argument("--allow-dataset-transfer", action="store_true")
+    parser.add_argument("--allow-legacy-checkpoint", action="store_true")
     parser.add_argument(
         "--log-every",
         type=int,
@@ -1185,7 +2062,7 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=None,
         help="Reconstruction-anchor weight (option 1: decode c_t -> e_t, grad into "
-        "B only, NOT F_c). Uses per-tubelet cosine distance after unit-normalizing "
+        "B only, NOT F_c). Uses per-token cosine distance after unit-normalizing "
         "e_hat and e. 0 = baseline (decoder runs at diag cadence for "
         "L_recon_present calibration only). Nonzero ramps in over --recon-warmup-steps.",
     )
@@ -1203,7 +2080,7 @@ def parse_args() -> argparse.Namespace:
         "--recon-loss-mode",
         choices=["cosine", "relative_mse"],
         default=None,
-        help="Reconstruction loss formula. cosine = per-tubelet unit-normalized "
+        help="Reconstruction loss formula. cosine = per-token unit-normalized "
         "mean(1 - cos), current default. relative_mse = legacy MSE / Var(e).",
     )
     parser.add_argument(
@@ -1211,7 +2088,7 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="investigation_013 (run-052 fix): reconstruct the per-position residual "
         "e - mean instead of the absolute frozen features, where mean is an EMA "
-        "per-tubelet-position feature mean tracked over training batches. The shared "
+        "per-lattice-position feature mean tracked over training batches. The shared "
         "template earns zero loss, so all reconstruction pressure must route "
         "video-specific content through c_t. Requires an active recon anchor "
         "(--lambda-recon or --lambda-recon-pred > 0). Watch L_recon_video_gap: near "
@@ -1234,7 +2111,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--whiten-features",
         action="store_true",
-        help="Whiten every frozen V-JEPA feature tensor with FIXED offline training-set "
+        help="Whiten every selected frozen-encoder feature tensor with FIXED offline training-set "
         "statistics before the bottleneck / reconstruction targets "
         "(cfg.train.whiten_features, tmp/changes_bottleneck <2> / investigation_014). "
         "Requires --whiten-stats-path (output of whiten_stats.py). B, B_EMA, F_c "
@@ -1255,6 +2132,13 @@ def parse_args() -> argparse.Namespace:
         help="Eigenvalue floor added before the inverse square root "
         "(cfg.train.whiten_eps, default 1e-4). Larger = tail directions amplified "
         "less; sweepable without recomputing the offline stats.",
+    )
+    parser.add_argument(
+        "--whiten-expected-clips",
+        type=int,
+        default=None,
+        help="Exact --max-clips budget required from the whitening artifact "
+        "(cfg.train.whiten_expected_clips, default 12800).",
     )
     parser.add_argument(
         "--predict-residual",
@@ -1358,6 +2242,17 @@ def parse_args() -> argparse.Namespace:
 
 def finalize_training_config(cfg: Config) -> None:
     """Validate and normalize experiment-mode switches before modules are built."""
+    if cfg.train.global_batch <= 0:
+        raise ValueError("--batch-size must be positive")
+    if cfg.train.global_batch <= 1:
+        raise ValueError(
+            "--batch-size must be greater than 1 because the shuffled-c honesty "
+            "diagnostic requires another video."
+        )
+    if cfg.encoder.frame_microbatch <= 0:
+        raise ValueError("--encoder-frame-microbatch must be positive")
+    if cfg.train.lr_decoder <= 0.0:
+        raise ValueError("--lr-decoder must be positive")
     if cfg.train.recon_loss_mode not in {"cosine", "relative_mse"}:
         raise ValueError(
             "cfg.train.recon_loss_mode must be 'cosine' or 'relative_mse'; "
@@ -1393,15 +2288,44 @@ def finalize_training_config(cfg: Config) -> None:
             )
         if cfg.train.whiten_eps <= 0.0:
             raise ValueError(f"cfg.train.whiten_eps must be > 0; got {cfg.train.whiten_eps}")
+        if cfg.train.whiten_expected_clips <= 0:
+            raise ValueError(
+                "cfg.train.whiten_expected_clips must be positive; "
+                f"got {cfg.train.whiten_expected_clips}"
+            )
 
 
 def main() -> None:
     """Run the requested Phase 1 command (Stage 0 sanity or Stage 1 training)."""
     args = parse_args()
+    if args.compare_provenance:
+        from provenance import compare_run_provenance
+
+        left_path, right_path = map(Path, args.compare_provenance)
+        compare_run_provenance(
+            json.loads(left_path.read_text(encoding="utf-8")),
+            json.loads(right_path.read_text(encoding="utf-8")),
+        )
+        print(f"Provenance parity passed: {left_path} == {right_path} (common fields)")
+        return
     cfg = Config()
     cfg.data.dataset = args.data
     cfg.seed = args.seed
     cfg.train.max_steps = args.steps
+    cfg.encoder.alias = args.encoder
+    cfg.encoder.revision = args.encoder_revision
+    if args.encoder_precision is not None:
+        cfg.encoder.precision = args.encoder_precision
+    if args.encoder_frame_microbatch is not None:
+        cfg.encoder.frame_microbatch = args.encoder_frame_microbatch
+    if args.encoder_attention_implementation is not None:
+        cfg.encoder.attention_implementation = args.encoder_attention_implementation
+    if args.hf_cache_dir is not None:
+        cfg.hf_cache_dir = args.hf_cache_dir
+    if args.batch_size is not None:
+        cfg.train.global_batch = args.batch_size
+    if args.lr_decoder is not None:
+        cfg.train.lr_decoder = args.lr_decoder
     if args.log_every is not None:
         cfg.train.log_every = args.log_every
     if args.diag_every is not None:
@@ -1438,6 +2362,8 @@ def main() -> None:
         cfg.train.whiten_stats_path = args.whiten_stats_path
     if args.whiten_eps is not None:
         cfg.train.whiten_eps = args.whiten_eps
+    if args.whiten_expected_clips is not None:
+        cfg.train.whiten_expected_clips = args.whiten_expected_clips
     if args.recon_warmup_steps is not None:
         cfg.train.recon_warmup_steps = args.recon_warmup_steps
     if args.lr_bottleneck is not None:
@@ -1466,8 +2392,40 @@ def main() -> None:
     finalize_training_config(cfg)
     if args.stage0_only:
         run_stage0(cfg)
+    elif args.preflight_only:
+        output = args.provenance_out or "logs/preflight/run_provenance.json"
+        materialize_preflight(
+            cfg,
+            output,
+            tracking_identity={
+                "entity": args.wandb_entity,
+                "project": args.wandb_project,
+                "group": args.wandb_group,
+                "name": args.wandb_name,
+                "id": args.wandb_run_id,
+            },
+        )
+    elif args.resource_preflight:
+        output = args.provenance_out or "logs/preflight/resource_preflight.json"
+        run_resource_preflight(cfg, output)
     else:
-        run_training(cfg, args.steps, args.resume)
+        run_training(
+            cfg,
+            args.steps,
+            args.resume,
+            require_wandb=args.require_wandb,
+            wandb_options={
+                "entity": args.wandb_entity,
+                "project": args.wandb_project,
+                "group": args.wandb_group,
+                "name": args.wandb_name,
+                "id": args.wandb_run_id,
+            },
+            provenance_out=args.provenance_out,
+            reset_optimizer=args.reset_optimizer,
+            allow_dataset_transfer=args.allow_dataset_transfer,
+            allow_legacy_checkpoint=args.allow_legacy_checkpoint,
+        )
 
 
 if __name__ == "__main__":

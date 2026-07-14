@@ -32,6 +32,7 @@ __all__ = [
 _IMMUTABLE_REVISION = re.compile(r"[0-9a-f]{40}")
 _FINGERPRINT_SCHEMA = "hje-vwm-frozen-feature-v1"
 _VJEPA2_VITL16_REVISION = "b3c1679b7c34d3255ef3547f27c7b226aefab26f"
+_SIGLIP2_VITB16_REVISION = "3f9f96cb90da5dbc758b01813f2f6f1aee24c1ab"
 
 
 @dataclass(frozen=True)
@@ -170,6 +171,32 @@ class _EncoderBackend(Protocol):
     def select_dense_tokens(self, output: Any) -> Tensor:
         """Select dense `(U,S,D)` or `(B,N,D)` tokens from a private output."""
         ...
+
+
+def _capture_resolved_revision(
+    model: nn.Module, repo_id: str, requested_revision: str, cache_dir: str
+) -> str:
+    """Capture the actual Hub snapshot even when a nested vision config drops it.
+
+    Some composite checkpoints (notably SigLIP) deserialize the vision sub-config
+    without Transformers' private ``_commit_hash``. In that case the already
+    resolved cached config path is authoritative and contains the snapshot SHA.
+    """
+    resolved = getattr(getattr(model, "config", None), "_commit_hash", None)
+    if isinstance(resolved, str) and _IMMUTABLE_REVISION.fullmatch(resolved):
+        return resolved
+    from transformers.utils.hub import cached_file, extract_commit_hash
+
+    config_path = cached_file(
+        repo_id,
+        "config.json",
+        revision=requested_revision,
+        cache_dir=cache_dir,
+    )
+    resolved = extract_commit_hash(config_path, None)
+    if not isinstance(resolved, str) or _IMMUTABLE_REVISION.fullmatch(resolved) is None:
+        raise RuntimeError("Transformers did not expose an immutable resolved Hub revision.")
+    return resolved
 
 
 class FrozenEncoder(nn.Module):
@@ -381,10 +408,9 @@ class _VJEPA2Adapter(nn.Module):
             cache_dir=cfg.hf_cache_dir,
             attn_implementation=cfg.attention_implementation,
         )
-        resolved = getattr(self.model.config, "_commit_hash", None)
-        if not isinstance(resolved, str) or _IMMUTABLE_REVISION.fullmatch(resolved) is None:
-            raise RuntimeError("Transformers did not expose an immutable resolved Hub revision.")
-        self.resolved_revision = resolved
+        self.resolved_revision = _capture_resolved_revision(
+            self.model, repo_id, revision, cfg.hf_cache_dir
+        )
 
     def forward_units(self, clips: Tensor) -> Tensor:
         """Return the encoder-only tubelet lattice, skipping V-JEPA's predictor.
@@ -406,6 +432,58 @@ class _VJEPA2Adapter(nn.Module):
             The same dense tensor; V-JEPA has no special tokens to strip here.
         """
         return output
+
+
+class _SigLIP2Adapter(nn.Module):
+    """Private vision-only adapter for the fixed-resolution SigLIP 2 ViT-B/16."""
+
+    frame_based = True
+
+    def __init__(self, cfg: EncoderConfig, repo_id: str, revision: str) -> None:
+        """Load only the immutable SigLIP vision tower through Transformers."""
+        super().__init__()
+        try:
+            from transformers import SiglipVisionModel
+        except ModuleNotFoundError as exc:  # pragma: no cover - dependency installation error.
+            raise RuntimeError(
+                "transformers==4.57.6 is required for the SigLIP 2 encoder adapter."
+            ) from exc
+
+        self.model = SiglipVisionModel.from_pretrained(
+            repo_id,
+            revision=revision,
+            cache_dir=cfg.hf_cache_dir,
+            attn_implementation=cfg.attention_implementation,
+        )
+        vision_model = getattr(self.model, "vision_model", None)
+        if not isinstance(vision_model, nn.Module) or not hasattr(vision_model, "head"):
+            raise RuntimeError("SigLIP vision model no longer exposes its pooling-head seam.")
+        # The experiment consumes patch tokens only. Remove the 7.1M-parameter
+        # attention pooler after checkpoint loading so it is neither executed nor
+        # retained as dead runtime weight; the 85.84M patch tower stays exact.
+        vision_model.use_head = False
+        vision_model.head = None
+        self.resolved_revision = _capture_resolved_revision(
+            self.model, repo_id, revision, cfg.hf_cache_dir
+        )
+
+    def forward_units(self, frames: Tensor) -> Any:
+        """Encode independent normalized frames without constructing the text tower.
+
+        Args:
+            frames: SigLIP-normalized images, shape `(U,3,256,256)`.
+        Returns:
+            Transformers vision output containing `(U,256,768)` patch tokens.
+        """
+        return self.model(pixel_values=frames, return_dict=True)
+
+    @staticmethod
+    def select_dense_tokens(output: Any) -> Tensor:
+        """Select the unpooled patch sequence; fixed-resolution SigLIP has no CLS token."""
+        tokens = getattr(output, "last_hidden_state", None)
+        if not isinstance(tokens, Tensor):
+            raise TypeError("SigLIP vision output must expose tensor last_hidden_state patches.")
+        return tokens
 
 
 @dataclass(frozen=True)
@@ -452,12 +530,12 @@ _ADAPTER_REGISTRY = {
     "siglip2_vitb16": _AdapterRegistration(
         family="siglip2",
         repo_id="google/siglip2-base-patch16-256",
-        default_revision=None,
-        factory=None,
+        default_revision=_SIGLIP2_VITB16_REVISION,
+        factory=_SigLIP2Adapter,
         feature_dim=768,
         layout=FeatureLayout(8, 16, 16, "time_y_x", "frame", 1, 1),
         normalization_id="siglip-minus-one-to-one",
-        preprocess_version="unresolved",
+        preprocess_version="siglip2-fixres256-last-hidden-state-v1",
         normalization_mean=(0.5, 0.5, 0.5),
         normalization_std=(0.5, 0.5, 0.5),
     ),

@@ -42,7 +42,9 @@ KANBAN run folder (OBSERVATIONS, ANALYSIS, NEXT_STEPS)
 ├── data/ssv2_tiny/                     # smoke subset (make_subset.py)
 ├── ssv2_raw/                           # raw .webm backing files
 ├── checkpoints/                        # default checkpoint dir
-└── hf_cache/                           # Hugging Face / V-JEPA cache
+├── stats/                              # encoder/dataset-bound whitening envelopes
+├── preflight/                          # resource + exact run-provenance JSON
+└── hf_cache/                           # pinned Hugging Face encoder snapshots
 ```
 
 Full reference: [`AGENT_FILES/SETUPS/VOLUME_LAYOUT.md`](../AGENT_FILES/SETUPS/VOLUME_LAYOUT.md).
@@ -82,8 +84,9 @@ Example pattern: [`KANBAN/PHASE_1/investigation_007/GUIDE.md`](../KANBAN/PHASE_1
 ```bash
 cd /workspace/hierarchal-jepa-flow-world-model
 git fetch origin
-git pull
-python -m pytest -q                    # optional preflight
+git pull --ff-only
+python -m pip install -r requirements.txt
+python -m pytest -q
 python -c "from models import smoke_test_models; smoke_test_models()"
 ```
 
@@ -103,6 +106,22 @@ python -c "from models import smoke_test_models; smoke_test_models()"
 |---|---|---|
 | Training step | `log_every` = 50 | `L_flow`, `grad_norm`, `grad_skipped`, `L_recon` |
 | Diagnostics | `diag_every` = 500 | `c_effective_rank`, `coarse_vs_copy_ratio`, `L_recon_present` |
+
+Encoder experiments additionally update W&B config with the resolved `EncoderSpec`, feature and
+dataset fingerprints, dependency/git identity, initialization/data-order hashes, and stats
+fingerprint. Runtime provenance includes CUDA, cuDNN, GPU model, and the explicit data/model/
+training/diagnostic seed streams. Whitening additionally binds the transform seed, exact clip
+budget (12,800 by default), token-row count, and eigensolver. `--require-wandb` makes
+initialization, logging, and final checksum recording fatal
+instead of silently continuing. The small provenance/stats artifacts may be uploaded; giant
+checkpoints are not uploaded automatically, and the final checkpoint is referenced by SHA-256.
+
+Dataset identity schema v2 opens each split container once to bind decoded frame count in
+addition to sorted path and byte size. On a full corpus, the first provenance/preflight pass
+can therefore take noticeable time; a corrupt or zero-frame container is a hard pre-run
+failure. Resource-preflight JSON uses CUDA events and keeps diagnostics outside the measured
+training interval. It reports `encoder_throughput` and `training_step_throughput` with
+examples/s, frames/s, and detailed tokens/s, alongside encoder-only and total peak memory.
 
 Metric meanings: [`GUIDES/PROBLEMS_METRICS_AND_EXPERIMENTS.md`](PROBLEMS_METRICS_AND_EXPERIMENTS.md).
 
@@ -137,8 +156,12 @@ Requires `wandb login` or `WANDB_API_KEY`. Uses unsampled `scan_history()` per W
 ### Run grouping
 
 ```bash
-export WANDB_RUN_GROUP=inv012_sharp_slot_recon_only
-export WANDB_NAME=my_run_slug    # train.py has no --wandb-name flag; use env
+python train.py ... \
+  --wandb-entity smahalanobis-uc-davis \
+  --wandb-project hjepa-vwm \
+  --wandb-group inv012_sharp_slot_recon_only \
+  --wandb-name "Investigation 12 · Sharp-slot reconstruction · Baseline" \
+  --require-wandb
 ```
 
 ---
@@ -147,10 +170,14 @@ export WANDB_NAME=my_run_slug    # train.py has no --wandb-name flag; use env
 
 | Path | Contents |
 |---|---|
-| `--checkpoint-dir` (default `/workspace/checkpoints`) | `phase1_step*.pt` — bottleneck, F_c, decoder, optimizer, config |
+| `--checkpoint-dir` (default `/workspace/checkpoints`) | Atomic `phase1_step*.pt` — B/B_EMA/F_c/D, optimizer, fixed buffers, RNG/sampler, resolved encoder/dataset/run identity |
 | `logs/` (convention, under repo) | Console captures from `train.py` redirects |
 
-The frozen encoder is **not** checkpointed — it reloads from Hugging Face on each run.
+The frozen encoder weights are **not** checkpointed; its exact repository, immutable revision,
+preprocessing/precision contract, parameter count, and feature fingerprint are. Resume rejects a
+different encoder, dataset, run recipe, or optimizer unless the corresponding explicit migration
+flag is supplied. Whitening buffers are embedded so a strict resume survives deletion of the
+external stats file.
 
 Resume:
 

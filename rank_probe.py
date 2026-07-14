@@ -1,4 +1,4 @@
-"""Effective-rank probe for the frozen V-JEPA embeddings `e` (offline diagnostic).
+"""Effective-rank probe for selected frozen detailed features (offline diagnostic).
 
 Answers "what is the effective rank of the encoder side?" with the SAME mechanism
 the training dashboard uses for `c_effective_rank` (diagnostics.effective_rank:
@@ -9,13 +9,13 @@ constant of the dataset — a rank *budget* to compare `c_effective_rank` agains
 
 Three views, all through the identical formula:
 
-- `e_effective_rank` — the direct analog of `c_effective_rank`: every token of
-  every probe video stacked into one (B*N_ctx, D_e) matrix. `c_effective_rank`
-  does exactly this with (B*N_c, D_c). Ceiling: D_e = 1024.
-- `e_within_video_rank` — rank of one video's own (N_ctx, D_e) tokens, reported
+- `detailed_effective_rank` — the direct analog of `c_effective_rank`: every token
+  of every probe video is stacked into one `(B*N_e,D_e)` matrix. Its ceiling is
+  the selected encoder's resolved `D_e`.
+- `e_within_video_rank` — rank of one video's own `(N_e,D_e)` tokens, reported
   as mean/min/max over the probe set (plus the per-video list in the JSON). The
   e-side analog of `c_slot_diversity_rank_centered` (centered, like everything
-  here). Ceiling: min(N_ctx - 1, D_e) = 1023.
+  here). Ceiling: `min(N_e - 1,D_e)`.
 - `e_cross_video_rank` — rank of the B mean-pooled per-video vectors (B, D_e):
   how many independent directions separate whole videos from each other.
   Ceiling: B - 1 = 63 for the default 64-video probe set.
@@ -24,7 +24,7 @@ Design contracts (inherited from drift_probe.py):
 
 - Pure ADD-ON analysis helper: training code does not import this file.
 - The probe set is pinned by the SAME manifest JSON as the drift probe, and the
-  frozen features come from the SAME `vjepa_features_<tag>.pt` cache. With the
+  frozen features come from the same versioned encoder-feature cache. With the
   default --out-dir this is a free cache hit after any drift-probe run (only the
   anchor windows are needed, and the drift probe always encodes those); it also
   runs locally on a fetched cache without the dataset or encoder.
@@ -45,7 +45,6 @@ Typical usage (same tag conventions as the drift probe):
 from __future__ import annotations
 
 import argparse
-import json
 from pathlib import Path
 
 try:
@@ -61,11 +60,24 @@ from drift_probe import (
     DEFAULT_OFFSETS,
     _pyplot,
     compute_encoder_features,
+    default_feature_cache_path,
     feature_key,
     load_or_build_manifest,
 )
+from encoders import FeatureLayout
 
 DEFAULT_MANIFEST_MAX_OFFSET = max(DEFAULT_OFFSETS)
+
+
+def rank_cache_offsets(manifest_max_offset: int) -> list[int]:
+    """Return the shared drift-cache ladder after validating manifest coverage."""
+    if manifest_max_offset < DEFAULT_MANIFEST_MAX_OFFSET:
+        raise ValueError(
+            "--manifest-max-offset must be at least "
+            f"{DEFAULT_MANIFEST_MAX_OFFSET} because the shared rank/drift cache records "
+            "the default drift offset ladder."
+        )
+    return list(DEFAULT_OFFSETS)
 
 
 def _require_torch() -> None:
@@ -144,12 +156,14 @@ def rank_at_energy(spectrum: Tensor, fraction: float) -> int:
     return int((cumulative < fraction).sum().item()) + 1
 
 
-def rank_report(video_tokens: list[Tensor]) -> dict:
+def rank_report(video_tokens: list[Tensor], layout: FeatureLayout | None = None) -> dict:
     """All three effective-rank views over one probe set of frozen features.
 
     Args:
-        video_tokens: One (N_ctx, D_e) frozen-encoder token tensor per probe
+        video_tokens: One `(N_e,D_e)` frozen-encoder token tensor per probe
             video (the anchor window), any float dtype.
+        layout: Optional resolved token lattice. Frame layouts add statistics at
+            each temporal index before those frame-token rows are concatenated.
     Returns:
         JSON-serializable dict with pooled/within-video/cross-video effective
         ranks, per-video ranks, ceilings, and the pooled spectrum + energy ranks.
@@ -168,6 +182,10 @@ def rank_report(video_tokens: list[Tensor]) -> dict:
             )
     stacked = torch.stack([t.float() for t in video_tokens])  # (B, N_ctx, D_e)
     b, n_ctx, d_e = stacked.shape
+    if layout is not None and layout.n_tokens != n_ctx:
+        raise ValueError(
+            f"Encoder layout token count {layout.n_tokens} does not match feature rows {n_ctx}."
+        )
 
     pooled_rows = stacked.reshape(b * n_ctx, d_e)
     pooled_rank = entropy_effective_rank(pooled_rows)
@@ -178,7 +196,7 @@ def rank_report(video_tokens: list[Tensor]) -> dict:
     video_means = stacked.mean(dim=1)  # (B, D_e)
     cross_video_rank = entropy_effective_rank(video_means)
 
-    return {
+    report = {
         "n_videos": b,
         "n_ctx": n_ctx,
         "d_e": d_e,
@@ -191,10 +209,47 @@ def rank_report(video_tokens: list[Tensor]) -> dict:
         "e_within_video_rank_per_video": per_video,
         "e_cross_video_rank": cross_video_rank,
         "e_cross_video_rank_ceiling": b - 1,
+        "detailed_raw_rank": int(torch.linalg.matrix_rank(pooled_rows).item()),
+        "detailed_effective_rank": pooled_rank,
+        "detailed_effective_rank_fraction": pooled_rank / d_e,
+        "detailed_feature_dim": d_e,
         "pooled_rank_at_90pct_energy": rank_at_energy(pooled_spectrum, 0.90),
         "pooled_rank_at_99pct_energy": rank_at_energy(pooled_spectrum, 0.99),
         "pooled_spectrum": [float(v) for v in pooled_spectrum],
     }
+    if layout is not None:
+        report.update(
+            {
+                "detailed_temporal_unit": layout.temporal_unit,
+                "detailed_temporal_count": layout.temporal,
+            }
+        )
+    if layout is not None and layout.temporal_unit == "frame":
+        spatial_tokens = layout.height * layout.width
+        per_frame = stacked.reshape(b, layout.temporal, spatial_tokens, d_e)
+        token_norms = per_frame.norm(dim=-1)
+        frame_ranks = [
+            entropy_effective_rank(per_frame[:, frame].reshape(b * spatial_tokens, d_e))
+            for frame in range(layout.temporal)
+        ]
+        report.update(
+            {
+                "detailed_frame_count": layout.temporal,
+                "detailed_spatial_tokens_per_frame": spatial_tokens,
+                "per_frame_token_norm_mean": [
+                    float(value) for value in token_norms.mean(dim=(0, 2))
+                ],
+                "per_frame_token_norm_std": [
+                    float(value) for value in token_norms.std(dim=(0, 2), unbiased=False)
+                ],
+                "per_frame_effective_rank": frame_ranks,
+                "per_frame_effective_rank_fraction": [rank / d_e for rank in frame_ranks],
+                "per_frame_effective_rank_mean": float(sum(frame_ranks) / len(frame_ranks)),
+                "per_frame_effective_rank_min": float(min(frame_ranks)),
+                "per_frame_effective_rank_max": float(max(frame_ranks)),
+            }
+        )
+    return report
 
 
 # ---------------------------------------------------------------------------
@@ -226,7 +281,7 @@ def plot_spectrum(out_path: Path, report: dict, tag: str) -> None:
     )
     ax.set_xlabel("eigenvalue index (descending)")
     ax.set_ylabel("covariance eigenvalue")
-    ax.set_title(f"V-JEPA e pooled-token spectrum ({report['n_videos']} videos) — {tag}")
+    ax.set_title(f"Frozen detailed-feature spectrum ({report['n_videos']} videos) — {tag}")
     ax.legend()
     fig.tight_layout()
     fig.savefig(out_path, dpi=150)
@@ -237,11 +292,21 @@ def plot_spectrum(out_path: Path, report: dict, tag: str) -> None:
 def parse_args() -> argparse.Namespace:
     """Parse the rank-probe CLI (probe-set knobs mirror drift_probe.py)."""
     parser = argparse.ArgumentParser(
-        description="Effective rank of frozen V-JEPA embeddings over a fixed probe set."
+        description="Effective rank of frozen detailed features over a fixed probe set."
     )
     parser.add_argument(
         "--data", choices=["ssv2", "ssv2_tiny", "ego4d", "ego4d_tiny"], default="ssv2_tiny"
     )
+    parser.add_argument(
+        "--encoder",
+        choices=("vjepa2_vitl16", "dinov3_vitb16", "siglip2_vitb16"),
+        default="vjepa2_vitl16",
+    )
+    parser.add_argument("--encoder-revision", default=None)
+    parser.add_argument("--encoder-precision", choices=("fp32", "bf16"), default=None)
+    parser.add_argument("--encoder-frame-microbatch", type=int, default=None)
+    parser.add_argument("--encoder-attention-implementation", default=None)
+    parser.add_argument("--hf-cache-dir", default=None)
     parser.add_argument(
         "--split",
         default="validation",
@@ -295,6 +360,7 @@ def parse_args() -> argparse.Namespace:
         default=4,
         help="Windows per frozen-encoder forward (cache misses only).",
     )
+    parser.add_argument("--cache-dtype", choices=("fp16", "fp32"), default="fp16")
     parser.add_argument(
         "--plot",
         choices=["on", "off"],
@@ -304,9 +370,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--device",
         default=None,
-        choices=["cuda", "cpu"],
+        choices=["cuda", "cpu", "mps"],
         help="Override device for encoder cache misses and rank math (default: cuda if available).",
     )
+    parser.add_argument("--wandb-artifact", action="store_true")
+    parser.add_argument("--wandb-project", default="hjepa-vwm")
+    parser.add_argument("--wandb-entity", default=None)
     return parser.parse_args()
 
 
@@ -314,35 +383,61 @@ def main() -> None:
     """Run the rank probe end to end: manifest -> features -> ranks -> JSON + plot."""
     args = parse_args()  # before _require_torch so --help works on torch-less machines
     _require_torch()
-    if args.manifest_max_offset < 0:
-        raise SystemExit("--manifest-max-offset must be non-negative")
+    try:
+        cache_offsets = rank_cache_offsets(args.manifest_max_offset)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
     cfg = Config()
     cfg.data.dataset = args.data
+    cfg.encoder.alias = args.encoder
+    cfg.encoder.revision = args.encoder_revision
+    if args.encoder_precision:
+        cfg.encoder.precision = args.encoder_precision
+    if args.encoder_frame_microbatch is not None:
+        cfg.encoder.frame_microbatch = args.encoder_frame_microbatch
+    if args.encoder_attention_implementation:
+        cfg.encoder.attention_implementation = args.encoder_attention_implementation
+    if args.hf_cache_dir:
+        cfg.hf_cache_dir = args.hf_cache_dir
     device = torch.device(args.device or ("cuda" if torch.cuda.is_available() else "cpu"))
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    tag = args.tag or f"{args.data}_{args.split}_n{args.probe_videos}_seed{args.seed}"
+    tag = args.tag or (
+        f"{args.encoder}_{args.data}_{args.split}_n{args.probe_videos}_seed{args.seed}"
+    )
     manifest_path = Path(args.manifest) if args.manifest else out_dir / f"manifest_{tag}.json"
     cache_path = (
-        Path(args.feature_cache) if args.feature_cache else out_dir / f"vjepa_features_{tag}.pt"
+        Path(args.feature_cache) if args.feature_cache else default_feature_cache_path(out_dir, tag)
     )
 
-    # Only the anchor windows are needed (offsets=[]), so a manifest/cache left by
-    # any drift-probe run over the same tag satisfies this probe without touching
-    # the dataset or constructing the encoder.
+    # Rank math uses only anchors. The shared cache is nevertheless materialized
+    # with drift's default ladder so either tool can validate and reuse the same
+    # exact envelope; a strict cache hit still resolves the encoder identity.
     manifest = load_or_build_manifest(
         manifest_path, cfg, args.split, args.probe_videos, args.manifest_max_offset, args.seed
     )
-    features = compute_encoder_features(cfg, manifest, [], cache_path, device, args.encoder_batch)
+    features = compute_encoder_features(
+        cfg,
+        manifest,
+        cache_offsets,
+        cache_path,
+        device,
+        args.encoder_batch,
+        args.cache_dtype,
+    )
+    cache_envelope = torch.load(cache_path, map_location="cpu")
     video_tokens = [
         features[feature_key(video["path"], video["anchor_end"])].to(device, dtype=torch.float32)
         for video in manifest["videos"]
     ]
 
     print(f"Computing effective-rank metrics on {device}...")
-    report = rank_report(video_tokens)
+    from provenance import encoder_spec_from_dict
+
+    encoder_spec = encoder_spec_from_dict(cache_envelope["metadata"]["encoder_spec"])
+    report = rank_report(video_tokens, layout=encoder_spec.layout)
     print(
-        f"e effective ranks over {report['n_videos']} probe videos "
+        f"detailed-feature ranks over {report['n_videos']} probe videos "
         f"(anchor windows, N_ctx={report['n_ctx']}, D_e={report['d_e']}):"
     )
     print(
@@ -363,18 +458,44 @@ def main() -> None:
         f"  pooled rank@90%/99% energy: {report['pooled_rank_at_90pct_energy']} / "
         f"{report['pooled_rank_at_99pct_energy']}"
     )
+    if report.get("detailed_temporal_unit") == "frame":
+        frame_norms = report["per_frame_token_norm_mean"]
+        print(
+            "  pre-concatenation frame rank: "
+            f"mean {report['per_frame_effective_rank_mean']:.1f} "
+            f"(min {report['per_frame_effective_rank_min']:.1f}, "
+            f"max {report['per_frame_effective_rank_max']:.1f}); "
+            f"token-norm means {min(frame_norms):.3f}..{max(frame_norms):.3f}"
+        )
 
     results = {
         "manifest_path": str(manifest_path),
         "feature_cache": str(cache_path),
         "tag": tag,
+        "encoder_spec": cache_envelope["metadata"]["encoder_spec"],
+        "feature_fingerprint": cache_envelope["metadata"]["feature_fingerprint"],
+        "dataset_identity": cache_envelope["metadata"]["dataset_identity"],
+        "cache_payload_fingerprint": cache_envelope["payload_fingerprint"],
         **report,
     }
     results_path = out_dir / f"rank_results_{tag}.json"
-    results_path.write_text(json.dumps(results, indent=2))
+    from provenance import atomic_json_save
+
+    atomic_json_save(results, results_path)
     print(f"Wrote {results_path}")
     if args.plot == "on":
         plot_spectrum(out_dir / f"rank_spectrum_{tag}.png", report, tag)
+    if args.wandb_artifact:
+        import wandb
+
+        run = wandb.init(
+            project=args.wandb_project, entity=args.wandb_entity, job_type="rank-probe"
+        )
+        artifact = wandb.Artifact(f"rank-{tag}", type="probe-report")
+        artifact.add_file(str(results_path))
+        artifact.add_file(str(manifest_path))
+        run.log_artifact(artifact)
+        run.finish()
 
 
 if __name__ == "__main__":

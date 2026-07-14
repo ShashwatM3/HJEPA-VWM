@@ -3,6 +3,8 @@ import json
 import os
 from pathlib import Path
 
+import numpy as np
+
 
 def test_config_exposes_locked_phase1_constants(monkeypatch):
     """Config exposes Phase 1 constants and the single data-root override."""
@@ -99,6 +101,86 @@ def test_dataset_indexes_webm_and_mp4_deterministically(tmp_path):
         pass
     else:
         raise AssertionError("SSV2Dataset accepted an empty split directory")
+
+
+def test_dataset_emits_raw_context_only_or_shared_full_clip(monkeypatch, tmp_path):
+    """Context-only decoding never reads a target and both modes stay raw `[0,1]`."""
+    import pytest
+
+    pytest.importorskip("torch")
+    config = importlib.import_module("config")
+    data = importlib.import_module("data")
+
+    root = tmp_path / "clips"
+    (root / "validation").mkdir(parents=True)
+    (root / "validation" / "clip.webm").write_bytes(b"fake")
+    decoded: list[list[int]] = []
+
+    class FakeReader:
+        def __len__(self):
+            return 48
+
+    def fake_decode(_reader, indices):
+        decoded.append(list(indices))
+        return np.full((len(indices), 256, 256, 3), 128, dtype=np.uint8)
+
+    monkeypatch.setattr(data, "_open_video_reader", lambda _path: FakeReader())
+    monkeypatch.setattr(data, "_decode_frames", fake_decode)
+    cfg = config.Config()
+
+    context_only = data.SSV2Dataset(root, "validation", cfg, needs_target=False)[0]
+    assert context_only.target is None
+    assert context_only.sample_id == "validation/clip.webm"
+    assert len(decoded[-1]) == 8
+    assert 0.0 <= float(context_only.context.min()) <= float(context_only.context.max()) <= 1.0
+
+    full = data.SSV2Dataset(root, "validation", cfg, needs_target=True)[0]
+    assert full.target is not None
+    assert len(decoded[-1]) == 16
+    assert 0.0 <= float(full.context.min()) <= float(full.target.max()) <= 1.0
+    assert data.TRANSFORM_VERSION
+
+    context_dataset = data.SSV2Dataset(root, "validation", cfg, needs_target=False)
+    monkeypatch.setattr(
+        context_dataset,
+        "_window_indices",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("target indices were computed")),
+    )
+    assert context_dataset[0].target is None
+    with pytest.raises(ValueError, match="at least one frame"):
+        context_dataset._context_indices(0)
+
+
+def test_stats_loader_can_keep_the_final_partial_training_batch(tmp_path):
+    """Training drops incomplete batches; deterministic offline stats may retain them."""
+    import pytest
+
+    pytest.importorskip("torch")
+    config = importlib.import_module("config")
+    data = importlib.import_module("data")
+
+    root = tmp_path / "data" / "ssv2_tiny"
+    for split in ("train", "validation"):
+        (root / split).mkdir(parents=True)
+    for index in range(5):
+        (root / "train" / f"{index}.webm").write_bytes(b"fake")
+    (root / "validation" / "0.webm").write_bytes(b"fake")
+    cfg = config.Config()
+    cfg.data.data_root = str(tmp_path / "data")
+    cfg.data.num_workers = 0
+
+    training = data.build_dataloader(cfg, "train", batch_size=4, needs_target=False)
+    stats = data.build_dataloader(
+        cfg,
+        "train",
+        batch_size=4,
+        needs_target=False,
+        drop_last=False,
+    )
+    assert training.drop_last is True
+    assert stats.drop_last is False
+    assert len(training) == 1
+    assert len(stats) == 2
 
 
 def test_make_subset_creates_stratified_symlinks_and_manifest(tmp_path, monkeypatch):

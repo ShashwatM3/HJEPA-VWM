@@ -14,6 +14,7 @@ nn = torch.nn
 _REVISION_A = "a" * 40
 _REVISION_B = "b" * 40
 _VJEPA2_REVISION = "b3c1679b7c34d3255ef3547f27c7b226aefab26f"
+_SIGLIP2_REVISION = "3f9f96cb90da5dbc758b01813f2f6f1aee24c1ab"
 
 
 class _FakeTubeletBackend(nn.Module):
@@ -274,13 +275,90 @@ def test_eval_and_freeze_are_sticky():
     assert all(not parameter.requires_grad for parameter in encoder.parameters())
 
 
-@pytest.mark.parametrize("alias", ["dinov3_vitb16", "siglip2_vitb16"])
+@pytest.mark.parametrize("alias", ["dinov3_vitb16"])
 def test_reserved_unresolved_registry_aliases_fail_without_main_fallback(alias):
     from config import EncoderConfig
     from encoders import build_frozen_encoder
 
     with pytest.raises(RuntimeError, match=rf"{alias}.*not implemented.*immutable"):
         build_frozen_encoder(EncoderConfig(alias=alias))
+
+
+def test_transformers_pin_exposes_both_planned_frame_encoder_architectures():
+    """The shared wheel must contain DINOv3 ViT and SigLIP vision classes offline."""
+    import transformers
+
+    assert transformers.__version__ == "4.57.6"
+    assert transformers.DINOv3ViTModel.__name__ == "DINOv3ViTModel"
+    assert transformers.SiglipVisionModel.__name__ == "SiglipVisionModel"
+
+
+def test_siglip_registry_loads_only_vision_tower_and_preserves_patch_order(monkeypatch):
+    """The public factory exposes 8x16x16 patch tokens without loading a text tower."""
+    import transformers
+
+    from config import EncoderConfig
+    from encoders import build_frozen_encoder
+
+    captured = {}
+
+    class FakeVisionModel(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.weight = nn.Parameter(torch.ones(7))
+            self.config = SimpleNamespace(_commit_hash=_SIGLIP2_REVISION)
+            self.vision_model = nn.Module()
+            self.vision_model.head = nn.Linear(1, 1)
+            self.vision_model.use_head = True
+
+        def forward(self, *, pixel_values, return_dict):
+            assert return_dict is True
+            frame_ids = pixel_values[:, 0, 0, 0].view(-1, 1, 1) * 1_000
+            patches = torch.arange(256, device=pixel_values.device, dtype=pixel_values.dtype).view(
+                1, 256, 1
+            )
+            tokens = (frame_ids + patches).expand(pixel_values.shape[0], 256, 768)
+            return SimpleNamespace(last_hidden_state=tokens)
+
+    def fake_from_pretrained(repo_id, **kwargs):
+        captured["repo_id"] = repo_id
+        captured.update(kwargs)
+        return FakeVisionModel()
+
+    monkeypatch.setattr(transformers.SiglipVisionModel, "from_pretrained", fake_from_pretrained)
+    cfg = EncoderConfig(
+        alias="siglip2_vitb16",
+        precision="fp32",
+        frame_microbatch=3,
+        hf_cache_dir="/tmp/siglip-cache",
+    )
+    raw = torch.zeros(1, 8, 3, 256, 256)
+    for frame_index in range(8):
+        # SigLIP normalization maps raw 0.5 to zero, so encode an identity-bearing value.
+        raw[:, frame_index].fill_(0.5 + frame_index / 100)
+
+    encoder = build_frozen_encoder(cfg)
+    tokens = encoder(raw)
+
+    assert captured == {
+        "repo_id": "google/siglip2-base-patch16-256",
+        "revision": _SIGLIP2_REVISION,
+        "cache_dir": "/tmp/siglip-cache",
+        "attn_implementation": "sdpa",
+    }
+    assert encoder.spec.family == "siglip2"
+    assert encoder.spec.normalization_mean == (0.5, 0.5, 0.5)
+    assert encoder.spec.normalization_std == (0.5, 0.5, 0.5)
+    assert encoder.spec.layout.n_tokens == 2048
+    assert encoder.spec.feature_dim == 768
+    assert encoder.spec.parameter_count == 7
+    assert encoder._backend.model.vision_model.head is None
+    assert encoder._backend.model.vision_model.use_head is False
+    assert tokens.shape == (1, 2048, 768)
+    assert tokens[0, 0, 0].item() == pytest.approx(0.0)
+    assert tokens[0, 255, 0].item() == pytest.approx(255.0)
+    assert tokens[0, 256, 0].item() == pytest.approx(20.0)
+    assert all(not parameter.requires_grad for parameter in encoder.parameters())
 
 
 def test_unknown_alias_and_mutable_revision_fail_before_loading():
@@ -359,16 +437,17 @@ def test_vjepa_registry_load_is_pinned_cached_and_preserves_legacy_layout(monkey
     assert encoder.spec.parameter_count == 5
     assert tokens.shape == (1, 1024, 1024)
 
-    # Exact bridge regression: new raw-input normalization must reproduce the
-    # temporary models.FrozenEncoder path when it receives the legacy-normalized clip.
-    from config import ENCODER_IMAGE_MEAN, ENCODER_IMAGE_STD, ModelConfig
-    from models import FrozenEncoder as LegacyFrozenEncoder
+    # Exact regression: the wrapper applies the historical V-JEPA normalization once.
+    from config import ENCODER_IMAGE_MEAN, ENCODER_IMAGE_STD
 
     mean = torch.tensor(ENCODER_IMAGE_MEAN).view(1, 1, 3, 1, 1)
     std = torch.tensor(ENCODER_IMAGE_STD).view(1, 1, 3, 1, 1)
     raw = torch.full((1, 8, 3, 256, 256), 0.5)
-    legacy_tokens = LegacyFrozenEncoder(ModelConfig())((raw - mean) / std)
-    assert torch.equal(encoder(raw), legacy_tokens)
+    normalized_signal = ((raw - mean) / std).mean()
+    expected = (torch.arange(1024, dtype=raw.dtype).view(1, 1024, 1) + normalized_signal).expand(
+        1, 1024, 1024
+    )
+    assert torch.equal(encoder(raw), expected)
 
 
 @pytest.mark.parametrize(

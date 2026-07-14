@@ -1,15 +1,26 @@
 # Encoder Pluggability and the First Paired Experiment
 
-> Status: staged implementation design, audited against the repository on 2026-07-14.
-> Prompt 1C's encoder-independent foundation and pinned V-JEPA2 regression adapter are
-> implemented; the data/model/training migration and real DINOv3/SigLIP2 adapters are not.
-> The operational execution order and copy/paste prompts live in
+> Status: implementation and pre-join design, audited against the repository on 2026-07-14.
+> The common raw-data/model/training, determinism/checkpoint, whitening/probe/artifact,
+> provenance/preflight stack and pinned V-JEPA2/SigLIP2 adapters are implemented. SigLIP
+> passed a real Mac/MPS smoke. CUDA/real-dataset evidence remains RunPod-only. DINO is the
+> only deliberately unresolved alias until its gated lane is implemented and validated.
+> The current operational state and copy/paste RunPod hand-off live at the very top of
 > [`GUIDE_encoders.md`](GUIDE_encoders.md).
 
 ## Do these human-only steps first
 
 These are the only steps a coding agent cannot safely do for you. Do not edit Python,
 manifests, or model files yourself.
+
+### Standard ViT now: no dashboard work
+
+SigLIP 2 is public and fully configured in code. You do not need to request access, create
+a Hugging Face token, or change a RunPod template. On the pod, pull the verified commit and
+select it with `--encoder siglip2_vitb16`; select V-JEPA again with
+`--encoder vjepa2_vitl16`. Follow the numbered **Start here — brain-dead Standard ViT
+hand-off** at the top of [`GUIDE_encoders.md`](GUIDE_encoders.md) for the remaining CUDA,
+real-data, whitening, resource, and W&B evidence. Do not reuse stats across aliases.
 
 ### Right now: finish and freeze the completed EGO4D build
 
@@ -108,8 +119,8 @@ The first new-encoder pair is:
 | Role | Encoder | Frozen vision parameters | Detailed feature contract at 8x256x256 |
 |---|---|---:|---|
 | Selected DINO | DINOv3 ViT-B/16, `facebook/dinov3-vitb16-pretrain-lvd1689m` | 85.7M | strip CLS + four registers; eight frame-major 16x16 grids -> `(B, 2048, 768)` |
-| Independent control | SigLIP 2 Base/16 FixRes 256, `google/siglip2-base-patch16-256` | about 86M vision tower | eight frame-major 16x16 patch grids -> `(B, 2048, 768)` |
-| Regression control | V-JEPA2 ViT-L/16, `facebook/vjepa2-vitl-fpc64-256` | about 300M | four temporal-major 16x16 tubelet grids -> `(B, 1024, 1024)` |
+| Independent control | SigLIP 2 Base/16 FixRes 256, `google/siglip2-base-patch16-256` | 85,843,200 retained patch-tower parameters | eight frame-major 16x16 patch grids -> `(B, 2048, 768)` |
+| Regression control | V-JEPA2 ViT-L/16, `facebook/vjepa2-vitl-fpc64-256` | 325,971,328 | four temporal-major 16x16 tubelet grids -> `(B, 1024, 1024)` |
 
 DINOv3-B is the correct DINO choice because it is far lighter than the present V-JEPA2-L,
 keeps a 768-wide dense patch representation, and is the first DINOv3 tier with a material
@@ -286,6 +297,13 @@ The runtime provenance block must also include:
 - whitening-stat fingerprint when active;
 - physical batch, frame microbatch, and number of feature rows used for statistics.
 
+**Implemented audit note (2026-07-14):** runtime provenance now records the CUDA/cuDNN/GPU
+identity and every named seed stream. Fresh whitening consumption enforces the exact run seed,
+12,800-clip budget (configurable only through the explicit `--whiten-expected-clips` recipe
+field), and eigensolver settings. Validation requires B>1; rank and drift share one default
+cache path; drift verifies the embedded whitener hash. Explicit dataset transfer removes only
+dataset-owned provenance fields and records both dataset fingerprints and the checkpoint hash.
+
 The dependency is now pinned to `transformers==4.57.6`. Its installed source exposes
 V-JEPA2, DINOv3 ViT, and SigLIP2 vision model classes, and the real pinned V-JEPA2 adapter
 passed on this version. The DINOv3 and SigLIP2 lanes must validate this same pin against
@@ -373,6 +391,27 @@ dataset fingerprint -> sample ID -> raw context[/target] -> adapter normalizatio
 ```
 
 No stage may infer feature geometry independently.
+
+### Final pre-RunPod audit closure (2026-07-14)
+
+The implementation now closes the last four cross-cutting gaps found during the second
+complete re-walk:
+
+- dataset identity schema v2 hashes each clip's sorted relative path, resolved byte size,
+  and decoded frame count, and records split frame totals/ranges;
+- current checkpoints validate the saved sampler state against their own next step,
+  dataset count, and physical batch before state mutation, then feed that exact saved
+  epoch/offset into the first resumed dataloader;
+- explicit resource preflight uses synchronized CUDA events, measures the training step
+  separately from diagnostics, and reports encoder-only/total peak memory plus examples,
+  input frames, and detailed tokens per second;
+- the generic rank probe reconstructs only `FeatureLayout`; frame layouts report
+  per-frame token norms and effective rank before frame rows are temporally concatenated.
+
+Offline regressions cover every closure, including an actual resumed sampler suffix and a
+same-path/same-size inventory whose frame count changes. These changes alter provenance,
+so whitening stats, feature caches, checkpoints, and resource reports made before this
+schema must not be reused for the final pair.
 
 ## Whitening and artifact identity
 

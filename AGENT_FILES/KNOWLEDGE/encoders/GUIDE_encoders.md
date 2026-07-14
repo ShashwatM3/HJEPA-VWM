@@ -1,11 +1,206 @@
-# Guide: From V-JEPA-only to Encoder-Pluggable Experiments
+# Guide: Encoder-Pluggable Experiments
 
-> Updated 2026-07-14: Prompt 1C's strict encoder seam, fake two-layout contracts, pinned
-> V-JEPA2 adapter, and exact Transformers lock are complete. The data hot path,
-> preprocessing, whitening, checkpoints, and probes are still V-JEPA-specific. The guide
-> is dependency-segmented: finish the remaining common track once, run the
-> SigLIP 2 ViT and DINOv3 tracks independently, and meet at one join gate before a paid
-> comparison. Stage numbers identify commands; they are not a requirement to wait for DINO.
+> Updated 2026-07-14: the encoder-independent foundation, raw data path, generic model
+> geometry, deterministic training/checkpoints, strict provenance, whitening, rank, drift,
+> W&B policy, resource preflight, V-JEPA2 regression adapter, and real SigLIP 2 adapter are
+> implemented. SigLIP 2 passed a real fp32 Mac/MPS smoke at its pinned Hub commit. DINO is
+> intentionally the only unresolved alias until its gated real lane supplies an immutable
+> revision and evidence. The remaining SigLIP work below requires the RunPod's CUDA GPU and
+> real datasets; it is verification/artifact generation, not another coding stage. The
+> final pre-RunPod audit also binds decoded frame counts in dataset identity, restores the
+> saved sampler epoch/offset directly, reports CUDA-event examples/frames/tokens throughput,
+> and preserves per-frame feature norms/ranks before temporal concatenation.
+
+## Start here — brain-dead Standard ViT hand-off
+
+The selected Standard ViT is **SigLIP 2 Base/16 FixRes 256**:
+`google/siglip2-base-patch16-256`, pinned to
+`3f9f96cb90da5dbc758b01813f2f6f1aee24c1ab`. It is public: **there is no browser
+approval, Hugging Face token, or RunPod dashboard step for SigLIP**. Its retained patch
+tower has exactly 85,843,200 parameters and returns `(B,2048,768)` for an 8-frame clip.
+
+### The only change needed to select it
+
+Add this to any current Phase 1 command:
+
+```bash
+--encoder siglip2_vitb16 --hf-cache-dir /workspace/hf_cache
+```
+
+To switch back at any time, replace only the alias (and use that encoder's own whitening
+file if whitening is enabled):
+
+```bash
+--encoder vjepa2_vitl16 --hf-cache-dir /workspace/hf_cache
+```
+
+Never reuse a SigLIP stats file with V-JEPA or vice versa. Strict fingerprints reject it.
+
+### What you personally do on RunPod
+
+I cannot execute these CUDA/data/W&B checks from the Mac. Copy each block in order. Stop
+at the first failure and give the complete output to the coding agent.
+
+1. SSH into the existing pod. No RunPod dashboard change is needed. Enter the repository,
+   confirm that you are not about to overwrite pod-only work, and pull the verified commit
+   SHA supplied in the coding-agent hand-off:
+
+   ```bash
+   cd /workspace/hierarchal-jepa-flow-world-model
+   git status --short
+   git pull --ff-only
+   git rev-parse HEAD
+   ```
+
+   If the first command prints unexplained edits, stop. Do not stash, reset, or delete them.
+   Confirm that `git rev-parse HEAD` equals the hand-off SHA.
+
+2. Install the exact dependency lock and verify it. This does not download DINO:
+
+   ```bash
+   python -m pip install -r requirements.txt
+   python - <<'PY'
+   import transformers
+   from transformers import DINOv3ViTModel, SiglipVisionModel
+
+   assert transformers.__version__ == "4.57.6", transformers.__version__
+   assert DINOv3ViTModel.__name__ == "DINOv3ViTModel"
+   assert SiglipVisionModel.__name__ == "SiglipVisionModel"
+   print("Transformers pin OK:", transformers.__version__)
+   PY
+   pytest -q
+   python -c "from models import smoke_test_models; smoke_test_models()"
+   python -c "from diagnostics import smoke_test_diagnostics; smoke_test_diagnostics()"
+   ```
+
+3. Create only output/cache directories; do not alter a dataset or manifest:
+
+   ```bash
+   mkdir -p /workspace/hf_cache
+   mkdir -p /workspace/stats/encoder_pair_ssv2
+   mkdir -p /workspace/preflight/encoder_pair
+   mkdir -p /workspace/ckpt/encoder_pair_smoke/siglip2b
+   ```
+
+4. Download/validate the real pinned SigLIP vision tower on CUDA:
+
+   ```bash
+   python encoders.py --smoke \
+     --encoder siglip2_vitb16 \
+     --precision bf16 \
+     --frame-microbatch 32 \
+     --hf-cache-dir /workspace/hf_cache \
+     --batch-size 1 \
+     --device cuda
+   ```
+
+   Require all of the following in the JSON: resolved revision
+   `3f9f96cb90da5dbc758b01813f2f6f1aee24c1ab`, parameter count `85843200`,
+   trainable count `0`, output shape `[1,2048,768]`, and `output_finite: true`.
+
+5. Prove both tiny datasets still emit raw clips. This does not modify them:
+
+   ```bash
+   python - <<'PY'
+   from config import Config
+   from data import build_dataloader
+
+   for name in ("ssv2_tiny", "ego4d_tiny"):
+       cfg = Config()
+       cfg.data.dataset = name
+       batch = next(iter(build_dataloader(cfg, "train", batch_size=2, needs_target=False)))
+       clips = batch.context
+       print(name, tuple(clips.shape), float(clips.min()), float(clips.max()))
+       assert tuple(clips.shape) == (2, 8, 3, 256, 256)
+       assert 0.0 <= float(clips.min()) <= float(clips.max()) <= 1.0
+   print("raw dual-dataset contract OK")
+   PY
+   ```
+
+6. Pick the resource envelope **before** fitting expensive stats. Start here:
+
+   ```bash
+   export FRAME_MB=32
+   export COMMON_BATCH=64
+   python train.py --resource-preflight \
+     --data ssv2 --encoder siglip2_vitb16 --encoder-precision bf16 \
+     --encoder-frame-microbatch "$FRAME_MB" --hf-cache-dir /workspace/hf_cache \
+     --batch-size "$COMMON_BATCH" --seed 42 --horizon-k 12 \
+     --present-recon-only --lambda-recon 0.05 --lambda-recon-pred 0 \
+     --recon-loss-mode cosine --recon-warmup-steps 2000 \
+     --lambda-var 0.5 --lambda-cov 0.01 --lambda-sigreg 0 --lambda-slot 0 \
+     --bottleneck-latent-blocks 3 --decoder-dim 512 --decoder-blocks 4 --n-c 32 \
+     --lr-bottleneck 1e-4 --lr-coarse-flow 1e-4 --lr-decoder 1e-4 \
+     --provenance-out /workspace/preflight/encoder_pair/siglip_unwhitened_resource.json
+   ```
+
+   If it OOMs, set `COMMON_BATCH=48` and repeat; then try `32`, then `16`. If the
+   frozen encoder itself OOMs, lower `FRAME_MB` to `16`, then `8`. Record the largest
+   successful values and leave those two exported variables unchanged for every command
+   below. Do not use gradient accumulation. The first provenance pass now opens every
+   split container to bind its decoded frame count; that can take time on full SSv2 and is
+   not a hang. The resulting JSON must contain both `encoder_throughput` and
+   `training_step_throughput`, each with `examples_per_second`, `frames_per_second`, and
+   `detailed_tokens_per_second`. Diagnostics run afterward and do not contaminate this
+   timed interval.
+
+7. Fit the immutable full-SSv2 SigLIP whitening artifact using the final `FRAME_MB`:
+
+   ```bash
+   tmux new -As encoder_stats
+   cd /workspace/hierarchal-jepa-flow-world-model
+   python whiten_stats.py \
+     --data ssv2 --split train --encoder siglip2_vitb16 \
+     --encoder-precision bf16 --encoder-frame-microbatch "$FRAME_MB" \
+     --hf-cache-dir /workspace/hf_cache --batch-size 8 --max-clips 12800 \
+     --seed 42 \
+     --output /workspace/stats/encoder_pair_ssv2/siglip2_vitb16_ssv2_train_seed42.pt
+   python whiten_stats.py --inspect \
+     /workspace/stats/encoder_pair_ssv2/siglip2_vitb16_ssv2_train_seed42.pt
+   sha256sum \
+     /workspace/stats/encoder_pair_ssv2/siglip2_vitb16_ssv2_train_seed42.pt
+   ```
+
+   Detach from tmux with `Ctrl-b`, then `d`; do not press `Ctrl-c` while the fit runs.
+
+8. Rerun the exact resource path with whitening enabled:
+
+   ```bash
+   python train.py --resource-preflight \
+     --data ssv2 --encoder siglip2_vitb16 --encoder-precision bf16 \
+     --encoder-frame-microbatch "$FRAME_MB" --hf-cache-dir /workspace/hf_cache \
+     --batch-size "$COMMON_BATCH" --seed 42 --horizon-k 12 \
+     --present-recon-only --lambda-recon 0.05 --lambda-recon-pred 0 \
+     --recon-loss-mode cosine --recon-warmup-steps 2000 \
+     --lambda-var 0.5 --lambda-cov 0.01 --lambda-sigreg 0 --lambda-slot 0 \
+     --whiten-features \
+     --whiten-expected-clips 12800 \
+     --whiten-stats-path /workspace/stats/encoder_pair_ssv2/siglip2_vitb16_ssv2_train_seed42.pt \
+     --bottleneck-latent-blocks 3 --decoder-dim 512 --decoder-blocks 4 --n-c 32 \
+     --lr-bottleneck 1e-4 --lr-coarse-flow 1e-4 --lr-decoder 1e-4 \
+     --provenance-out /workspace/preflight/encoder_pair/siglip_resource.json
+   ```
+
+9. Verify W&B without printing a secret, then run the provisional 100-step SigLIP smoke
+   from Stage 11S below. The exact command is already written there.
+
+   ```bash
+   wandb status
+   wandb login --verify
+   ```
+
+10. Run the Stage 14S `ego4d_tiny` full-prediction smoke. It proves the same alias works
+    beyond autoencoding. Do **not** launch a 15,000-step paid SigLIP run yet: the final
+    comparison waits for the real DINO lane and join/parity gate.
+
+### Things you do not need to do
+
+- Do not request or configure any access token for SigLIP.
+- Do not edit Python, JSON, manifests, stats metadata, or checkpoints.
+- Do not rerun EGO4D download/chunking stages.
+- Do not implement a separate SigLIP processor or normalize data by hand.
+- Do not remove DINO's pending access request. It remains an independent later lane.
+- Do not push code from RunPod unless you explicitly decide to make new changes there.
 
 The design authority is
 [`ENCODER_PLUGGABILITY_AND_PARALLEL_EXPERIMENT_PLAN.md`](ENCODER_PLUGGABILITY_AND_PARALLEL_EXPERIMENT_PLAN.md).
@@ -18,7 +213,7 @@ In this guide, **the ViT lane** means the selected standard encoder,
 **SigLIP 2 ViT-B/16**. V-JEPA2 is a separate regression-control lane.
 
 ```text
-COMMON TRACK — no DINO or SigLIP files required
+COMMON TRACK — IMPLEMENTED; RunPod data/CUDA evidence remains
   EGO4D verification + W&B + encoder interface/two-layout fake contracts
   data/model/training refactor + determinism/checkpoints + stats/probes
   V-JEPA2 regression + repository-wide pre-join audit
@@ -26,9 +221,9 @@ COMMON TRACK — no DINO or SigLIP files required
              +-----------+-----------+
              |                       |
    SIGLIP 2 ViT LANE          DINOV3 LANE
-   available immediately      offline adapter available now
-   private adapter            private adapter
-   real smoke                 approval + auth, then real smoke
+   adapter implemented        alias intentionally unresolved
+   Mac/MPS smoke passed       approval + auth, then implementation
+   RunPod CUDA/data gates     real smoke/data gates
    SSv2/EGO4D smokes          SSv2/EGO4D smokes
    SSv2 stats                 SSv2/EGO4D smokes
    resource profile           SSv2 stats + resource profile
@@ -42,22 +237,24 @@ COMMON TRACK — no DINO or SigLIP files required
           15k runs concurrently OR sequentially
 ```
 
-### What can be completed before DINO approval
+### What is complete before DINO approval
 
-Do all of the following now:
+The coding work below is complete; only the explicitly external RunPod evidence remains:
 
 1. Stage 1 and Stage 2B. Stage 2A's browser request is already submitted; only its
    post-approval authentication waits.
-2. Common Prompts 1C, 2, 3, 4, and 5A in Stages 3-7. Both frame-encoder geometries are
+2. Common Prompts 1C, 2, 3, 4, and the offline/Mac portion of 5A in Stages 3-7. Both frame-encoder geometries are
    represented by strict injected fake backends/fixtures; the common code does not import,
    download, or branch on DINO or SigLIP.
 3. The real V-JEPA2 regression, which proves the refactor preserves the current encoder.
-4. The independent SigLIP Prompt 1S and its real tests on both tiny datasets.
+4. The independent SigLIP Prompt 1S, including its pinned vision-only adapter and real
+   Mac/MPS smoke. Real tiny-dataset checks remain RunPod-only.
 5. The SigLIP-only portions of Stages 9, 10, 11, and 14: fit its SSv2 stats, resource-profile
    it, and run short present-only/full-mode smokes.
-6. DINO Prompt 1D-O, which implements and exhaustively fake-tests the private adapter but
-   explicitly leaves real revision/weight validation pending.
-7. Prepare the final code, dependency lock, dataset fingerprints, W&B project, directories,
+6. The installed dependency pin exposes the planned `DINOv3ViTModel` class, but Prompt
+   1D-O itself remains a separate DINO-lane task. The reserved alias still fails clearly
+   and never falls back to `main`.
+7. Prepare the final code, dependency lock, frame-count-bound dataset fingerprints, W&B project, directories,
    and experiment notes.
 
 Do **not** launch the 15,000-step SigLIP run yet. A DINO-specific fix could still change
@@ -102,7 +299,7 @@ entire lane verification. Concurrency saves time; it never waives the post-merge
 |---|---|---|---|
 | Common | Stage 1, Stage 2B, Prompt 1C, Prompts 2-4, Prompt 5A, V-JEPA regression, common Stage 8 sync | None beyond the existing repo/data | Yes |
 | SigLIP | Prompt 1S, real dual-dataset/mode tests, 9S, 10S, 11S, 14S | Prompt 1C; merge common pipeline before real pipeline tests | Yes |
-| DINO offline | Prompt 1D-O and exact fake-backend tests | Prompt 1C | Yes |
+| DINO offline | Prompt 1D-O and exact DINO token-rule fake tests; not part of the Standard ViT hand-off | Prompt 1C | Not yet executed |
 | DINO real | Finish 2A auth, Prompt 1D-R, real dual-dataset/mode tests, 9D, 10D, 11D, 14D | DINO offline plus Hugging Face approval | After approval |
 | Join | Integrate both lanes, Prompt 5B, common resource envelope, 11J, both final 100-step smokes | Common + SigLIP + DINO lanes complete | No |
 | Research pair | Stage 12-13, concurrently or sequentially | Join passes on one immutable commit | No |
@@ -122,9 +319,9 @@ You are done only when all of these are true:
 - a clean V-JEPA regression and the two real frame-adapter preflights pass;
 - the two-arm command differs only in the permitted encoder/run/artifact fields.
 
-Current checkpoint: the Prompt 1C foundation is implemented, but none of the remaining
-finish-line bullets should be inferred from that. Continue at Prompt 2 after completing the
-human EGO4D verification prerequisite.
+Current checkpoint: all encoder-independent coding bullets and the real SigLIP adapter are
+implemented. Continue with the RunPod hand-off at the top of this file. DINO and final
+three-adapter/paid-run bullets remain deliberately incomplete.
 
 ## Stage 1 — `[YOU, NOW]` Finish and freeze EGO4D verification
 
@@ -309,7 +506,11 @@ Expected shape is `(1,1024,1024)`. It must report zero trainable encoder paramet
 values, an immutable resolved revision, and the documented parameter scale. Real SigLIP
 and DINO verification belongs only to their independent lanes below.
 
-## Stage 4 — `[CODING AGENT]` Move the seam through data, B, D, and training
+## Stage 4 — `[COMPLETED IN CODE]` Move the seam through data, B, D, and training
+
+**Completed 2026-07-14.** The raw `ClipBatch` path, context-only decode, two
+resolved geometries, generic construction, CLI, and resource-preflight path are shipped.
+Keep Prompt 2 below as the auditable contract; real data/CUDA commands remain operator evidence.
 
 Start after Prompt 1C's common interface/fake contracts and real V-JEPA regression pass.
 Nothing in this stage may need real DINO or SigLIP weights.
@@ -408,7 +609,11 @@ python train.py --resource-preflight --data ssv2_tiny --encoder vjepa2_vitl16 \
 The committed test suite must run the same forward/backward path with injected tubelet and
 frame-layout fixtures. Real SigLIP/DINO resource commands belong only to their lanes.
 
-## Stage 5 — `[CODING AGENT]` Make runs reproducible, strict, and resumable
+## Stage 5 — `[COMPLETED IN CODE]` Make runs reproducible, strict, and resumable
+
+**Completed 2026-07-14.** Named RNG isolation, paired identities, versioned atomic
+checkpoints, compatibility-before-mutation, exact resume tests, strict W&B mode, and
+parity/resource provenance are shipped. Keep Prompt 3 as the auditable contract.
 
 ### Prompt 3 — RNG streams, identity, checkpoints, W&B, and parity preflight
 
@@ -483,7 +688,18 @@ python train.py --help
 Stop unless the help exposes encoder selection, batch/frame microbatch, resource/preflight,
 strict W&B, explicit optimizer reset/transfer policy, and decoder LR.
 
-## Stage 6 — `[CODING AGENT]` Migrate whitening, probes, and artifacts
+Also stop if `COMMON_BATCH` is 1: every validation diagnostic needs at least two videos so
+`L_recon_shuffled_c` cannot silently compare a sample with itself.
+
+## Stage 6 — `[COMPLETED IN CODE]` Migrate whitening, probes, and artifacts
+
+**Completed and re-audited 2026-07-14.** Stats, rank, and drift use the same factory/raw
+preprocessing and shared default cache path. Their envelopes bind and validate encoder,
+dataset, geometry, precision, shape, dtype, finiteness, transform seed, exact clip/row budget,
+and eigensolver settings. Drift also verifies the checkpoint's embedded-whitener hash. Training
+defaults to requiring exactly 12,800 stats clips; changing that requires the explicit
+`--whiten-expected-clips` field in every matching recipe. Full dataset artifacts remain
+RunPod-only. Keep Prompt 4 as the contract.
 
 ### Prompt 4 — stats, rank, drift, cache identity, and W&B artifacts
 
@@ -545,9 +761,14 @@ Run the committed focused tests, then:
 pytest -q
 ```
 
-## Stage 7 — `[COMMON PRE-JOIN AUDIT; NO DINO APPROVAL]` Re-walk everything
+## Stage 7 — `[OFFLINE/MAC AUDIT COMPLETE; RUNPOD EVIDENCE REMAINS]` Re-walk everything
 
 This is not a rubber-stamp pass. It is the requested restart from ingestion to output.
+
+The implementation was re-walked and repaired through the full shipped Phase 1 and offline
+tooling paths. Offline two-layout and exact-resume tests pass; the real SigLIP adapter passes
+on Mac/MPS. V-JEPA/SigLIP CUDA, real SSv2/EGO4D, stats, resource, and strict W&B evidence
+cannot be produced from the Mac and belongs to the top hand-off checklist.
 
 ### Prompt 5A — pre-join whole-pipeline audit and repair
 
@@ -595,7 +816,7 @@ during re-walks, the two pending adapter-lane evidence bundles, exact commands, 
 git diff/status.
 ```
 
-## Stage 8 — `[COMMON OR ADAPTER LANE]` Put a verified commit on the pod
+## Stage 8 — `[NEXT: YOU ON RUNPOD]` Put the verified commit on the pod
 
 The coding agent should give you one verified commit SHA. Do not use an uncommitted working
 tree as the experiment source.
@@ -709,11 +930,12 @@ Required:
 
 Never reuse the historical V-JEPA stats file for either arm.
 
-## SigLIP 2 ViT lane — available immediately
+## SigLIP 2 ViT lane — adapter complete; RunPod evidence next
 
-This lane has no dependency on DINO access or DINO code. Start it after Prompt 1C freezes
-the public encoder interface. If it runs concurrently with Prompts 2-5A, use a separate
-worktree; merge it onto the completed common pipeline before running real pipeline smokes.
+This lane has no dependency on DINO access or DINO code. Its implementation is integrated
+with the completed common pipeline on `transformers==4.57.6`, and its real Mac/MPS smoke
+passed. The remaining commands need the RunPod's CUDA GPU and datasets. Any later shared
+dependency/preprocessing change invalidates this evidence and must be rerun.
 
 ### Prompt 1S — implement and validate the real SigLIP adapter
 
@@ -748,7 +970,7 @@ Do not alter losses, schedules, abstract geometry, manifests, or gradient routin
 ask me questions; use the documented contracts.
 ```
 
-After Prompt 1S is integrated, complete this lane in order:
+Prompt 1S is integrated. Complete the remaining external evidence in order:
 
 1. run the real SigLIP smoke and prove the text tower is not loaded:
 
@@ -969,7 +1191,8 @@ python train.py --preflight-only \
   --bottleneck-latent-blocks 3 --decoder-dim 512 --decoder-blocks 4 --n-c 32 \
   --lr-bottleneck 1e-4 --lr-coarse-flow 1e-4 --lr-decoder 1e-4 \
   --wandb-entity smahalanobis-uc-davis --wandb-project hjepa-vwm \
-  --wandb-group encoder_substrate_ssv2_v1 --wandb-name dino3b_present_ssv2 \
+  --wandb-group encoder_substrate_ssv2_v1 \
+  --wandb-name "Investigation 17 · Encoder substrate · DINOv3 present-only" \
   --checkpoint-dir /workspace/ckpt/encoder_pair/dino3b \
   --provenance-out /workspace/preflight/encoder_pair/dino_exact.json
 ```
@@ -988,7 +1211,8 @@ python train.py --preflight-only \
   --bottleneck-latent-blocks 3 --decoder-dim 512 --decoder-blocks 4 --n-c 32 \
   --lr-bottleneck 1e-4 --lr-coarse-flow 1e-4 --lr-decoder 1e-4 \
   --wandb-entity smahalanobis-uc-davis --wandb-project hjepa-vwm \
-  --wandb-group encoder_substrate_ssv2_v1 --wandb-name siglip2b_present_ssv2 \
+  --wandb-group encoder_substrate_ssv2_v1 \
+  --wandb-name "Investigation 17 · Encoder substrate · SigLIP 2 present-only" \
   --checkpoint-dir /workspace/ckpt/encoder_pair/siglip2b \
   --provenance-out /workspace/preflight/encoder_pair/siglip_exact.json
 ```
@@ -1026,7 +1250,8 @@ python train.py --data ssv2 --steps 100 --encoder dinov3_vitb16 \
   --bottleneck-latent-blocks 3 --decoder-dim 512 --decoder-blocks 4 --n-c 32 \
   --lr-bottleneck 1e-4 --lr-coarse-flow 1e-4 --lr-decoder 1e-4 \
   --wandb-entity smahalanobis-uc-davis --wandb-project hjepa-vwm \
-  --wandb-group encoder_substrate_ssv2_v1_smoke --wandb-name dino3b_present_smoke \
+  --wandb-group encoder_substrate_ssv2_v1_smoke \
+  --wandb-name "Investigation 17 · Encoder substrate launch check · DINOv3, 100 steps" \
   --checkpoint-dir /workspace/ckpt/encoder_pair_smoke/dino3b \
   --require-wandb --log-every 10 --diag-every 50
 ```
@@ -1042,7 +1267,8 @@ python train.py --data ssv2 --steps 100 --encoder siglip2_vitb16 \
   --bottleneck-latent-blocks 3 --decoder-dim 512 --decoder-blocks 4 --n-c 32 \
   --lr-bottleneck 1e-4 --lr-coarse-flow 1e-4 --lr-decoder 1e-4 \
   --wandb-entity smahalanobis-uc-davis --wandb-project hjepa-vwm \
-  --wandb-group encoder_substrate_ssv2_v1_smoke --wandb-name siglip2b_present_smoke \
+  --wandb-group encoder_substrate_ssv2_v1_smoke \
+  --wandb-name "Investigation 17 · Encoder substrate launch check · SigLIP 2, 100 steps" \
   --checkpoint-dir /workspace/ckpt/encoder_pair_smoke/siglip2b \
   --require-wandb --log-every 10 --diag-every 50
 ```
@@ -1125,7 +1351,8 @@ CUDA_VISIBLE_DEVICES=0 python train.py \
   --bottleneck-latent-blocks 3 --decoder-dim 512 --decoder-blocks 4 --n-c 32 \
   --lr-bottleneck 1e-4 --lr-coarse-flow 1e-4 --lr-decoder 1e-4 \
   --wandb-entity smahalanobis-uc-davis --wandb-project hjepa-vwm \
-  --wandb-group encoder_substrate_ssv2_v1 --wandb-name dino3b_present_ssv2 \
+  --wandb-group encoder_substrate_ssv2_v1 \
+  --wandb-name "Investigation 17 · Encoder substrate · DINOv3 present-only" \
   --checkpoint-dir /workspace/ckpt/encoder_pair/dino3b \
   --require-wandb --log-every 50 --diag-every 500 \
   > logs/encoder_pair/dino3b.log 2>&1 &
@@ -1163,7 +1390,8 @@ CUDA_VISIBLE_DEVICES="$SIGLIP_DEVICE" python train.py \
   --bottleneck-latent-blocks 3 --decoder-dim 512 --decoder-blocks 4 --n-c 32 \
   --lr-bottleneck 1e-4 --lr-coarse-flow 1e-4 --lr-decoder 1e-4 \
   --wandb-entity smahalanobis-uc-davis --wandb-project hjepa-vwm \
-  --wandb-group encoder_substrate_ssv2_v1 --wandb-name siglip2b_present_ssv2 \
+  --wandb-group encoder_substrate_ssv2_v1 \
+  --wandb-name "Investigation 17 · Encoder substrate · SigLIP 2 present-only" \
   --checkpoint-dir /workspace/ckpt/encoder_pair/siglip2b \
   --require-wandb --log-every 50 --diag-every 500 \
   > logs/encoder_pair/siglip2b.log 2>&1 &
@@ -1273,7 +1501,8 @@ python train.py --data ego4d_tiny --steps 100 --encoder dinov3_vitb16 \
   --recon-loss-mode cosine --decoder-dim 512 --decoder-blocks 4 --n-c 32 \
   --lr-bottleneck 1e-4 --lr-coarse-flow 1e-4 --lr-decoder 1e-4 \
   --wandb-entity smahalanobis-uc-davis --wandb-project hjepa-vwm \
-  --wandb-group encoder_full_ego4d_tiny_smoke --wandb-name dino3b_full_ego_smoke \
+  --wandb-group encoder_full_ego4d_tiny_smoke \
+  --wandb-name "Investigation 17 · Full-prediction regression smoke · DINOv3, EGO4D tiny, 100 steps" \
   --checkpoint-dir /workspace/ckpt/encoder_full_smoke/dino3b \
   --require-wandb --log-every 10 --diag-every 50
 ```
@@ -1290,7 +1519,8 @@ python train.py --data ego4d_tiny --steps 100 --encoder siglip2_vitb16 \
   --recon-loss-mode cosine --decoder-dim 512 --decoder-blocks 4 --n-c 32 \
   --lr-bottleneck 1e-4 --lr-coarse-flow 1e-4 --lr-decoder 1e-4 \
   --wandb-entity smahalanobis-uc-davis --wandb-project hjepa-vwm \
-  --wandb-group encoder_full_ego4d_tiny_smoke --wandb-name siglip2b_full_ego_smoke \
+  --wandb-group encoder_full_ego4d_tiny_smoke \
+  --wandb-name "Investigation 17 · Full-prediction regression smoke · SigLIP 2, EGO4D tiny, 100 steps" \
   --checkpoint-dir /workspace/ckpt/encoder_full_smoke/siglip2b \
   --require-wandb --log-every 10 --diag-every 50
 ```

@@ -6,10 +6,19 @@
 
 **Decision:** use this as the non-DINO/non-V-JEPA control arm.
 
+**Implemented and locally validated:** 2026-07-14 with Transformers `4.57.6`, immutable
+Hub revision `3f9f96cb90da5dbc758b01813f2f6f1aee24c1ab`. The vision-only adapter removes
+the unused 7,087,104-parameter attention pooling head after weight loading and retains the
+exact 85,843,200-parameter patch tower. Apple-MPS fp32 evidence: finite
+`(1,2048,768)` patch tokens, zero trainable parameters, sticky eval/freeze, and bit-exact
+frame-microbatch 2 versus 8. After the full common refactor, real-weight synthetic Stage 0
+also passed both present-only reconstruction and full-prediction forward/backward/EMA paths
+on MPS. CUDA bf16/resource/dataset evidence remains a RunPod gate.
+
 ## Executive decision
 
 SigLIP 2 ViT-B/16 is the best independent standard-ViT control for the first encoder
-experiment. Its vision tower is an approximately 86M-parameter, 12-layer, width-768,
+experiment. Its retained patch tower is an exact 85.84M-parameter, 12-layer, width-768,
 patch-16 Transformer. At 256x256 it emits 256 unpooled patch tokens per frame, exactly
 matching DINOv3 ViT-B/16's patch lattice and width after DINO's special tokens are
 removed.
@@ -37,7 +46,7 @@ both a weak tiny model and a heavy giant model. The practical candidates were:
 | MAE ViT-B/16 | 86M | 16x16, width 768 | image-only reconstruction prior | older; less semantic/localization strength out of the box |
 | ConvNeXt V2 Base | 89M | hierarchical, final stride 32 | strong non-transformer control | final map is 8x8 at 256px; choosing an intermediate stage changes width/semantics |
 | SigLIP 2 ViT-L/16 | 303M | 16x16, width 1024 | very strong | framewise cost is in the same heavy class as current V-JEPA2-L |
-| **SigLIP 2 ViT-B/16** | **86M** | **16x16, width 768** | modern semantic and dense features | **selected** |
+| **SigLIP 2 ViT-B/16** | **85.84M retained patch tower** | **16x16, width 768** | modern semantic and dense features | **selected** |
 
 SigLIP 2 specifically improved the weak point of older CLIP-style encoders: the paper
 adds self-distillation, masked prediction, and location/caption decoder losses and reports
@@ -56,7 +65,7 @@ confounding.
 |---|---|
 | Architecture | fixed-resolution SigLIP 2 ViT-Base |
 | Checkpoint | `google/siglip2-base-patch16-256` |
-| Vision parameters | approximately 86M |
+| Runtime vision parameters | 85,843,200 after removing the unused attention pooler |
 | Patch size | 16x16 |
 | Hidden width | 768 |
 | Transformer depth | 12 |
@@ -95,7 +104,10 @@ exact pinned Transformers release and model revision.
 
 For this checkpoint, the adapter must assert 256 patch tokens and width 768. Do not use
 `pooler_output`: it is designed to make a global image embedding and destroys the spatial
-lattice required by HJEPA's feature reconstruction.
+lattice required by HJEPA's feature reconstruction. The pinned Transformers class initially
+constructs a 7,087,104-parameter attention pooling head; the private adapter removes that
+head after checkpoint loading because neither its output nor its computation belongs in the
+dense-token experiment.
 
 ### Storage versus runtime parameters
 
@@ -104,7 +116,8 @@ checkpoint file. `SiglipVisionModel` instantiates and runs only the vision tower
 pod may still need to download/cache the combined safetensors file. Distinguish these in
 resource reports:
 
-- **runtime frozen vision parameters:** approximately 86M;
+- **runtime frozen patch-tower parameters:** exactly 85,843,200;
+- **parameters instantiated only while loading, then discarded:** 7,087,104 pooler weights;
 - **Hub download/cache footprint:** the full combined checkpoint, approximately 1.5GB in
   fp32 safetensors.
 
@@ -133,7 +146,7 @@ pretraining prior from DINOv3.
 | Contract | V-JEPA2 ViT-L | DINOv3 ViT-B/16 | SigLIP 2 ViT-B/16 |
 |---|---|---|---|
 | Pretraining modality | video | still images | image-text + image-only auxiliaries |
-| Parameters | 0.3B | 85.7M | ~86M vision tower |
+| Parameters | 0.3B | 85.7M | 85.84M retained patch tower |
 | Width/layers | 1024/24 | 768/12 | 768/12 |
 | Temporal interaction | tubelet transformer | none | none |
 | Tokens for 8x256px clip | 1024 | 2048 patch tokens | 2048 patch tokens |
@@ -170,7 +183,7 @@ contract.
   in Something-Something V2 clips.
 - Localization and masked-patch objectives make the unpooled tokens more plausible
   reconstruction targets than older language-only contrastive encoders.
-- The 86M vision tower leaves room for native 2048-token downstream processing.
+- The 85.84M patch tower leaves room for native 2048-token downstream processing.
 - Apache-2.0 and an ungated checkpoint simplify automation and reproducibility.
 
 ## Expected weaknesses and failure modes
