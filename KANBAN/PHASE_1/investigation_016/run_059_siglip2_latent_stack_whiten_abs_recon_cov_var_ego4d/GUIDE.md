@@ -204,7 +204,7 @@ assert spec["resolved_revision"] == revision
 assert spec["feature_dim"] == 768
 assert spec["layout"]["temporal"] == 8
 assert spec["layout"]["height"] == spec["layout"]["width"] == 16
-assert spec["layout"]["flatten_order"] == "time_y_x"
+assert spec["layout"]["order"] == "time_y_x"
 assert spec["layout"]["temporal_unit"] == "frame"
 assert spec["frame_microbatch"] == frame_microbatch
 assert spec["attention_implementation"] == "sdpa"
