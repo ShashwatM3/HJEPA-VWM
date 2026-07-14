@@ -125,3 +125,25 @@ Newer run index rows (append to the Complete W&B Run Index above):
 | 53 | [`ae_sharp_slots_residual_recon`](investigation_013/run_053_ae_sharp_slots_residual_recon/) | `7teohhwc` | crashed (external) | investigation_013 | present-only | Low-rank decodable |
 | 54 | [`ae_latent_stack_whiten_recon_only`](investigation_015/run_054_ae_latent_stack_whiten_recon_only/) | `lx1b6gw2` | finished | investigation_015 | present-only | Low-rank decodable |
 | 55 | [`ae_latent_stack_whiten_abs_recon`](investigation_015/run_055_ae_latent_stack_whiten_abs_recon/) | `nzz64pl6` | finished | investigation_015 | present-only | Low-rank decodable |
+
+---
+
+## Update (2026-07-14) — investigation_016 opens; first EGO4D run (run 058)
+
+Continues the append-only record. Runs 056/057 (investigation_015) and run 058
+(investigation_016) postdate the auto-generated table above.
+
+New/updated investigation index:
+
+| Investigation | Status | Runs | Current conclusion |
+|---|---|---|---|
+| [investigation_015](investigation_015/) | OPEN | 054, 055, 056, 057 | Clean-arm whitened AE on SSv2. Run 056 (whiten + full geometry bundle) and run 057 (056 minus SIGReg) are the program's strongest present-only results: rank ~201–208, cross-video cosine ~0.02–0.06, std ~1.0–1.12, ~75–78% video-conditioned. Covariance is the operative rank lever; SIGReg was a small honesty tax (removed in 057). |
+| [investigation_016](investigation_016/) | OPEN | 058 | **EGO4D transfer.** Run 057's exact recipe on EGO4D (clean single-variable A/B; only `dataset` + `whiten_stats_path` differ, W&B-verified). The recipe does NOT transfer: the code collapses to a near-video-independent template (rank 52.9, cross-video cosine 0.863, std 0.419, ~5.6% video-conditioned) while the pipeline and optimization stay perfectly healthy and slots stay diverse (30.67). The clean absolute target — safe on SSv2 — reopens the run-052 template shortcut on EGO4D's more self-similar features; the residual target (inv013/054) is the pre-registered fix and the next run. |
+
+New run index rows:
+
+| # | Run | ID | State | Investigation | Mode | Verdict |
+|---:|---|---|---|---|---|---|
+| 56 | [`ae_latent_stack_whiten_abs_recon_geom`](investigation_015/run_056_ae_latent_stack_whiten_abs_recon_geom/) | `tl5dh73c` | finished | investigation_015 | present-only | Strong present representation |
+| 57 | [`ae_latent_stack_whiten_abs_recon_cov_var`](investigation_015/run_057_ae_latent_stack_whiten_abs_recon_cov_var/) | `cdvp6hou` | finished | investigation_015 | present-only | Strong present representation |
+| 58 | [`ae_latent_stack_whiten_abs_recon_cov_var_ego4d`](investigation_016/run_058_ae_latent_stack_whiten_abs_recon_cov_var_ego4d/) | `mvbx96nv` | finished | investigation_016 | present-only | Collapsed rep (template shortcut) |
