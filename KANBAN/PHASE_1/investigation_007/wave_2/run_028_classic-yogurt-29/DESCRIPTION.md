@@ -1,5 +1,7 @@
 # Run 028 - `classic-yogurt-29`
 
+**Current W&B run name:** `Investigation 07 · Slot count · 128 slots`
+
 <!-- AUTO-GENERATED-WANDB-KANBAN -->
 
 **Investigation:** [investigation_007](../../)  

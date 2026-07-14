@@ -1,5 +1,7 @@
 # Run 003 - `comfy-glade-3`
 
+**Current W&B run name:** `Investigation 02 · Dense logging · Before frame fix`
+
 <!-- AUTO-GENERATED-WANDB-KANBAN -->
 
 **Investigation:** [investigation_002](../)  

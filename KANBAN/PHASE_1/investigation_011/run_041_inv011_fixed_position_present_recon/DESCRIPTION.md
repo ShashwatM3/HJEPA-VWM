@@ -1,5 +1,7 @@
 # Run 041 - `inv011_fixed_position_present_recon`
 
+**Current W&B run name:** `Investigation 11 · Fixed-position decoder · Present only`
+
 <!-- AUTO-GENERATED-WANDB-KANBAN -->
 
 **Investigation:** [investigation_011](../)  

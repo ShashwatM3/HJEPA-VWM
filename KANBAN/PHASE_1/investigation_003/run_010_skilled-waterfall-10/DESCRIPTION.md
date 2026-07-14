@@ -1,5 +1,7 @@
 # Run 010 - `skilled-waterfall-10`
 
+**Current W&B run name:** `Investigation 03 · Mild slot loss · Long horizon`
+
 <!-- AUTO-GENERATED-WANDB-KANBAN -->
 
 **Investigation:** [investigation_003](../)  

@@ -1,5 +1,7 @@
 # Run 040 - `inv011_fixed_position_decoder`
 
+**Current W&B run name:** `Investigation 11 · Fixed-position decoder · Full prediction`
+
 <!-- AUTO-GENERATED-WANDB-KANBAN -->
 
 **Investigation:** [investigation_011](../)  

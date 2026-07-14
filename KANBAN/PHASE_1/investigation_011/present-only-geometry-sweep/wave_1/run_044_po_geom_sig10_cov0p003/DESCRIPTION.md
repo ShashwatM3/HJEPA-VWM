@@ -1,5 +1,7 @@
 # Run 044 - `po_geom_sig10_cov0p003`
 
+**Current W&B run name:** `Investigation 11 · Present geometry · Isotropy 10, covariance 0.003`
+
 <!-- AUTO-GENERATED-WANDB-KANBAN -->
 
 **Investigation:** [investigation_011](../../../)  

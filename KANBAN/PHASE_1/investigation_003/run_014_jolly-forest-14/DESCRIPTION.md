@@ -1,5 +1,7 @@
 # Run 014 - `jolly-forest-14`
 
+**Current W&B run name:** `Investigation 03 · Strong variance · Repeat`
+
 <!-- AUTO-GENERATED-WANDB-KANBAN -->
 
 **Investigation:** [investigation_003](../)  

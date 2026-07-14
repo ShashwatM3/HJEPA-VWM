@@ -1,5 +1,7 @@
 # Run 053 - `ae_sharp_slots_residual_recon`
 
+**Current W&B run name:** `Investigation 13 · Sharp slots · Residual reconstruction`
+
 **Investigation:** [investigation_013](../)
 **W&B:** `7teohhwc` - https://wandb.ai/smahalanobis-uc-davis/hjepa-vwm/runs/7teohhwc
 **State:** `crashed` (external kill at step ~12150 / 15000; no training pathology)

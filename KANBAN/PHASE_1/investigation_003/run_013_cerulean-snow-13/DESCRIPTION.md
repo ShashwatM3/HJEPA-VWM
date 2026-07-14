@@ -1,5 +1,7 @@
 # Run 013 - `cerulean-snow-13`
 
+**Current W&B run name:** `Investigation 03 · Strong variance · Long horizon`
+
 <!-- AUTO-GENERATED-WANDB-KANBAN -->
 
 **Investigation:** [investigation_003](../)  

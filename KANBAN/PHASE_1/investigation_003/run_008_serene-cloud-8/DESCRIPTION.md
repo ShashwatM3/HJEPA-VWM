@@ -1,5 +1,7 @@
 # Run 008 - `serene-cloud-8`
 
+**Current W&B run name:** `Investigation 03 · Strong slot loss · Short horizon`
+
 <!-- AUTO-GENERATED-WANDB-KANBAN -->
 
 **Investigation:** [investigation_003](../)  

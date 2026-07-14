@@ -1,5 +1,7 @@
 # Run 005 - `peachy-terrain-5`
 
+**Current W&B run name:** `Investigation 01 · Long baseline · Original schedule`
+
 <!-- AUTO-GENERATED-WANDB-KANBAN -->
 
 **Investigation:** [investigation_001](../)  

@@ -1,5 +1,7 @@
 # Run 054 - `ae_latent_stack_whiten_recon_only`
 
+**Current W&B run name:** `Investigation 15 · Whitened latent stack · Residual reconstruction`
+
 **Investigation:** [investigation_015](../)
 **W&B:** `lx1b6gw2` - https://wandb.ai/smahalanobis-uc-davis/hjepa-vwm/runs/lx1b6gw2
 **State:** `finished` (full 15000-step schedule; last diagnostic step 14500)

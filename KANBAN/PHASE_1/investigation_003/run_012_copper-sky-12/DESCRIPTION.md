@@ -1,5 +1,7 @@
 # Run 012 - `copper-sky-12`
 
+**Current W&B run name:** `Investigation 03 · Centered slot loss · Longer repeat`
+
 <!-- AUTO-GENERATED-WANDB-KANBAN -->
 
 **Investigation:** [investigation_003](../)  

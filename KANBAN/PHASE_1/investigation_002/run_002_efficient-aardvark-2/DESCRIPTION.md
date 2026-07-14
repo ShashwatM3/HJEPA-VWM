@@ -1,5 +1,7 @@
 # Run 002 - `efficient-aardvark-2`
 
+**Current W&B run name:** `Investigation 02 · Throughput · Before frame fix`
+
 <!-- AUTO-GENERATED-WANDB-KANBAN -->
 
 **Investigation:** [investigation_002](../)  

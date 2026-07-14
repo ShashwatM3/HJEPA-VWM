@@ -1,5 +1,7 @@
 # Run 055 - `ae_latent_stack_whiten_abs_recon` (inv015)
 
+**Current W&B run name:** `Investigation 15 · Whitened latent stack · Absolute reconstruction`
+
 ## Status
 
 FINISHED — W&B `nzz64pl6` (group `inv015_ae_latent_stack_whiten`), full 15k-step

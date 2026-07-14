@@ -1,5 +1,7 @@
 # Run 011 - `olive-terrain-11`
 
+**Current W&B run name:** `Investigation 03 · Centered slot loss · Long horizon`
+
 <!-- AUTO-GENERATED-WANDB-KANBAN -->
 
 **Investigation:** [investigation_003](../)  

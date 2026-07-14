@@ -1,5 +1,7 @@
 # Run 019 - `easy-blaze-19`
 
+**Current W&B run name:** `Investigation 06 · Reconstruction · Predicted future`
+
 <!-- AUTO-GENERATED-WANDB-KANBAN -->
 
 **Investigation:** [investigation_006](../)  

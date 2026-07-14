@@ -1,5 +1,7 @@
 # Run 052 - `ae_sharp_slots_recon_only`
 
+**Current W&B run name:** `Investigation 12 · Sharp slots · Absolute reconstruction`
+
 <!-- AUTO-GENERATED-WANDB-KANBAN -->
 
 **Investigation:** [investigation_012](../)  

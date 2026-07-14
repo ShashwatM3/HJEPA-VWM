@@ -1,5 +1,7 @@
 # Run 039 - `original_recon_loss + no-pred`
 
+**Current W&B run name:** `Investigation 11 · Original reconstruction · Present only`
+
 <!-- AUTO-GENERATED-WANDB-KANBAN -->
 
 **Investigation:** [investigation_011](../)  

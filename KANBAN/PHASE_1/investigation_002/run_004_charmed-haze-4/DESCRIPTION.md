@@ -1,5 +1,7 @@
 # Run 004 - `charmed-haze-4`
 
+**Current W&B run name:** `Investigation 02 · Throughput · After frame fix`
+
 <!-- AUTO-GENERATED-WANDB-KANBAN -->
 
 **Investigation:** [investigation_002](../)  

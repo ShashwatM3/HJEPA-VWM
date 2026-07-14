@@ -1,5 +1,7 @@
 # Run 009 - `confused-butterfly-9`
 
+**Current W&B run name:** `Investigation 03 · Slot loss · Empty launch`
+
 <!-- AUTO-GENERATED-WANDB-KANBAN -->
 
 **Investigation:** [investigation_003](../)  

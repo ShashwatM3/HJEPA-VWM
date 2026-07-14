@@ -1,5 +1,7 @@
 # Run 056 — `ae_latent_stack_whiten_abs_recon_geom` (inv015)
 
+**Current W&B run name:** `Investigation 15 · Whitened latent stack · Full geometry`
+
 ## Status
 
 PLANNED — not launched. W&B group `inv015_ae_latent_stack_whiten` (overlays runs 054/055).

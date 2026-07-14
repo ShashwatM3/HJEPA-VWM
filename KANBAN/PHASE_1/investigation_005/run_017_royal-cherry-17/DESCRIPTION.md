@@ -1,5 +1,7 @@
 # Run 017 - `royal-cherry-17`
 
+**Current W&B run name:** `Investigation 05 · Acceptance run · Adaptive clipping`
+
 <!-- AUTO-GENERATED-WANDB-KANBAN -->
 
 **Investigation:** [investigation_005](../)  

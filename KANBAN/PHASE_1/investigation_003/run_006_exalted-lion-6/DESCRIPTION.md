@@ -1,5 +1,7 @@
 # Run 006 - `exalted-lion-6`
 
+**Current W&B run name:** `Investigation 03 · Collapse probe · 500 steps`
+
 <!-- AUTO-GENERATED-WANDB-KANBAN -->
 
 **Investigation:** [investigation_003](../)  

@@ -1,5 +1,7 @@
 # Run 027 - `quiet-firebrand-25`
 
+**Current W&B run name:** `Investigation 07 · 64 slots · Wider decoder`
+
 <!-- AUTO-GENERATED-WANDB-KANBAN -->
 
 **Investigation:** [investigation_007](../../)  

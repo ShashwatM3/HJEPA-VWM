@@ -1,5 +1,7 @@
 # Run 001 - `youthful-pond-1`
 
+**Current W&B run name:** `Investigation 02 · Launch smoke · 100 steps`
+
 <!-- AUTO-GENERATED-WANDB-KANBAN -->
 
 **Investigation:** [investigation_002](../)  

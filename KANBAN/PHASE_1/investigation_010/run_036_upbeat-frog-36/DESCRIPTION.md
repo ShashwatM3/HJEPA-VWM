@@ -1,5 +1,7 @@
 # Run 036 - `upbeat-frog-36`
 
+**Current W&B run name:** `Investigation 10 · Residual recipe · Launch check`
+
 <!-- AUTO-GENERATED-WANDB-KANBAN -->
 
 **Investigation:** [investigation_010](../)  

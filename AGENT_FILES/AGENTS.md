@@ -144,6 +144,51 @@ before finishing. Prefer minimal, factual diffs — no drive-by rewrites.
 | [`KANBAN/PHASE_1/README.md`](../KANBAN/PHASE_1/README.md) | A run finishes or status/verdict changes; new investigation opens/closes. | Add row to run index with W&B id, mode, verdict label from `READING_EXPERIMENTS.md`. Update investigation status table. Pull metrics from W&B — never invent values. |
 | **`KANBAN/PHASE_1/investigation_*/…`** | Human asks you to plan, launch, or analyze an experiment (see human workflow in `EXPERIMENT_LIFECYCLE.md`). | Follow triad: `DESCRIPTION.md` before launch; after run: `OBSERVATIONS.md`, `NEXT_STEPS.md`, optional `METRIC_READOUT.md` / `ANALYSIS.md`. Obey [`KANBAN/PROTOCOL.md`](../KANBAN/PROTOCOL.md). Do not delete history. |
 
+#### W&B run naming contract
+
+Any agent-authored `GUIDE.md`, launch playbook, shell command, Python snippet, or W&B
+Launch job that can create a W&B run and specifies its display name must use this format:
+
+```text
+Investigation NN · experiment axis · defining variant
+```
+
+This applies to `WANDB_NAME`, `wandb.init(name=...)`, Launch configuration, and any
+equivalent run-name field. A `GUIDE.md` containing a W&B-producing training command must
+set an explicit compliant name rather than rely on a generated adjective-noun name.
+
+Rules:
+
+1. `NN` is the two-digit KANBAN investigation number, such as `Investigation 15`.
+2. `experiment axis` states the scientific question or mechanism in a few plain words,
+   such as `Whitened latent stack`, `Present geometry`, or `Decoder capacity`.
+3. `defining variant` states the smallest detail that distinguishes this arm from its
+   neighboring runs. Include exact values when they define a sweep arm.
+4. Separate the three parts with a spaced middle dot (` · `). Do not use underscores,
+   hyphen chains, W&B-generated names, or implementation identifiers as separators.
+5. Spell out project-internal shorthand such as `ae`, `po`, `geom`, `recon`, `cov`, and
+   `sigreg`. Official model or dataset names such as `V-JEPA2` and `EGO4D` may remain.
+6. Make the name unique within the project and understandable beside the other runs in
+   the same investigation without opening the config.
+7. Label non-science runs honestly. Use terms such as `Launch check`, `Data smoke`, or
+   `Regression smoke`, and include the step count when it is the defining distinction.
+
+Good examples:
+
+```text
+Investigation 11 · Present geometry · Isotropy 5, covariance 0.01
+Investigation 15 · Whitened latent stack · Covariance plus variance
+Investigation 16 · EGO4D data smoke · 500 steps
+```
+
+Do not introduce names such as:
+
+```text
+ae_latent_stack_whiten_abs_recon_cov_var
+po_geom_sig5_cov0p01
+treasured-cherry-58
+```
+
 **KANBAN checklist after a run analysis:**
 
 1. Run folder triad updated with verdict + W&B link.

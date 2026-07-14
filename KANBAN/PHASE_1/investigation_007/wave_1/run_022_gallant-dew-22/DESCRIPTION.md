@@ -1,5 +1,7 @@
 # Run 022 - `gallant-dew-22`
 
+**Current W&B run name:** `Investigation 07 · Decoder capacity · Wide`
+
 <!-- AUTO-GENERATED-WANDB-KANBAN -->
 
 **Investigation:** [investigation_007](../../)  

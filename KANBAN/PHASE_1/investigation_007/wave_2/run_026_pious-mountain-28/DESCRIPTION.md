@@ -1,5 +1,7 @@
 # Run 026 - `pious-mountain-28`
 
+**Current W&B run name:** `Investigation 07 · Slot count · 64 slots`
+
 <!-- AUTO-GENERATED-WANDB-KANBAN -->
 
 **Investigation:** [investigation_007](../../)  

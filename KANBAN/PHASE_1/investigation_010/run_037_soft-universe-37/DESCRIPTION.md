@@ -1,5 +1,7 @@
 # Run 037 - `soft-universe-37`
 
+**Current W&B run name:** `Investigation 10 · Residual recipe · Full clean run`
+
 <!-- AUTO-GENERATED-WANDB-KANBAN -->
 
 **Investigation:** [investigation_010](../)  

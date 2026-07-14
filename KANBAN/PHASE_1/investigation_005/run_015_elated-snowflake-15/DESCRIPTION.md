@@ -1,5 +1,7 @@
 # Run 015 - `elated-snowflake-15`
 
+**Current W&B run name:** `Investigation 05 · Acceptance run · Before adaptive clipping`
+
 <!-- AUTO-GENERATED-WANDB-KANBAN -->
 
 **Investigation:** [investigation_005](../)  

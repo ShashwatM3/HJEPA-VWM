@@ -1,5 +1,7 @@
 # GUIDE — run 057 `ae_latent_stack_whiten_abs_recon_cov_var` (run 056 minus SIGReg)
 
+**Current W&B run name:** `Investigation 15 · Whitened latent stack · Covariance plus variance`
+
 This launches investigation_015 run 057 on a 1x A100 pod:
 
 ```text

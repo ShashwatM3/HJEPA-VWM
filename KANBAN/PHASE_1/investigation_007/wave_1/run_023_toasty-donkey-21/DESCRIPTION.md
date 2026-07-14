@@ -1,5 +1,7 @@
 # Run 023 - `toasty-donkey-21`
 
+**Current W&B run name:** `Investigation 07 · Reconstruction weight · 0.10`
+
 <!-- AUTO-GENERATED-WANDB-KANBAN -->
 
 **Investigation:** [investigation_007](../../)  

@@ -1,5 +1,7 @@
 # Run 021 - `eager-plant-22`
 
+**Current W&B run name:** `Investigation 07 · Decoder capacity · Wide and deep`
+
 <!-- AUTO-GENERATED-WANDB-KANBAN -->
 
 **Investigation:** [investigation_007](../../)  

@@ -1,5 +1,7 @@
 # Run 007 - `sleek-leaf-7`
 
+**Current W&B run name:** `Investigation 03 · Full-data baseline · Short horizon`
+
 <!-- AUTO-GENERATED-WANDB-KANBAN -->
 
 **Investigation:** [investigation_003](../)  

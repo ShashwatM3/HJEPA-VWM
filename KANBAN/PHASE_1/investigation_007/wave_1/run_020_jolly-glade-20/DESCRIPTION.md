@@ -1,5 +1,7 @@
 # Run 020 - `jolly-glade-20`
 
+**Current W&B run name:** `Investigation 07 · Reconstruction weight · 0.20`
+
 <!-- AUTO-GENERATED-WANDB-KANBAN -->
 
 **Investigation:** [investigation_007](../../)  

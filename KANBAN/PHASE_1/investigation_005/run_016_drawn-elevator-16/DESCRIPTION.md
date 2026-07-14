@@ -1,5 +1,7 @@
 # Run 016 - `drawn-elevator-16`
 
+**Current W&B run name:** `Investigation 05 · Acceptance run · Checkpoint resume`
+
 <!-- AUTO-GENERATED-WANDB-KANBAN -->
 
 **Investigation:** [investigation_005](../)  

@@ -1,5 +1,7 @@
 # Run 018 - `fanciful-lake-18`
 
+**Current W&B run name:** `Investigation 06 · Reconstruction · Present features`
+
 <!-- AUTO-GENERATED-WANDB-KANBAN -->
 
 **Investigation:** [investigation_006](../)  

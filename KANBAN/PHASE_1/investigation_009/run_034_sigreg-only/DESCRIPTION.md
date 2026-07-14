@@ -1,5 +1,7 @@
 # Run 034 - `sigreg-only`
 
+**Current W&B run name:** `Investigation 09 · Isotropy control · No reconstruction`
+
 <!-- AUTO-GENERATED-WANDB-KANBAN -->
 
 **Investigation:** [investigation_009](../)  

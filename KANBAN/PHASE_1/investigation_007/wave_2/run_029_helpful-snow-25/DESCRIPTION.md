@@ -1,5 +1,7 @@
 # Run 029 - `helpful-snow-25`
 
+**Current W&B run name:** `Investigation 07 · Reconstruction weight · 1.00`
+
 <!-- AUTO-GENERATED-WANDB-KANBAN -->
 
 **Investigation:** [investigation_007](../../)  

@@ -1,5 +1,7 @@
 # Run 035 - `sigreg-recon-residual`
 
+**Current W&B run name:** `Investigation 09 · Residual prediction · With reconstruction`
+
 <!-- AUTO-GENERATED-WANDB-KANBAN -->
 
 **Investigation:** [investigation_009](../)  

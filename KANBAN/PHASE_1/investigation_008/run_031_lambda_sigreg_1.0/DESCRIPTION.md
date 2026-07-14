@@ -1,5 +1,7 @@
 # Run 031 - `lambda_sigreg_1.0`
 
+**Current W&B run name:** `Investigation 08 · Isotropy weight · 1.0`
+
 <!-- AUTO-GENERATED-WANDB-KANBAN -->
 
 **Investigation:** [investigation_008](../)  

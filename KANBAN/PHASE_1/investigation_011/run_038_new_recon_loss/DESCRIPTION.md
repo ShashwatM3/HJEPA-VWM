@@ -1,5 +1,7 @@
 # Run 038 - `new_recon_loss`
 
+**Current W&B run name:** `Investigation 11 · Cosine reconstruction · Full prediction`
+
 <!-- AUTO-GENERATED-WANDB-KANBAN -->
 
 **Investigation:** [investigation_011](../)  

@@ -1,5 +1,7 @@
 # Run 024 - `light-universe-24`
 
+**Current W&B run name:** `Investigation 07 · Reconstruction weight · 0.50`
+
 <!-- AUTO-GENERATED-WANDB-KANBAN -->
 
 **Investigation:** [investigation_007](../../)  
