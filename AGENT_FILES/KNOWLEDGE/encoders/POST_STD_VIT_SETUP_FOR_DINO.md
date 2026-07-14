@@ -140,7 +140,10 @@ Stop if the worktree is dirty, tests fail, or the account is wrong. Export the c
 Step 3, then run the command the coding agent reports. Its expected shape is this:
 
 ```bash
-export DINO_SHA=<paste-the-40-character-candidate-revision-from-step-3>
+read -r -p "Paste the 40-character candidate DINO revision: " DINO_SHA
+[[ "$DINO_SHA" =~ ^[0-9a-f]{40}$ ]] \
+  || { echo "STOP: revision must be exactly 40 lowercase hexadecimal characters"; false; }
+export DINO_SHA
 
 python encoders.py --smoke \
   --encoder dinov3_vitb16 \

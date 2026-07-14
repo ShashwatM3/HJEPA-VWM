@@ -117,6 +117,7 @@ Newer investigation index (append to the table above):
 | [investigation_013](investigation_013/) | CLOSED | 053 | The residual reconstruction target (reconstruct e - mean) fixes the template shortcut (video gap +0.433, ~77% video-conditioned) but geometry still collapses (rank 10.5). H1 solved, H2 confirmed: an explicit anti-collapse force is required. |
 | [investigation_014](investigation_014/) | OPEN | none | Offline rank probe: frozen V-JEPA `e` has pooled entropy rank ~193/1024 with a long low-energy tail (rank@90% 333, rank@99% 785). Reframes e->c as selective denoising and motivates whitening. |
 | [investigation_015](investigation_015/) | OPEN | 054, 055 | Whitening + Perceiver latent-stack bottleneck on the residual recipe: strongest honesty yet (run 054, ~92% video-conditioned, shuffled-c pinned 0.975) at a much better geometry equilibrium (rank 21.9 vs 053's 10.5), but geometry still contracts — "neither delta sufficient." Run 055 (absolute-target ablation of 054) shows whitening alone reaches ~86% honesty with identical geometry, so the residual target buys ~6 points of honesty for zero geometric cost — it stays in the recipe. Bottleneck-only whitening-vs-architecture control still open. |
+| [investigation_016](investigation_016/) | OPEN | 058; 059 planned | The exact EGO4D sibling transfer of run 057 completed cleanly but failed: rank 52.9, std 0.419, cross-video cosine 0.863, and video gap 0.018 (~5.4% video-conditioned). The residual-target control remains next; run 059 is a parallel current-pipeline SigLIP recipe analogue. |
 
 Newer run index rows (append to the Complete W&B Run Index above):
 
@@ -125,3 +126,25 @@ Newer run index rows (append to the Complete W&B Run Index above):
 | 53 | [`ae_sharp_slots_residual_recon`](investigation_013/run_053_ae_sharp_slots_residual_recon/) | `7teohhwc` | crashed (external) | investigation_013 | present-only | Low-rank decodable |
 | 54 | [`ae_latent_stack_whiten_recon_only`](investigation_015/run_054_ae_latent_stack_whiten_recon_only/) | `lx1b6gw2` | finished | investigation_015 | present-only | Low-rank decodable |
 | 55 | [`ae_latent_stack_whiten_abs_recon`](investigation_015/run_055_ae_latent_stack_whiten_abs_recon/) | `nzz64pl6` | finished | investigation_015 | present-only | Low-rank decodable |
+| 56 | [`ae_latent_stack_whiten_abs_recon_geom`](investigation_015/run_056_ae_latent_stack_whiten_abs_recon_geom/) | `tl5dh73c` | finished | investigation_015 | present-only | Strong present representation |
+| 57 | [`ae_latent_stack_whiten_abs_recon_cov_var`](investigation_015/run_057_ae_latent_stack_whiten_abs_recon_cov_var/) | `cdvp6hou` | finished | investigation_015 | present-only | Strong present representation |
+| 58 | [`ae_latent_stack_whiten_abs_recon_cov_var_ego4d`](investigation_016/run_058_ae_latent_stack_whiten_abs_recon_cov_var_ego4d/) | `mvbx96nv` | finished | investigation_016 | present-only | Collapsed rep / template shortcut |
+
+## Update (2026-07-14) — investigation_016 (EGO4D transfer of run 057)
+
+- Source control: run 057 `ae_latent_stack_whiten_abs_recon_cov_var` (`cdvp6hou`), latest proper
+  experiment before the two EGO4D GUIDE smoke runs.
+- New investigation:
+  [`investigation_016`](investigation_016/) — EGO4D twin of that recipe.
+- Completed run:
+  [`run_058_ae_latent_stack_whiten_abs_recon_cov_var_ego4d`](investigation_016/run_058_ae_latent_stack_whiten_abs_recon_cov_var_ego4d/)
+  — W&B `mvbx96nv`; full
+  [`ANALYSIS.md`](investigation_016/run_058_ae_latent_stack_whiten_abs_recon_cov_var_ego4d/ANALYSIS.md).
+- Planned parallel branch:
+  [`run_059_siglip2_latent_stack_whiten_abs_recon_cov_var_ego4d`](investigation_016/run_059_siglip2_latent_stack_whiten_abs_recon_cov_var_ego4d/)
+  — same recipe on the current strict pipeline with SigLIP 2. Run 058 is historical context;
+  causal encoder attribution requires a same-commit V-JEPA companion.
+- Live W&B has 60 entries because two Investigation-16 switchability/regression smokes precede
+  the final science run. The local scientific sequence keeps the planned `run_058` label.
+- Result: stable execution but failed transfer (rank 52.9, cosine 0.863, std 0.419, video gap
+  0.018). Next controlled arm uses the residual reconstruction target on EGO4D.

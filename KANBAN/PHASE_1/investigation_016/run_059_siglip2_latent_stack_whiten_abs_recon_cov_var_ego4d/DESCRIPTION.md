@@ -12,25 +12,32 @@ SigLIP whitening, and resource evidence must pass before the 15,000-step launch.
 
 ## Question
 
-Does replacing run 058's frozen V-JEPA2 ViT-L/16 substrate with the implemented
-SigLIP 2 ViT-B/16 patch tower prevent the EGO4D absolute-target autoencoder from learning the
-same collapsed, video-independent template shortcut?
+How does the run-058 EGO4D absolute-target autoencoder recipe behave on the current strict
+pipeline when its frozen V-JEPA2 ViT-L/16 substrate is replaced by the implemented SigLIP 2
+ViT-B/16 patch tower?
 
-This is an encoder-substrate control of run 058, not the residual-target follow-up already
+This is a SigLIP recipe analogue of run 058, not the residual-target follow-up already
 pre-registered by that run. The objective, dataset, trainable architecture, seed, schedules, and
-loss weights remain fixed.
+loss weights are matched at the configuration level.
 
 ## Hypothesis
 
 SigLIP 2's still-image, language-aligned dense features may change the balance between shared
 spatial template and video-specific content enough to improve reconstruction honesty and abstract
 geometry. The counter-hypothesis is that the shortcut belongs to the absolute-target objective on
-EGO4D and therefore survives the encoder replacement.
+EGO4D and therefore survives in this recipe.
 
-## Control and intended delta
+## Historical reference and causal limit
 
-Control: [run 058](../run_058_ae_latent_stack_whiten_abs_recon_cov_var_ego4d/), W&B
+Historical recipe reference:
+[run 058](../run_058_ae_latent_stack_whiten_abs_recon_cov_var_ego4d/), W&B
 [`mvbx96nv`](https://wandb.ai/smahalanobis-uc-davis/hjepa-vwm/runs/mvbx96nv).
+
+Run 058 predates the current deterministic raw-data, encoder, stats, and provenance pipeline.
+Its trajectories are useful context, but run 059 is **not** a strict one-delta causal A/B against
+that historical checkpoint. A contemporaneous V-JEPA rerun on the same clean commit, current
+EGO4D fingerprint, physical batch, and strict artifact pipeline is required before any difference
+can be attributed only to the encoder.
 
 | Contract | Run 058 | Run 059 |
 |---|---|---|
@@ -41,11 +48,11 @@ Control: [run 058](../run_058_ae_latent_stack_whiten_abs_recon_cov_var_ego4d/), 
 | detailed tensor | `(B,1024,1024)` | `(B,2048,768)` |
 | whitening | V-JEPA/EGO4D artifact | newly fit SigLIP/EGO4D artifact |
 
-Those geometry, normalization, and whitening changes are consequences of selecting the encoder;
-they are not separately tunable interventions. The common pipeline still consumes only the
-resolved `EncoderSpec` and returns the same abstract tensor `(B,32,256)`.
+Within the current pipeline, those geometry, normalization, and whitening changes are consequences
+of selecting the encoder; they are not separately tunable interventions. The common pipeline still
+consumes only the resolved `EncoderSpec` and returns the same abstract tensor `(B,32,256)`.
 
-Everything below is held fixed:
+The following recipe fields match run 058:
 
 ```text
 data = ego4d                  present_recon_only = true
@@ -68,7 +75,8 @@ lr_decoder = 1e-4            physical batch = 64 (required control target)
 Raw reconstruction loss and raw frozen-feature rank are not directly comparable across V-JEPA
 and SigLIP feature spaces. The decisive shared-space readouts are abstract geometry, stability,
 `L_recon_video_gap`, and the fraction of reconstruction improvement that disappears when the
-latent is shuffled across videos. Follow Reading Cycle B.
+latent is shuffled across videos. Follow Reading Cycle B. Compare run 059 with run 058
+descriptively; reserve causal encoder claims for the future same-commit V-JEPA companion.
 
 Exact setup and launch commands: [GUIDE.md](GUIDE.md). Execution design and abort rules:
 [PLAN.md](PLAN.md).

@@ -2,9 +2,14 @@
 
 ## Scope
 
-Run the completed pluggable pipeline with `siglip2_vitb16` while preserving run 058's
-present-only, absolute-target, whitened EGO4D recipe. No production-code change is part of this
-run. DINO access and DINO implementation are not dependencies.
+Run the completed pluggable pipeline with `siglip2_vitb16` while reproducing run 058's
+present-only, absolute-target, whitened EGO4D recipe on the current strict implementation. No
+production-code change is part of this run. DINO access and DINO implementation are not
+dependencies.
+
+Run 058 predates the deterministic data/encoder/artifact refactor. It is a historical recipe
+reference, not a strict single-delta control. A same-commit V-JEPA companion must be run before
+making causal claims about encoder choice.
 
 ## Pre-launch work
 
@@ -21,12 +26,14 @@ run. DINO access and DINO implementation are not dependencies.
    100-step full-EGO4D W&B smoke from scratch.
 7. Launch 15,000 steps from scratch only after every gate passes.
 
-## Controlled recipe
+## Matched recipe
 
-The complete command is in [GUIDE.md](GUIDE.md). The only scientific intervention relative to
-[run 058](../run_058_ae_latent_stack_whiten_abs_recon_cov_var_ego4d/) is the frozen encoder
-substrate. Encoder-owned normalization, feature layout/dimension, revision, frame microbatch, and
-whitening identity necessarily follow that intervention.
+The complete command is in [GUIDE.md](GUIDE.md). Its objective, trainable architecture,
+hyperparameters, seed, and full-EGO4D intent match
+[run 058](../run_058_ae_latent_stack_whiten_abs_recon_cov_var_ego4d/). Encoder-owned
+normalization, feature layout/dimension, revision, frame microbatch, and whitening identity follow
+the SigLIP selection. Intervening implementation/data-order changes prevent treating the
+historical run as a one-delta control.
 
 Physical batch 64 is part of the control. Lowering only the encoder frame microbatch is allowed
 before statistics are fit because it changes execution chunking, not the selected token values,
@@ -83,7 +90,8 @@ First require clean stability and correct wiring. Then inspect:
 - the conditioned share of reconstruction improvement;
 - `grad_norm`, skipped/NaN steps, and AGC diagnostics.
 
-Compare trajectories with run 058, but do not compare raw reconstruction magnitudes as if the
-target spaces were identical. Success requires both healthy abstract geometry and a materially
-video-conditioned reconstruction. A stable low loss with a near-zero video gap is the same
-template-shortcut failure, not a win.
+Compare trajectories with run 058 as historical context, but do not compare raw reconstruction
+magnitudes as if the target spaces or execution commits were identical. Success for run 059
+requires both healthy abstract geometry and a materially video-conditioned reconstruction. A
+stable low loss with a near-zero video gap is the same template-shortcut failure, not a win.
+Encoder-causal comparison waits for the same-commit V-JEPA companion.

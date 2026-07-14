@@ -1,8 +1,10 @@
 # GUIDE — run 059 SigLIP 2 EGO4D encoder-substrate control
 
-This launches the run-058 recipe with the implemented SigLIP 2 ViT-B/16 patch encoder. It is
-independent of DINO. Do not copy commands from run 058's historical guide: that guide predates the
-strict encoder/stats/provenance contracts and its old whitening command is no longer valid.
+This reproduces the run-058 recipe on the current strict pipeline with the implemented SigLIP 2
+ViT-B/16 patch encoder. It is independent of DINO. Do not copy commands from run 058's historical
+guide: that guide predates the deterministic raw-data/encoder/stats/provenance contracts and its
+old whitening command is no longer valid. Consequently run 058 is a historical reference, not a
+causal one-delta control; causal encoder attribution needs a same-commit V-JEPA companion.
 
 Run every section in order on the RunPod. A command returning to the prompt with no traceback is
 not enough: check the stated verification. Stop at the first failed gate.
@@ -82,7 +84,7 @@ parameter_count = 85843200
 trainable_parameter_count = 0
 output_shape = [1, 2048, 768]
 output_finite = true
-device = cuda:0 (or the selected CUDA device)
+device = cuda
 ```
 
 The first call downloads/caches the official checkpoint. This adapter instantiates only the
@@ -170,6 +172,45 @@ python whiten_stats.py \
 
 python whiten_stats.py --inspect "$STATS"
 sha256sum "$STATS"
+
+python - "$STATS" "$SIGLIP_REV" "$FRAME_MB" <<'PY'
+import json
+import sys
+
+from provenance import WHITENING_EIGENSOLVER, load_whitening_envelope
+
+path, revision, frame_microbatch = sys.argv[1], sys.argv[2], int(sys.argv[3])
+envelope = load_whitening_envelope(path)
+metadata = envelope["metadata"]
+spec = metadata["encoder_spec"]
+summary = {
+    "transform_seed": metadata["transform_seed"],
+    "preprocessing_version": metadata["preprocessing_version"],
+    "input_geometry": metadata["input_geometry"],
+    "frame_microbatch": metadata["frame_microbatch"],
+    "eigensolver": metadata["eigensolver"],
+    "layout": spec["layout"],
+    "feature_dim": spec["feature_dim"],
+    "attention_implementation": spec["attention_implementation"],
+    "cache_dir": spec["cache_dir"],
+}
+print(json.dumps(summary, indent=2, sort_keys=True))
+assert metadata["transform_seed"] == 42
+assert metadata["input_geometry"] == [8, 256, 256]
+assert metadata["frame_microbatch"] == frame_microbatch
+assert metadata["eigensolver"] == WHITENING_EIGENSOLVER
+assert spec["requested_revision"] == revision
+assert spec["resolved_revision"] == revision
+assert spec["feature_dim"] == 768
+assert spec["layout"]["temporal"] == 8
+assert spec["layout"]["height"] == spec["layout"]["width"] == 16
+assert spec["layout"]["flatten_order"] == "time_y_x"
+assert spec["layout"]["temporal_unit"] == "frame"
+assert spec["frame_microbatch"] == frame_microbatch
+assert spec["attention_implementation"] == "sdpa"
+assert spec["cache_dir"] == "/workspace/hf_cache"
+print("full whitening metadata contract OK")
+PY
 ```
 
 Verify:
@@ -412,5 +453,7 @@ tail -n 20 "$LOG"
 
 Confirm W&B reached the final step and its summary contains the same final checkpoint SHA-256.
 Record the W&B ID/URL in [DESCRIPTION.md](DESCRIPTION.md), then ask the coding agent to perform
-Reading Cycle B against run 058. Do not declare success from reconstruction loss alone and do not
-compare the two encoders' raw reconstruction values as though they share a target space.
+Reading Cycle B with run 058 as historical context. Do not declare success from reconstruction
+loss alone and do not compare the two encoders' raw reconstruction values as though they share a
+target space. Before claiming an encoder-caused difference, create and run the current-commit
+V-JEPA companion with its own newly validated stats/provenance.
