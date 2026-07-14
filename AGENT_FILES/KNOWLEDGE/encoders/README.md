@@ -16,6 +16,10 @@ plan for making HJEPA-VWM encoder-pluggable.
    DINO-independent common work, separate SigLIP/DINO lanes, a final join gate, manual
    access/EGO4D coordination, copy/paste implementation prompts, whitening/resource
    preflights, concurrent-or-sequential launch blocks, and full-mode follow-up.
+5. [`POST_STD_VIT_SETUP_FOR_DINO.md`](POST_STD_VIT_SETUP_FOR_DINO.md) — the immediate
+   post-SigLIP handoff: gated-access verification, credential-safe RunPod authentication,
+   candidate revision capture, offline and real adapter prompts, stable-alias proof, and the
+   final DINO/SigLIP join gate.
 
 The first pair is intentionally shape-matched: both frame encoders produce an
 8x16x16 lattice of 768-dimensional patch tokens at 256px. Neither is temporally aware, so
