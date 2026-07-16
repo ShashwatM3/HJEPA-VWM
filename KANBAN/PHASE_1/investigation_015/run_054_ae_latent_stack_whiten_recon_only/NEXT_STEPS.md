@@ -16,11 +16,13 @@ the 32 slots can explain by themselves.
 
 - This run belongs to `investigation_015`: latent-stack bottleneck + whitened features.
 - Previous: Run 053 (raw-space residual target) — this run whitens it and adds slot competition.
-- Next planned: Run 055 [`ae_latent_stack_whiten_abs_recon`](../run_055_ae_latent_stack_whiten_abs_recon/)
-  (PLANNED, not launched) — this recipe minus the residual target, testing whether whitening
-  alone blocks the run-052 template shortcut (whitening removes the global mean but the
-  per-position mean ~89.7 survives, so a partial template remains available). It fills the
-  {absolute, residual} x {raw, whitened} honesty 2x2.
+- ~~Next planned: Run 055
+  [`ae_latent_stack_whiten_abs_recon`](../run_055_ae_latent_stack_whiten_abs_recon/).~~ Completed
+  as W&B `nzz64pl6`. Removing the residual target left geometry unchanged and reduced the
+  conditioned share from about 92% to 86%, so the residual target was useful but was not the
+  geometry lever.
+- Runs 056 and 057 then supplied the explicit anti-collapse test. Run 057, covariance plus the
+  variance floor without SIGReg, is the settled SSv2 present-only recipe.
 
 ## Next steps, ordered by information per GPU-hour (from ANALYSIS_054)
 

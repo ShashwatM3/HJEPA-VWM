@@ -41,3 +41,22 @@ reproduces the run-058 recipe with SigLIP 2 on the current strict pipeline. It d
 the preregistered residual-target arm. Because run 058 predates the deterministic
 data/encoder/artifact refactor, it is a historical reference; a same-commit V-JEPA companion is
 required for causal encoder attribution.
+
+## Weight ablation (absolute target)
+
+[`run_060_ae_latent_stack_whiten_abs_recon_cov_var_ego4d_recon1/`](run_060_ae_latent_stack_whiten_abs_recon_cov_var_ego4d_recon1/)
+finished as W&B [`2423b84g`](https://wandb.ai/smahalanobis-uc-davis/hjepa-vwm/runs/2423b84g).
+It was intended as the run-058 EGO4D AE recipe with sole config delta
+`lambda_recon: 0.05 → 1.0`: same whitening path, absolute target, and cov+var. It finished with
+healthier recorded-batch geometry but only a 0.007 reconstruction improvement and 7.66%
+exact-chunk conditioned share. Intervening runtime changes prevent a causal one-variable claim,
+and the single-source validation batch prevents a global cross-source honesty claim. Full result:
+[`run_060.../ANALYSIS.md`](run_060_ae_latent_stack_whiten_abs_recon_cov_var_ego4d_recon1/ANALYSIS.md).
+
+## Reconstruction-floor architecture audit
+
+[`reconstruction_floor_architecture_audit/`](reconstruction_floor_architecture_audit/)
+traces the full present-only path and corrects the interpretation boundary discovered after run
+058: its EGO4D fixed validation batch contains 16 adjacent chunks from one source UID, so the
+recorded shuffled-code and “cross-video” metrics are not cross-source measurements. The raw loss
+plateau remains real; the global template-collapse claim requires source-diverse remeasurement.

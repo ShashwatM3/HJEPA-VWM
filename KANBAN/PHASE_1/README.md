@@ -4,7 +4,10 @@
 
 Phase 1 currently covers coarse dynamics only: frozen V-JEPA 2 encoder, trainable bottleneck `B`, EMA bottleneck `B_EMA`, coarse flow `F_c`, optional feature reconstruction decoder `D`, and diagnostic/regularization knobs used to understand collapse, rank, temporal dynamics, reconstruction honesty, and prediction baselines.
 
-## Current Status (W&B-Verified 2026-07-02)
+## Historical W&B Snapshot (verified 2026-07-02)
+
+This generated snapshot and its run table are preserved for chronology. They stop at run 052;
+use the dated updates below—especially the 2026-07-16 reconciliation—for current state.
 
 - W&B project: `smahalanobis-uc-davis/hjepa-vwm`.
 - Live W&B project query found **52 runs** in creation order.
@@ -92,14 +95,14 @@ Phase 1 currently covers coarse dynamics only: frozen V-JEPA 2 encoder, trainabl
 
 ## Reading Rule
 
-Use [`GUIDES/READING_EXPERIMENTS.md`](../GUIDES/READING_EXPERIMENTS.md) for every run. Full-prediction and present-only runs use different cycles and must not be compared with the same gates.
+Use [`GUIDES/READING_EXPERIMENTS.md`](../../GUIDES/READING_EXPERIMENTS.md) for every run. Full-prediction and present-only runs use different cycles and must not be compared with the same gates.
 
 ---
 
 ## Update (2026-07-05, post-auto-generation) — investigations 013-015, runs 053-055
 
 The auto-generated status block and run table above were produced when run 052 was the newest
-run and still running. Current W&B-verified state:
+run and still running. State at the time of this dated update:
 
 - **55 runs** total in the project (`smahalanobis-uc-davis/hjepa-vwm`). Run 052 finished; runs
   053 and 054 completed after the auto-generation; run 055 is planned/not launched.
@@ -117,7 +120,7 @@ Newer investigation index (append to the table above):
 | [investigation_013](investigation_013/) | CLOSED | 053 | The residual reconstruction target (reconstruct e - mean) fixes the template shortcut (video gap +0.433, ~77% video-conditioned) but geometry still collapses (rank 10.5). H1 solved, H2 confirmed: an explicit anti-collapse force is required. |
 | [investigation_014](investigation_014/) | OPEN | none | Offline rank probe: frozen V-JEPA `e` has pooled entropy rank ~193/1024 with a long low-energy tail (rank@90% 333, rank@99% 785). Reframes e->c as selective denoising and motivates whitening. |
 | [investigation_015](investigation_015/) | OPEN | 054, 055 | Whitening + Perceiver latent-stack bottleneck on the residual recipe: strongest honesty yet (run 054, ~92% video-conditioned, shuffled-c pinned 0.975) at a much better geometry equilibrium (rank 21.9 vs 053's 10.5), but geometry still contracts — "neither delta sufficient." Run 055 (absolute-target ablation of 054) shows whitening alone reaches ~86% honesty with identical geometry, so the residual target buys ~6 points of honesty for zero geometric cost — it stays in the recipe. Bottleneck-only whitening-vs-architecture control still open. |
-| [investigation_016](investigation_016/) | OPEN | 058; 059 planned | The exact EGO4D sibling transfer of run 057 completed cleanly but failed: rank 52.9, std 0.419, cross-video cosine 0.863, and video gap 0.018 (~5.4% video-conditioned). The residual-target control remains next; run 059 is a parallel current-pipeline SigLIP recipe analogue. |
+| [investigation_016](investigation_016/) | OPEN | 058, 060; 059 planned | Run 060 completed the reconstruction-weight-1 arm: late geometry was healthier than historical run 058 (rank 84.4, std 0.800, recorded pair cosine 0.479), but reconstruction moved only 0.007 and exact-chunk conditioned share remained 7.66%. The fixed EGO4D batch contains one source UID, so global cross-source honesty remains unmeasured; measurement repair/oracles now precede the residual-target and SigLIP branches. |
 
 Newer run index rows (append to the Complete W&B Run Index above):
 
@@ -129,6 +132,7 @@ Newer run index rows (append to the Complete W&B Run Index above):
 | 56 | [`ae_latent_stack_whiten_abs_recon_geom`](investigation_015/run_056_ae_latent_stack_whiten_abs_recon_geom/) | `tl5dh73c` | finished | investigation_015 | present-only | Strong present representation |
 | 57 | [`ae_latent_stack_whiten_abs_recon_cov_var`](investigation_015/run_057_ae_latent_stack_whiten_abs_recon_cov_var/) | `cdvp6hou` | finished | investigation_015 | present-only | Strong present representation |
 | 58 | [`ae_latent_stack_whiten_abs_recon_cov_var_ego4d`](investigation_016/run_058_ae_latent_stack_whiten_abs_recon_cov_var_ego4d/) | `mvbx96nv` | finished | investigation_016 | present-only | Collapsed rep / template shortcut |
+| 60 | [`Investigation 16 · Whitened latent stack EGO4D · Reconstruction weight 1.00`](investigation_016/run_060_ae_latent_stack_whiten_abs_recon_cov_var_ego4d_recon1/) | `2423b84g` | finished | investigation_016 | present-only | Healthy recorded-batch geometry; weak/source-confounded conditioning |
 
 ## Update (2026-07-14) — investigation_016 (EGO4D transfer of run 057)
 
@@ -147,4 +151,22 @@ Newer run index rows (append to the Complete W&B Run Index above):
 - Live W&B has 60 entries because two Investigation-16 switchability/regression smokes precede
   the final science run. The local scientific sequence keeps the planned `run_058` label.
 - Result: stable execution but failed transfer (rank 52.9, cosine 0.863, std 0.419, video gap
-  0.018). Next controlled arm uses the residual reconstruction target on EGO4D.
+  0.018). Residual-target control remains queued.
+- At that date, the 2026-07-15 planned weight arm was:
+  [`run_060_ae_latent_stack_whiten_abs_recon_cov_var_ego4d_recon1`](investigation_016/run_060_ae_latent_stack_whiten_abs_recon_cov_var_ego4d_recon1/)
+  — run 058 absolute-target AE recipe with `lambda_recon=1.0` only.
+
+## Update (2026-07-16) — run 060 completed and live project reconciled
+
+- Live W&B now has **61 entries**. Run 060 `2423b84g` is the newest and finished all 15,000
+  steps; run 059 has no W&B counterpart and remains genuinely unlaunched.
+- Run 060 ended with rank `84.36`, std `0.800`, recorded pair cosine `0.479`, present reconstruction
+  `0.67091`, rolled-code reconstruction `0.69736`, and gap `0.02644` (7.66% exact-chunk
+  conditioned share). It is stable and geometrically healthy on the recorded batch, but not
+  prediction-ready.
+- The 16 EGO4D diagnostic chunks all share one source UID. Treat the cosine/gap as within-source
+  adjacent-chunk measurements until the source-aware validation contract is repaired.
+- Full run record:
+  [`run_060.../ANALYSIS.md`](investigation_016/run_060_ae_latent_stack_whiten_abs_recon_cov_var_ego4d_recon1/ANALYSIS.md);
+  ordered follow-up:
+  [`reconstruction_floor_architecture_audit/NEXT_STEPS.md`](investigation_016/reconstruction_floor_architecture_audit/NEXT_STEPS.md).

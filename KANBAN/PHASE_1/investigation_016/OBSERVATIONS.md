@@ -10,5 +10,43 @@ template even though optimization is stable.
 
 The configuration/wiring checks pass, which localizes the failure to substrate-specific target,
 whitening/generalization, or objective behavior rather than the dataset flag silently failing.
-The next controlled test is the same EGO4D recipe with the residual reconstruction target active.
 Full evidence: [`run_058_ae_latent_stack_whiten_abs_recon_cov_var_ego4d/ANALYSIS.md`](run_058_ae_latent_stack_whiten_abs_recon_cov_var_ego4d/ANALYSIS.md).
+
+## 2026-07-15 — planned run 060 (`lambda_recon=1.0` absolute-target arm)
+
+Human-requested weight extreme on the run-058 absolute-target EGO4D AE recipe. Folder:
+[`run_060_ae_latent_stack_whiten_abs_recon_cov_var_ego4d_recon1/`](run_060_ae_latent_stack_whiten_abs_recon_cov_var_ego4d_recon1/).
+The residual-target control remains in the queue; the run-058 audit still prefers residual
+honesty before interpreting weight sweeps.
+
+## 2026-07-16 — correction: run-058 global collapse label is not established
+
+The fixed EGO4D validation batch is the lexically first 16 chunks and all share source UID
+`01cab463-9a16-4817-84a4-a00ef5b7bf39`. `torch.roll` therefore substitutes an adjacent chunk
+from the same recording, not another source video's code, and `c_cross_video_cosine` is a
+within-source measurement. The `0.018` gap still proves weak exact-chunk discrimination on that
+batch, but the prior 5.4% “video-conditioned share” cannot distinguish a global template from
+shared source/wearer/scene content. Preserve the original conclusion above as history, but do not
+use it as a cross-source claim.
+
+The reconstruction plateau itself survives the correction: late random-training-batch means are
+`0.70695` for SSv2 run 057 and `0.69610` for EGO4D run 058. The architecture audit identifies
+full ZCA target isotropization plus the early 1,024→256 channel projection and 128:1 overall
+bottleneck as the leading dataset-independent floor mechanism. Full evidence:
+[`reconstruction_floor_architecture_audit/ANALYSIS.md`](reconstruction_floor_architecture_audit/ANALYSIS.md).
+
+## 2026-07-16 — run 060 finished; reconstruction underweighting not supported
+
+Run 060 (`2423b84g`) completed all 15,000 steps with zero skipped/NaN updates. Its final recorded
+geometry was healthier than historical run 058: effective rank `84.36`, std `0.800`, pair cosine
+`0.479`, centered slot rank `30.81`. But present reconstruction improved only from run 058's
+`0.67825` to `0.67091`, while rolled-code reconstruction was `0.69736`; the gap `0.02644` is only
+7.66% of the learned improvement.
+
+That gap remains an exact-adjacent-chunk, within-source measurement because the fixed batch still
+contains one UID. The comparison is also observational rather than causal: run 060 executed after
+the deterministic initialization/data-order, pinned-encoder, strict-whitening, and provenance
+refactor. The result is sufficient to reject simple scalar underweighting as the leading account,
+but not to assign the geometry difference to `lambda_recon` or to declare global template collapse.
+Full read:
+[`run_060.../ANALYSIS.md`](run_060_ae_latent_stack_whiten_abs_recon_cov_var_ego4d_recon1/ANALYSIS.md).

@@ -95,7 +95,12 @@ matches run 053. One visible wiring consequence: `recon_mean_norm` is ~89.7 here
 ## Chronological Linkage
 
 - Previous W&B run: Run 053 [`ae_sharp_slots_residual_recon`](../../investigation_013/run_053_ae_sharp_slots_residual_recon/) (the raw-space residual-target baseline this run whitens).
-- Next: Run 055 [`ae_latent_stack_whiten_abs_recon`](../run_055_ae_latent_stack_whiten_abs_recon/) (PLANNED) — this recipe minus the residual target, to fill the {absolute, residual} x {raw, whitened} honesty 2x2. Also still open and load-bearing: the bottleneck-only control (drop the two whitening flags, keep the residual target) that would attribute the 053->054 improvement between architecture and whitening.
+- Next: Run 055 [`ae_latent_stack_whiten_abs_recon`](../run_055_ae_latent_stack_whiten_abs_recon/)
+  (completed as W&B `nzz64pl6`) removed the residual target to fill the {absolute, residual} x
+  {raw, whitened} honesty 2x2. It left geometry unchanged and reduced conditioned improvement
+  from about 92% to 86%, so the residual target stayed in the recipe. The bottleneck-only control
+  (drop the two whitening flags, keep the residual target) remains open only for causal
+  architecture-versus-whitening attribution.
 - Parent investigation conclusion: "neither delta sufficient" — geometry still contracts, but at a much better equilibrium; H2 re-confirmed a third time.
 
 ## How To Read This Run

@@ -61,3 +61,25 @@ Run 054's per-run triad now lives in its own folder:
 [`run_054_ae_latent_stack_whiten_recon_only/`](run_054_ae_latent_stack_whiten_recon_only/)
 (DESCRIPTION / OBSERVATIONS / NEXT_STEPS). The full narrative analysis remains at the
 investigation level in [`ANALYSIS_054.md`](ANALYSIS_054.md).
+
+## 2026-07-05 to 2026-07-06 — runs 055–057 close the geometry branch
+
+- Run 055 (`nzz64pl6`) isolated the absolute target against run 054. It finished at rank
+  `21.48`, centered slot rank `12.08`, cosine `0.824`, and std `0.397`, essentially identical
+  geometry. Its conditioned share fell from about `92%` to `86%`; residual targeting therefore
+  buys honesty without causing the contraction.
+- Run 056 (`tl5dh73c`) added `lambda_var=0.5`, `lambda_cov=0.01`, and
+  `lambda_sigreg=5`. It finished cleanly at rank `201.58`, centered slot rank `29.87`, cosine
+  `0.0168`, std `1.028`, reconstruction `0.73076`, and video gap `0.20362`. Explicit geometry
+  pressure solves the contraction that reconstruction alone did not.
+- Run 057 (`cdvp6hou`) removed only SIGReg. It retained or improved the result: rank `208.22`,
+  centered slot rank `30.71`, cosine `0.0585`, std `1.117`, reconstruction `0.71285`, shuffled
+  reconstruction `0.93966`, and video gap `0.22681`. Attention also stayed broader and gradients
+  were calmer. Covariance is the operative rank lever; SIGReg imposed a small reconstruction and
+  attention-specialization tax.
+
+The branch's settled geometry bundle and absolute-target SSv2 control is run 057; the
+residual-target-plus-geometry combination remains unrun. Full reads:
+[`run_055.../ANALYSIS.md`](run_055_ae_latent_stack_whiten_abs_recon/ANALYSIS.md),
+[`run_056.../ANALYSIS.md`](run_056_ae_latent_stack_whiten_abs_recon_geom/ANALYSIS.md), and
+[`run_057.../ANALYSIS.md`](run_057_ae_latent_stack_whiten_abs_recon_cov_var/ANALYSIS.md).

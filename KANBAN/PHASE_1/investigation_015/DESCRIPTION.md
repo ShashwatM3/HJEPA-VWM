@@ -2,7 +2,8 @@
 
 ## Status
 
-OPEN
+OPEN — runs 054–057 are complete. The clean whitening-versus-latent-stack attribution control
+remains unrun, but the operational SSv2 recipe and regularizer conclusion are settled.
 
 ## Question
 
@@ -36,3 +37,20 @@ Both changes ship in ONE run (pod time constraint). [`README.md`](README.md) def
 to attribute the outcome to each change independently from the logged metrics;
 [`GUIDE.md`](GUIDE.md) is the pod launch procedure, including the one-time whitening
 statistics prerequisite.
+
+## Current conclusion (2026-07-16)
+
+- Run 054 made reconstruction maximally honest but did not hold geometry: rank `21.93`,
+  centered slot rank `12.13`, and about `92%` video-conditioned decoder improvement.
+- Run 055 removed the residual target. Geometry was unchanged and honesty fell to about `86%`,
+  so the residual target remains useful at no geometric cost.
+- Run 056 added variance, covariance, and SIGReg. Geometry became genuinely strong (rank
+  `201.58`, centered slot rank `29.87`) while reconstruction remained code-conditioned.
+- Run 057 removed only SIGReg and improved the joint result: rank `208.22`, reconstruction
+  `0.71285`, video gap `0.22681`, broader attention, and calmer gradients. Covariance plus the
+  variance floor—not SIGReg—is the settled geometry bundle.
+
+Run 057 therefore became the absolute-target SSv2 present-only control transferred into
+[`investigation_016`](../investigation_016/). These runs do not establish forecasting success;
+`F_c` was inactive throughout. The residual-target-plus-covariance/variance combination remains
+unrun, so run 057 settles the geometry bundle, not the final honesty objective.

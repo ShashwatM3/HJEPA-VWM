@@ -2,11 +2,15 @@
 
 **Current W&B run name:** `Investigation 15 · Whitened latent stack · Full geometry`
 
+**W&B:** [`tl5dh73c`](https://wandb.ai/smahalanobis-uc-davis/hjepa-vwm/runs/tl5dh73c)
+
 ## Status
 
-PLANNED — not launched. W&B group `inv015_ae_latent_stack_whiten` (overlays runs 054/055).
-Mode: present-only autoencoder (Reading Cycle B). Why this run:
-[`HYPOTHESIS.md`](HYPOTHESIS.md). Launch: [`GUIDE.md`](GUIDE.md).
+FINISHED — full 15,000-step schedule completed; final training row at step 14,950 and final
+diagnostic at step 14,500. Reading Cycle B verdict: **Strong present representation**. The full
+W&B-backed read is in [`ANALYSIS.md`](ANALYSIS.md), with the compact cycle in
+[`OBSERVATIONS.md`](OBSERVATIONS.md) and the retrospective successor chain in
+[`NEXT_STEPS.md`](NEXT_STEPS.md).
 
 ## What this run is
 
@@ -101,3 +105,22 @@ Seed 42, same init path as runs 054/055 (train from scratch — do NOT `--resume
 checkpoint, rejected by architecture, nor 054/055, to keep the init comparable). SIGReg adds
 stochastic projections via its own per-step generator; this is the same stochasticity the
 inv008/inv011 sigreg runs carried and does not affect the other gradient paths.
+
+## Result and chronological linkage
+
+The geometry bundle decisively stopped the contraction seen in run 055. At the final diagnostic,
+effective rank was `201.58/256`, mean per-dimension std was `1.028`, cross-video cosine was
+`0.0168`, centered slot rank was `29.87/32`, and dead-dimension fraction was zero. Reconstruction
+remained code-conditioned (`L_recon_present=0.73076`, shuffled-code loss `0.93438`, gap `0.20362`,
+about 74.6% of the learned improvement conditioned on the correct code), although honesty was
+weaker than the zero-geometry run 055.
+
+The immediately following science run was run 057
+[`ae_latent_stack_whiten_abs_recon_cov_var`](../run_057_ae_latent_stack_whiten_abs_recon_cov_var/)
+([`cdvp6hou`](https://wandb.ai/smahalanobis-uc-davis/hjepa-vwm/runs/cdvp6hou)). It removed only
+SIGReg and retained covariance plus the variance floor. Run 057 preserved or improved every
+important property: rank `208.22`, centered slot rank `30.71`, reconstruction `0.71285`, video gap
+`0.22681`, and about 78.0% conditioned improvement, with broader attention and calmer gradients.
+That successor identifies covariance as the operative rank lever and makes run 057, not run 056,
+the settled absolute-target SSv2 control for that bundle. The residual-target-plus-geometry
+combination remains unrun.
