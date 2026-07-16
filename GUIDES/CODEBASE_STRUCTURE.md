@@ -210,6 +210,7 @@ python -c "from diagnostics import smoke_test_diagnostics; smoke_test_diagnostic
 | [`AGENT_FILES/AGENT-BEHAVIOUR/PROTOCOL.md`](../AGENT_FILES/AGENT-BEHAVIOUR/PROTOCOL.md) | Agents | Phase discipline, escalation |
 | [`AGENT_FILES/AGENT-BEHAVIOUR/CODE_DESIGN.md`](../AGENT_FILES/AGENT-BEHAVIOUR/CODE_DESIGN.md) | Agents | Naming map, docstrings, detach rules |
 | [`AGENT_FILES/GUIDE_AGENT_SSH_ACCESS.md`](../AGENT_FILES/GUIDE_AGENT_SSH_ACCESS.md) | Humans + agents | SSH key/alias setup, remote authorization, Git sync, tmux launch, monitoring, and revocation |
+| [`AGENT_FILES/GUIDE_AUTONOMOUS_REMOTE_RUN.md`](../AGENT_FILES/GUIDE_AUTONOMOUS_REMOTE_RUN.md) | Agents | Unattended execution state machine from a provider SSH command plus a KANBAN run guide |
 | [`.agents/skills/run-remote-experiment/SKILL.md`](../.agents/skills/run-remote-experiment/SKILL.md) | Agents | Auto-discovered SSH/RunPod/tmux experiment-execution workflow |
 | [`AGENT_FILES/KNOWLEDGE/encoders/README.md`](../AGENT_FILES/KNOWLEDGE/encoders/README.md) | Both | Encoder research, shipped SigLIP/V-JEPA status, DINO gate, and paired-run execution plan |
 | [`GUIDES/README.md`](README.md) | Humans + agents | Index of all guides (this folder) |

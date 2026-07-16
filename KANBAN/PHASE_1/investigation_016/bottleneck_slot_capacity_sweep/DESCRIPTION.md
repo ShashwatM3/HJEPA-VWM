@@ -1,4 +1,4 @@
-# Bottleneck slot-capacity sweep — V-JEPA, whitened reconstruction, EGO4D + SSv2
+# Bottleneck slot-capacity sweep — V-JEPA, whitened reconstruction, EGO4D
 
 **Status:** PLANNED — not launched
 
@@ -6,7 +6,7 @@
 
 **Mode:** present-reconstruction-only
 
-**Sweep bundle:** six independent W&B runs; IDs are recorded here after launch.
+**Sweep bundle:** three independent EGO4D W&B runs; IDs are recorded here after launch.
 
 ## Question
 
@@ -27,11 +27,9 @@ dimension. A flat result rules out “more slots” as the leading fix; it does 
 ## Hypothesis
 
 If 32 slots cap the information that `B` can route to `D`, increasing `N_c` should produce a
-monotonic within-dataset decrease in late reconstruction loss. The effect should appear on both
-EGO4D and SSv2 if it is a dataset-independent architectural bandwidth limit. If the curve stays
-flat across a 4x bandwidth increase, slot count is not the leading cause of the floor and the next
-direct levers are whitening and the 1,024-to-256 channel projection—not another reconstruction
-weight ladder.
+monotonic decrease in late EGO4D reconstruction loss. If the curve stays flat across a 4x bandwidth
+increase, slot count is not the leading cause of the EGO4D floor and the next direct levers are
+whitening and the 1,024-to-256 channel projection—not another reconstruction weight ladder.
 
 ## Core arm matrix
 
@@ -43,9 +41,6 @@ and the abstract tensor contains:
 | EGO4D | 32 | 8,192 | 128:1 | `Investigation 16 · Bottleneck capacity · EGO4D 32 slots` |
 | EGO4D | 64 | 16,384 | 64:1 | `Investigation 16 · Bottleneck capacity · EGO4D 64 slots` |
 | EGO4D | 128 | 32,768 | 32:1 | `Investigation 16 · Bottleneck capacity · EGO4D 128 slots` |
-| SSv2 | 32 | 8,192 | 128:1 | `Investigation 16 · Bottleneck capacity · SSv2 32 slots` |
-| SSv2 | 64 | 16,384 | 64:1 | `Investigation 16 · Bottleneck capacity · SSv2 64 slots` |
-| SSv2 | 128 | 32,768 | 32:1 | `Investigation 16 · Bottleneck capacity · SSv2 128 slots` |
 
 The 32-slot arms are rerun rather than borrowed from runs 057/060 because the sweep needs one clean
 commit, one current encoder identity, one current whitening/provenance contract, and one launch
@@ -54,7 +49,7 @@ cannot serve as a byte-identical control for new arms.
 
 ## Fixed recipe
 
-Every arm uses V-JEPA2 ViT-L/16, full dataset, seed 42, batch 64, 15,000 steps, the three-block
+Every arm uses V-JEPA2 ViT-L/16, full EGO4D, seed 42, batch 64, 15,000 steps, the three-block
 latent-stack bottleneck, 512x4 fixed-position decoder, absolute cosine reconstruction, fixed full
 ZCA whitening, `lambda_recon=1.0`, `lambda_var=0.5`, `lambda_cov=0.01`, and no SIGReg or slot loss.
 
@@ -89,14 +84,15 @@ input-dependent-query architecture change is included in this sweep.
 - Run 060 (`2423b84g`, EGO4D, 32 slots, reconstruction weight 1.0) finished stably at
   `L_recon_present=0.67091`; increasing the weight by 20x moved the floor only about 0.007.
 
-Those values motivate this sweep; they are not substitute controls for its six same-commit arms.
+Those values motivate this sweep; they are not substitute controls for its three same-commit EGO4D
+arms.
 
 ## Interpretation boundary
 
 The EGO4D fixed validation batch in current code contains adjacent chunks from one source UID.
 Therefore its shuffled-code gap is an exact-chunk/within-source readout, not proof of cross-source
-conditioning. The capacity decision uses within-dataset late reconstruction curves first and treats
-the EGO4D gap as secondary. Prediction is inactive, so no result from this bundle can establish
+conditioning. The capacity decision uses the EGO4D late reconstruction curve first and treats the
+EGO4D gap as secondary. Prediction is inactive, so no result from this bundle can establish
 forecasting or pass the copy/batch-mean gates.
 
 Execution: [`GUIDE.md`](GUIDE.md). Design and decision rules: [`PLAN.md`](PLAN.md).

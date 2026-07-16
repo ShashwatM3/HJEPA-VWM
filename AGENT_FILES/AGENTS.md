@@ -112,6 +112,7 @@ change — update the agent-maintained docs instead (§2.3).
 | [`GUIDES/original_brief.pdf`](../GUIDES/original_brief.pdf) | Frozen v0.1 baseline. |
 | [`AGENT_FILES/SETUPS/SETUP.md`](SETUPS/SETUP.md) | First-time human deploy (laptop → RunPod) — operator journey, not agent contract. |
 | [`AGENT_FILES/GUIDE_AGENT_SSH_ACCESS.md`](GUIDE_AGENT_SSH_ACCESS.md) | Human-owned SSH credential setup and remote-agent authorization contract. |
+| [`AGENT_FILES/GUIDE_AUTONOMOUS_REMOTE_RUN.md`](GUIDE_AUTONOMOUS_REMOTE_RUN.md) | Agent-facing state machine for unattended execution from a provider SSH command plus a KANBAN `GUIDE.md`. |
 | [`AGENT_FILES/AGENT-BEHAVIOUR/CODE_DESIGN.md`](AGENT-BEHAVIOUR/CODE_DESIGN.md) | Coding conventions — humans set style; agents follow, not redefine. |
 | [`AGENT_FILES/AGENT-BEHAVIOUR/PROTOCOL.md`](AGENT-BEHAVIOUR/PROTOCOL.md) | Agent governance — humans set rules; agents follow §0–§2 here first. |
 | [`KANBAN/PROTOCOL.md`](../KANBAN/PROTOCOL.md) | KANBAN triad rules — humans set record-keeping policy. |
@@ -247,6 +248,7 @@ Agent and architecture docs:
 | `AGENT_FILES/AGENT-BEHAVIOUR/CODE_DESIGN.md` | Flat-file layout, naming, docstrings, detach rules. |
 | `AGENT_FILES/AGENT-BEHAVIOUR/WORKFLOW.md` | Redirect → [`GUIDES/EXPERIMENT_LIFECYCLE.md`](../GUIDES/EXPERIMENT_LIFECYCLE.md). |
 | `AGENT_FILES/GUIDE_AGENT_SSH_ACCESS.md` | Human setup + agent contract for SSH, remote Git sync, tmux launches, and monitoring. |
+| `AGENT_FILES/GUIDE_AUTONOMOUS_REMOTE_RUN.md` | Autonomous, observable end-to-end execution from a raw SSH command and run guide. |
 | `AGENT_FILES/SETUPS/VOLUME_LAYOUT.md` | RunPod `/workspace` data/checkpoint/cache layout. |
 | `.agents/skills/run-remote-experiment/SKILL.md` | Repository skill for SSH/RunPod/tmux experiment execution; shared with Claude Code through `.claude/skills`. |
 | `AGENT_FILES/KNOWLEDGE/encoders/README.md` | Encoder research/status index and RunPod guide. Common pluggability plus V-JEPA/SigLIP adapters are shipped; DINO and the real join remain gated. |

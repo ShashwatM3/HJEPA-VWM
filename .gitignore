@@ -6,6 +6,8 @@ __pycache__/
 .ruff_cache/
 .env
 wandb/
+/logs/
+/run.log
 checkpoints/
 archive/
 *.pt

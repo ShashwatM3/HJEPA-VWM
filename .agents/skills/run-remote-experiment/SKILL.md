@@ -11,6 +11,11 @@ Read [`AGENT_FILES/GUIDE_AGENT_SSH_ACCESS.md`](../../../AGENT_FILES/GUIDE_AGENT_
 before the first SSH command in a task. Treat it as the credential, authorization, synchronization,
 execution, and reporting contract.
 
+For an end-to-end or unattended launch, also read
+[`AGENT_FILES/GUIDE_AUTONOMOUS_REMOTE_RUN.md`](../../../AGENT_FILES/GUIDE_AUTONOMOUS_REMOTE_RUN.md)
+before the first SSH command. It is the default state machine when the human provides a raw SSH
+command plus a KANBAN `GUIDE.md` path and expects the agent to finish the workflow autonomously.
+
 Also read the task-specific sources in this order:
 
 1. `AGENT_FILES/AGENTS.md` and `AGENT_FILES/AGENT-BEHAVIOUR/PROTOCOL.md`.
