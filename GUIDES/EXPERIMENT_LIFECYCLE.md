@@ -149,13 +149,18 @@ Update `PLAN.md` / `GUIDE.md` if implementation diverged from the draft plan.
 
 ## Stage 4 — Deploy pod and run
 
-**Who:** Human operator (not the agent by default).
+**Who:** Human operator, or a coding agent explicitly authorized for remote bootstrap/launch.
 
 **Read order on the pod:**
 
-1. [`AGENT_FILES/SETUPS/NEW_POD.md`](../AGENT_FILES/SETUPS/NEW_POD.md) — system packages, pip, W&B, HF cache.
+1. [`AGENT_FILES/SETUPS/NEW_POD.md`](../AGENT_FILES/SETUPS/NEW_POD.md) — the canonical five-step system-packages, cache-paths, clone/checkout, requirements, and W&B bootstrap.
 2. Investigation `GUIDE.md` — if the thread has a sweep or shared launch pattern.
 3. Run `GUIDE.md` — exact smoke tests + `train.py` command for this run.
+
+An authorized agent can perform new-pod steps 1–4. If W&B lacks a preconfigured approved
+credential, the agent pauses while the human completes `wandb login` directly in a terminal. New-pod
+bootstrap alone never authorizes the paid launch; the user must also name the run guide and say to
+start it.
 
 **Launch:**
 

@@ -35,7 +35,9 @@ HJEPA-VWM/
 ├── pyproject.toml         # Black + Ruff
 ├── README.md              # Human entry point (short)
 ├── GUIDES/                # Operator playbooks + project knowledge
-├── AGENT_FILES/           # Agent behaviour, setups, focused knowledge dossiers
+├── AGENT_FILES/           # Agent behaviour, SSH access, setups, knowledge dossiers
+├── .agents/skills/        # Cross-agent repository skills (canonical copies)
+├── .claude/skills/        # Claude Code skill links/copies
 └── KANBAN/                # Phase 1 experiment history (living record)
 ```
 
@@ -207,13 +209,15 @@ python -c "from diagnostics import smoke_test_diagnostics; smoke_test_diagnostic
 | [`AGENT_FILES/AGENTS.md`](../AGENT_FILES/AGENTS.md) | **Agents (start here)** | Architecture, shapes, training step, invariants, doc precedence |
 | [`AGENT_FILES/AGENT-BEHAVIOUR/PROTOCOL.md`](../AGENT_FILES/AGENT-BEHAVIOUR/PROTOCOL.md) | Agents | Phase discipline, escalation |
 | [`AGENT_FILES/AGENT-BEHAVIOUR/CODE_DESIGN.md`](../AGENT_FILES/AGENT-BEHAVIOUR/CODE_DESIGN.md) | Agents | Naming map, docstrings, detach rules |
+| [`AGENT_FILES/GUIDE_AGENT_SSH_ACCESS.md`](../AGENT_FILES/GUIDE_AGENT_SSH_ACCESS.md) | Humans + agents | SSH key/alias setup, remote authorization, Git sync, tmux launch, monitoring, and revocation |
+| [`.agents/skills/run-remote-experiment/SKILL.md`](../.agents/skills/run-remote-experiment/SKILL.md) | Agents | Auto-discovered SSH/RunPod/tmux experiment-execution workflow |
 | [`AGENT_FILES/KNOWLEDGE/encoders/README.md`](../AGENT_FILES/KNOWLEDGE/encoders/README.md) | Both | Encoder research, shipped SigLIP/V-JEPA status, DINO gate, and paired-run execution plan |
 | [`GUIDES/README.md`](README.md) | Humans + agents | Index of all guides (this folder) |
 | [`GUIDES/latest_brief.md`](latest_brief.md) | Both | Architecture narrative v0.3 — **not ground truth** |
 | [`GUIDES/PROBLEMS_METRICS_AND_EXPERIMENTS.md`](PROBLEMS_METRICS_AND_EXPERIMENTS.md) | Both | Metric glossary + experiment problem history |
 | [`GUIDES/CODEBASE_STRUCTURE.md`](CODEBASE_STRUCTURE.md) | Both | This file |
 | [`AGENT_FILES/SETUPS/SETUP.md`](../AGENT_FILES/SETUPS/SETUP.md) | Humans | Laptop ↔ RunPod operator guide |
-| [`AGENT_FILES/SETUPS/NEW_POD.md`](../AGENT_FILES/SETUPS/NEW_POD.md) | Humans | Fresh pod bootstrap |
+| [`AGENT_FILES/SETUPS/NEW_POD.md`](../AGENT_FILES/SETUPS/NEW_POD.md) | Humans + agents | Canonical five-step fresh-pod bootstrap and W&B handoff |
 | [`AGENT_FILES/SETUPS/VOLUME_LAYOUT.md`](../AGENT_FILES/SETUPS/VOLUME_LAYOUT.md) | Both | `/workspace` path contract |
 
 ---

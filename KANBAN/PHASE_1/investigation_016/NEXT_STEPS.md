@@ -34,3 +34,12 @@ byte-identical one-variable replay of historical run 058. Measurement repair and
 oracle/overfit ladder now come before items 3–4; use the run-060 folder's
 [`NEXT_STEPS.md`](run_060_ae_latent_stack_whiten_abs_recon_cov_var_ego4d_recon1/NEXT_STEPS.md)
 for the full ordered sequence.
+
+## 2026-07-16 — colleague-directed slot-capacity sweep
+
+The next planned paid branch is now the six-arm
+[`bottleneck_slot_capacity_sweep/`](bottleneck_slot_capacity_sweep/): same-commit
+`N_c=32/64/128` ladders on EGO4D and SSv2 with `D_c=256`, V-JEPA, full whitening, and
+`lambda_recon=1.0` fixed. This deliberately acts on the bottleneck-capacity intuition without
+requiring the audit's full probe ladder first. Only launch-safety resource/provenance checks remain
+prerequisites; no-whitening and encoder-substrate experiments stay orthogonal.

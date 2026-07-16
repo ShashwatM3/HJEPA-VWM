@@ -55,7 +55,7 @@ Local override: `export JEPA_DATA_ROOT=/path/to/data` (dataset parent only).
 
 Every **new pod** (new image, terminated and redeployed):
 
-1. Read [`AGENT_FILES/SETUPS/NEW_POD.md`](../AGENT_FILES/SETUPS/NEW_POD.md) — `apt-get`, `pip`, `wandb login`, `HF_HOME`, `tmux`.
+1. Complete the canonical five-step [`AGENT_FILES/SETUPS/NEW_POD.md`](../AGENT_FILES/SETUPS/NEW_POD.md) bootstrap — system packages, cache paths, clone/checkout, requirements, then W&B login.
 2. Read the **investigation** `GUIDE.md` (e.g. `KANBAN/PHASE_1/investigation_007/GUIDE.md`) for sweep-specific launch.
 3. Read the **run** `GUIDE.md` inside the run folder for that experiment's exact command.
 

@@ -111,6 +111,7 @@ change — update the agent-maintained docs instead (§2.3).
 | [`GUIDES/latest_brief.md`](../GUIDES/latest_brief.md) | Research **narrative** at milestones — humans update when intent story changes, not on every refactor. |
 | [`GUIDES/original_brief.pdf`](../GUIDES/original_brief.pdf) | Frozen v0.1 baseline. |
 | [`AGENT_FILES/SETUPS/SETUP.md`](SETUPS/SETUP.md) | First-time human deploy (laptop → RunPod) — operator journey, not agent contract. |
+| [`AGENT_FILES/GUIDE_AGENT_SSH_ACCESS.md`](GUIDE_AGENT_SSH_ACCESS.md) | Human-owned SSH credential setup and remote-agent authorization contract. |
 | [`AGENT_FILES/AGENT-BEHAVIOUR/CODE_DESIGN.md`](AGENT-BEHAVIOUR/CODE_DESIGN.md) | Coding conventions — humans set style; agents follow, not redefine. |
 | [`AGENT_FILES/AGENT-BEHAVIOUR/PROTOCOL.md`](AGENT-BEHAVIOUR/PROTOCOL.md) | Agent governance — humans set rules; agents follow §0–§2 here first. |
 | [`KANBAN/PROTOCOL.md`](../KANBAN/PROTOCOL.md) | KANBAN triad rules — humans set record-keeping policy. |
@@ -134,7 +135,7 @@ before finishing. Prefer minimal, factual diffs — no drive-by rewrites.
 | Doc | Update when | How to update |
 |---|---|---|
 | [`AGENT_FILES/SETUPS/VOLUME_LAYOUT.md`](SETUPS/VOLUME_LAYOUT.md) | `config.py` path defaults change; volume directory contract changes; dataset layout changes. | Update path table, target tree, verification commands. Do not rewrite operator SSH steps (those stay in `SETUP.md`). |
-| [`AGENT_FILES/SETUPS/NEW_POD.md`](SETUPS/NEW_POD.md) | `requirements.txt` changes; bootstrap commands change; default git branch changes; smoke-test commands change. | Update pip install block, verification snippets, and example `train.py` one-liner if defaults shift. |
+| [`AGENT_FILES/SETUPS/NEW_POD.md`](SETUPS/NEW_POD.md) | `requirements.txt` changes; the five-step bootstrap changes; working branch changes; W&B handoff changes. | Keep only system packages, cache paths, fresh clone/checkout, Python requirements, and W&B authentication. Leave tests, Stage 0, and training to the exact run `GUIDE.md`. |
 | [`GUIDES/MLOPS.md`](../GUIDES/MLOPS.md) | W&B project/name changes; checkpoint naming changes; `run_history.py` / `parse_logs.py` CLI changes; volume layout changes. | Update stack diagram paths, CLI examples, and “what gets logged” tables to match `train.py`. |
 
 #### C. Experiment record (KANBAN)
@@ -245,7 +246,9 @@ Agent and architecture docs:
 | `AGENT_FILES/AGENT-BEHAVIOUR/PROTOCOL.md` | How agents operate, when to ask, phase discipline. |
 | `AGENT_FILES/AGENT-BEHAVIOUR/CODE_DESIGN.md` | Flat-file layout, naming, docstrings, detach rules. |
 | `AGENT_FILES/AGENT-BEHAVIOUR/WORKFLOW.md` | Redirect → [`GUIDES/EXPERIMENT_LIFECYCLE.md`](../GUIDES/EXPERIMENT_LIFECYCLE.md). |
+| `AGENT_FILES/GUIDE_AGENT_SSH_ACCESS.md` | Human setup + agent contract for SSH, remote Git sync, tmux launches, and monitoring. |
 | `AGENT_FILES/SETUPS/VOLUME_LAYOUT.md` | RunPod `/workspace` data/checkpoint/cache layout. |
+| `.agents/skills/run-remote-experiment/SKILL.md` | Repository skill for SSH/RunPod/tmux experiment execution; shared with Claude Code through `.claude/skills`. |
 | `AGENT_FILES/KNOWLEDGE/encoders/README.md` | Encoder research/status index and RunPod guide. Common pluggability plus V-JEPA/SigLIP adapters are shipped; DINO and the real join remain gated. |
 | `GUIDES/latest_brief.md` | Architecture narrative (v0.3) — **historical intent, not ground truth**. |
 | `GUIDES/PROBLEMS_METRICS_AND_EXPERIMENTS.md` | Metric glossary + experiment problem history. |
