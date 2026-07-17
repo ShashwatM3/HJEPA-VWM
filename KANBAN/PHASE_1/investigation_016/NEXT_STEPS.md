@@ -35,11 +35,19 @@ oracle/overfit ladder now come before items 3–4; use the run-060 folder's
 [`NEXT_STEPS.md`](run_060_ae_latent_stack_whiten_abs_recon_cov_var_ego4d_recon1/NEXT_STEPS.md)
 for the full ordered sequence.
 
-## 2026-07-16 — colleague-directed slot-capacity sweep
+## 2026-07-17 — colleague-directed slot-capacity sweep complete
 
-The next planned paid branch is now the three-arm EGO4D
-[`bottleneck_slot_capacity_sweep/`](bottleneck_slot_capacity_sweep/): same-commit
-`N_c=32/64/128` ladder with `D_c=256`, V-JEPA, full whitening, and
-`lambda_recon=1.0` fixed. This deliberately acts on the bottleneck-capacity intuition without
-requiring the audit's full probe ladder first. Only launch-safety resource/provenance checks remain
-prerequisites; no-whitening and encoder-substrate experiments stay orthogonal.
+The three-arm EGO4D
+[`bottleneck_slot_capacity_sweep/`](bottleneck_slot_capacity_sweep/) completed as W&B `x03xlpyl`,
+`evyokqrm`, and `7pmvxrxi`. The modest monotonic training-loss improvement fails both the material
+effect threshold and the recorded-batch geometry guard. More learned query slots are not the
+leading reconstruction-floor fix.
+
+Ordered action from this result:
+
+1. do **not** launch 256 slots;
+2. launch the 32-slot no-whitening EGO4D reconstruction arm as the next clean single delta;
+3. design a separate channel-width/`D_c` sweep for the 1,024-to-256 squeeze rather than relabeling
+   another `N_c` run as general bottleneck capacity;
+4. keep alternate encoders orthogonal and retain source-diverse diagnostic repair before global
+   conditioning claims.

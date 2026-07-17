@@ -120,7 +120,7 @@ Newer investigation index (append to the table above):
 | [investigation_013](investigation_013/) | CLOSED | 053 | The residual reconstruction target (reconstruct e - mean) fixes the template shortcut (video gap +0.433, ~77% video-conditioned) but geometry still collapses (rank 10.5). H1 solved, H2 confirmed: an explicit anti-collapse force is required. |
 | [investigation_014](investigation_014/) | OPEN | none | Offline rank probe: frozen V-JEPA `e` has pooled entropy rank ~193/1024 with a long low-energy tail (rank@90% 333, rank@99% 785). Reframes e->c as selective denoising and motivates whitening. |
 | [investigation_015](investigation_015/) | OPEN | 054, 055 | Whitening + Perceiver latent-stack bottleneck on the residual recipe: strongest honesty yet (run 054, ~92% video-conditioned, shuffled-c pinned 0.975) at a much better geometry equilibrium (rank 21.9 vs 053's 10.5), but geometry still contracts — "neither delta sufficient." Run 055 (absolute-target ablation of 054) shows whitening alone reaches ~86% honesty with identical geometry, so the residual target buys ~6 points of honesty for zero geometric cost — it stays in the recipe. Bottleneck-only whitening-vs-architecture control still open. |
-| [investigation_016](investigation_016/) | OPEN | 058, 060; 059 planned | Run 060 completed the reconstruction-weight-1 arm: late geometry was healthier than historical run 058 (rank 84.4, std 0.800, recorded pair cosine 0.479), but reconstruction moved only 0.007 and exact-chunk conditioned share remained 7.66%. The fixed EGO4D batch contains one source UID, so global cross-source honesty remains unmeasured; measurement repair/oracles now precede the residual-target and SigLIP branches. |
+| [investigation_016](investigation_016/) | OPEN | 058, 060-063; 059 planned | The clean-commit EGO4D `N_c=32/64/128` sweep completed. Late training reconstruction improves only `0.67703 -> 0.67396 -> 0.66298`, while recorded-batch geometry is healthy only at 32 (`std/cos=0.806/0.473`) and fails at 64/128. More query slots are not a healthy capacity win; skip 256 and move to no-whitening plus channel-width/`D_c` work. |
 
 Newer run index rows (append to the Complete W&B Run Index above):
 
@@ -133,6 +133,9 @@ Newer run index rows (append to the Complete W&B Run Index above):
 | 57 | [`ae_latent_stack_whiten_abs_recon_cov_var`](investigation_015/run_057_ae_latent_stack_whiten_abs_recon_cov_var/) | `cdvp6hou` | finished | investigation_015 | present-only | Strong present representation |
 | 58 | [`ae_latent_stack_whiten_abs_recon_cov_var_ego4d`](investigation_016/run_058_ae_latent_stack_whiten_abs_recon_cov_var_ego4d/) | `mvbx96nv` | finished | investigation_016 | present-only | Collapsed rep / template shortcut |
 | 60 | [`Investigation 16 · Whitened latent stack EGO4D · Reconstruction weight 1.00`](investigation_016/run_060_ae_latent_stack_whiten_abs_recon_cov_var_ego4d_recon1/) | `2423b84g` | finished | investigation_016 | present-only | Healthy recorded-batch geometry; weak/source-confounded conditioning |
+| 61 | [`Bottleneck capacity · EGO4D 32 slots`](investigation_016/bottleneck_slot_capacity_sweep/) | `x03xlpyl` | finished | investigation_016 | present-only | Strong recorded-batch representation; sweep control |
+| 62 | [`Bottleneck capacity · EGO4D 64 slots`](investigation_016/bottleneck_slot_capacity_sweep/) | `evyokqrm` | finished | investigation_016 | present-only | Recorded-batch collapsed / source-chunk invariant |
+| 63 | [`Bottleneck capacity · EGO4D 128 slots`](investigation_016/bottleneck_slot_capacity_sweep/) | `7pmvxrxi` | finished | investigation_016 | present-only | Weak recorded-batch geometry; not a capacity win |
 
 ## Update (2026-07-14) — investigation_016 (EGO4D transfer of run 057)
 
@@ -170,3 +173,19 @@ Newer run index rows (append to the Complete W&B Run Index above):
   [`run_060.../ANALYSIS.md`](investigation_016/run_060_ae_latent_stack_whiten_abs_recon_cov_var_ego4d_recon1/ANALYSIS.md);
   ordered follow-up:
   [`reconstruction_floor_architecture_audit/NEXT_STEPS.md`](investigation_016/reconstruction_floor_architecture_audit/NEXT_STEPS.md).
+
+## Update (2026-07-17) — investigation_016 slot-capacity sweep completed
+
+- Live W&B now has **64 entries**. The same-commit sweep arms are 32 slots `x03xlpyl`, 64 slots
+  `evyokqrm`, and 128 slots `7pmvxrxi`; all finished 15,000 steps with zero skipped/NaN updates.
+- Every arm shares clean commit `820a5b5`, EGO4D/data order, fixed validation batch, pinned V-JEPA
+  features, whitening payload, schedule, and seed. Only `N_c` and derived initialization/output
+  identities differ.
+- Late training `L_recon` medians are `0.67703/0.67396/0.66298`. The 32-to-128 gain is `0.01405`
+  (2.08%), below the preregistered `0.02`/3% support threshold; the late fixed-batch diagnostic gain
+  is only `0.00546`.
+- Late fixed-batch `std/cosine` is `0.806/0.473`, `0.326/0.914`, and `0.649/0.677`. Added slots
+  therefore do not produce a healthy content code even when pooled rank rises.
+- Do not launch 256. Next paid axes are no whitening and the 1,024-to-256 channel/`D_c` squeeze,
+  kept separate from alternate-encoder work. Full analysis:
+  [`bottleneck_slot_capacity_sweep/ANALYSIS.md`](investigation_016/bottleneck_slot_capacity_sweep/ANALYSIS.md).

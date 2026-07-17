@@ -60,3 +60,17 @@ traces the full present-only path and corrects the interpretation boundary disco
 058: its EGO4D fixed validation batch contains 16 adjacent chunks from one source UID, so the
 recorded shuffled-code and “cross-video” metrics are not cross-source measurements. The raw loss
 plateau remains real; the global template-collapse claim requires source-diverse remeasurement.
+
+## Same-commit bottleneck slot-capacity sweep
+
+[`bottleneck_slot_capacity_sweep/`](bottleneck_slot_capacity_sweep/) completed the colleague-directed
+EGO4D `N_c=32/64/128` ladder on clean commit `820a5b5`, holding `D_c=256`, whitening,
+`lambda_recon=1.0`, decoder, schedule, seed, and data identity fixed. W&B runs are `x03xlpyl`,
+`evyokqrm`, and `7pmvxrxi`.
+
+Late training reconstruction improves `0.67703 -> 0.67396 -> 0.66298`, but the total gain is only
+`0.01405` (2.08%), below the preregistered support threshold. More importantly, fixed-batch
+specificity worsens from `std/cosine=0.806/0.473` at 32 slots to `0.326/0.914` at 64 and recovers
+only to `0.649/0.677` at 128. Larger `N_c` therefore lowers loss slightly without producing a
+healthier recorded-batch content code. The result rejects more query slots as the leading fix; no
+256-slot arm is warranted. Full read: [`bottleneck_slot_capacity_sweep/ANALYSIS.md`](bottleneck_slot_capacity_sweep/ANALYSIS.md).

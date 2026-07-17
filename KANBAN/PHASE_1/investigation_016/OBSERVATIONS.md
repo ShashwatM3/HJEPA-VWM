@@ -50,3 +50,21 @@ refactor. The result is sufficient to reject simple scalar underweighting as the
 but not to assign the geometry difference to `lambda_recon` or to declare global template collapse.
 Full read:
 [`run_060.../ANALYSIS.md`](run_060_ae_latent_stack_whiten_abs_recon_cov_var_ego4d_recon1/ANALYSIS.md).
+
+## 2026-07-17 — slot-capacity sweep complete; more query slots are not the leading fix
+
+The same-commit EGO4D `N_c=32/64/128` bundle finished as W&B `x03xlpyl`, `evyokqrm`, and
+`7pmvxrxi`. All runs are operationally valid and share exact dataset/data-order, validation-batch,
+encoder-feature, whitening, schedule, seed, and clean-commit identities.
+
+Late median training reconstruction is `0.67703/0.67396/0.66298`. The 32-to-128 improvement is
+`0.01405` (2.08%), below the `0.02`/3% capacity-support threshold; late fixed-batch reconstruction
+improves only `0.00546`. The representation-health trend is worse: late fixed-batch
+`std/cosine` is `0.806/0.473`, `0.326/0.914`, and `0.649/0.677`. Thus 64 collapses on the recorded
+within-source batch and 128 only partially recovers, despite pooled rank rising to about 189.
+
+Because the fixed batch contains one source UID, this does not prove global cross-source collapse.
+It does show that added slots do not yield a healthy exact-chunk code under the current objective.
+The lower loss fails the preregistered geometry guard, so do not run 256. Move to no-whitening and
+the channel-width/`D_c` squeeze as separate experiments. Full evidence:
+[`bottleneck_slot_capacity_sweep/ANALYSIS.md`](bottleneck_slot_capacity_sweep/ANALYSIS.md).

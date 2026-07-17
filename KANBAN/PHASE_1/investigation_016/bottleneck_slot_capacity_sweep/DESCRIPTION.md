@@ -1,12 +1,16 @@
 # Bottleneck slot-capacity sweep — V-JEPA, whitened reconstruction, EGO4D
 
-**Status:** PLANNED — not launched
+**Status:** COMPLETE — all three core arms finished on 2026-07-17
 
 **W&B group:** `inv016_bottleneck_capacity_vjepa2_whitened_recon1`
 
 **Mode:** present-reconstruction-only
 
-**Sweep bundle:** three independent EGO4D W&B runs; IDs are recorded here after launch.
+**Sweep bundle:** three independent EGO4D W&B runs:
+
+- 32 slots: [`x03xlpyl`](https://wandb.ai/smahalanobis-uc-davis/hjepa-vwm/runs/x03xlpyl)
+- 64 slots: [`evyokqrm`](https://wandb.ai/smahalanobis-uc-davis/hjepa-vwm/runs/evyokqrm)
+- 128 slots: [`7pmvxrxi`](https://wandb.ai/smahalanobis-uc-davis/hjepa-vwm/runs/7pmvxrxi)
 
 ## Question
 
@@ -96,3 +100,18 @@ EGO4D gap as secondary. Prediction is inactive, so no result from this bundle ca
 forecasting or pass the copy/batch-mean gates.
 
 Execution: [`GUIDE.md`](GUIDE.md). Design and decision rules: [`PLAN.md`](PLAN.md).
+
+## Result
+
+All arms completed from clean commit `820a5b560b8668fa12452e35b1e91b170a2a91a3` with the same
+dataset, data order, V-JEPA feature, validation-batch, and whitening fingerprints. Late median
+training reconstruction improves `0.67703 -> 0.67396 -> 0.66298`; the 32-to-128 change is `0.01405`
+(2.08%), below the preregistered `0.02`/3% support threshold. Late fixed-batch reconstruction
+improves only `0.67116 -> 0.67072 -> 0.66570`.
+
+The larger codes also fail the representation-health guard. The recorded-batch late
+`std/cosine` values are `0.806/0.473` at 32 slots, `0.326/0.914` at 64, and `0.649/0.677` at 128.
+Because the fixed EGO4D batch contains one source UID, this is a within-source/source-chunk result,
+not proof of global cross-source collapse. It is nevertheless enough to reject the lower loss as a
+healthy capacity win. Do not launch 256 slots; move to no-whitening and channel-width/`D_c` work.
+Full evidence: [`ANALYSIS.md`](ANALYSIS.md).

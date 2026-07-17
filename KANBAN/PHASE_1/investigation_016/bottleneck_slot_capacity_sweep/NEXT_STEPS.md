@@ -1,12 +1,19 @@
 # Next steps — bottleneck slot-capacity sweep
 
-1. Follow [`GUIDE.md`](GUIDE.md) without adding the no-whitening or alternate-encoder deltas.
-2. Launch the three EGO4D core arms from one clean commit and record each W&B ID in `DESCRIPTION.md`.
-3. Confirm every arm reaches step 500; investigation 007's prior slot ladder ended in a synchronized
-   whole-pod failure and supplied no capacity evidence.
-4. After all runs finish, apply Reading Cycle B separately, then compare the EGO4D
-   `32 -> 64 -> 128` curve using [`PLAN.md`](PLAN.md).
-5. Run a 256-slot saturation arm only if the pre-registered conditional rule calls for it.
+1. ~~Launch and finish the clean-commit EGO4D `N_c=32/64/128` core sweep.~~ Complete as W&B
+   `x03xlpyl`, `evyokqrm`, and `7pmvxrxi` with final checkpoints and zero instability.
+2. ~~Apply Reading Cycle B separately and compare the preregistered late windows.~~ Complete in
+   [`ANALYSIS.md`](ANALYSIS.md). The curve does not support a healthy slot-capacity win.
+3. Do **not** launch the conditional 256-slot arm. The modest loss reduction fails the
+   representation-health guard, so another slot-count point would not resolve the leading issue.
+4. Run the orthogonal no-whitening EGO4D present-reconstruction arm at the 32-slot control shape.
+   Keep encoder, decoder, schedule, absolute target, and geometry weights fixed.
+5. Separately test the early 1,024-to-256 channel squeeze / `D_c` capacity axis. Choose values only
+   after confirming how `D_c` and bottleneck mixer width are coupled in the current implementation;
+   do not describe another `N_c` ladder as a channel-width test.
+6. Keep alternate-encoder work separate so whitening, capacity, and encoder substrate remain
+   attributable.
 
-No checkpoint from another `N_c` value may be resumed into an arm. No result from this present-only
-sweep is permission to claim prediction success.
+No result from this present-only sweep licenses a prediction claim. Because the fixed EGO4D
+diagnostic batch is one source UID, retain the source-diverse measurement repair in the parent
+investigation plan.
