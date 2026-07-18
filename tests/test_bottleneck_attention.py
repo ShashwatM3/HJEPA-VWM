@@ -4,14 +4,22 @@ from __future__ import annotations
 
 import importlib
 import math
+from typing import Any
 
 import pytest
 
 torch = pytest.importorskip("torch")
 
 
-def _small_model_cfg(latent_blocks: int = 3, mixer_dim: int = 8):
-    """Return a tiny bottleneck config with the same shape relationships as Phase 1."""
+def _small_model_cfg(latent_blocks: int = 3, mixer_dim: int = 8) -> Any:
+    """Return a tiny bottleneck config with Phase 1's shape relationships.
+
+    Args:
+        latent_blocks: Number of read/compete/refine blocks.
+        mixer_dim: Complete internal memory and slot width.
+    Returns:
+        A small ``ModelConfig`` suitable for CPU tests.
+    """
     config = importlib.import_module("config")
     cfg = config.Config()
     cfg.model.h = 32
@@ -25,8 +33,14 @@ def _small_model_cfg(latent_blocks: int = 3, mixer_dim: int = 8):
     return cfg.model
 
 
-def test_bottleneck_uses_mixer_dim_for_the_complete_internal_stream():
-    """A wide bottleneck keeps memory and slots wide until the external code projection."""
+def test_bottleneck_uses_mixer_dim_for_the_complete_internal_stream() -> None:
+    """Keep wide memory and slots intact until the external-code projection.
+
+    This prevents the CLI width from silently becoming a ConvNeXt-only setting.
+
+    Returns:
+        None.
+    """
     models = importlib.import_module("models")
     cfg = _small_model_cfg(latent_blocks=2, mixer_dim=16)
 
@@ -40,8 +54,15 @@ def test_bottleneck_uses_mixer_dim_for_the_complete_internal_stream():
     assert bottleneck.abstract_proj.out_features == cfg.d_c
 
 
-def test_wide_bottleneck_opens_an_input_dependent_path_after_one_update():
-    """Wide zero-init residuals start stable, then learn input-dependent external codes."""
+def test_wide_bottleneck_opens_an_input_dependent_path_after_one_update() -> None:
+    """Open an input-dependent wide path after one reconstruction update.
+
+    The assertion preserves stable zero-residual initialization while proving the
+    new final projection does not permanently block content gradients.
+
+    Returns:
+        None.
+    """
     torch.manual_seed(0)
     models = importlib.import_module("models")
     cfg = _small_model_cfg(latent_blocks=2, mixer_dim=16)

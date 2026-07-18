@@ -178,8 +178,9 @@ class BottleneckLatentBlock(nn.Module):
     zero-inits its `o_proj`, and this block zero-inits the self-attention output
     projection and the MLP's last layer (all tagged `is_zero_init` so AGC and
     weight decay hold them out, matching the adaLN-Zero convention). Stacking any
-    number of blocks therefore preserves the bottleneck's identity-at-init
-    contract: `c == LayerNorm(queries)` for every input at step 0.
+    number of blocks therefore preserves the identity-at-init slot contract:
+    the internal slot stream equals `queries` for every input at step 0. The
+    enclosing Bottleneck applies its configured final projection and LayerNorm.
 
     Args:
         slots: (B, N_c, D) current slot stream.
@@ -253,7 +254,16 @@ class Bottleneck(nn.Module):
     """
 
     def __init__(self, cfg: ModelConfig, encoder_spec: EncoderSpec | None = None):
-        """Initialize wide memory/slots, latent refinement, and final code projection."""
+        """Initialize wide memory/slots, latent refinement, and final code projection.
+
+        The internal stream stays at ``cfg.bottleneck_mixer_dim`` until one final
+        projection restores the stable external ``D_c`` interface.
+
+        Args:
+            cfg: Trainable bottleneck dimensions and block counts.
+            encoder_spec: Resolved detailed-feature geometry; legacy config geometry
+                is used only when this is omitted by synthetic/historical callers.
+        """
         _require_torch()
         super().__init__()
         self.cfg = cfg
@@ -261,19 +271,19 @@ class Bottleneck(nn.Module):
         layout = self.encoder_spec.layout
         if layout.order != "time_y_x":
             raise ValueError("Bottleneck requires time_y_x detailed-token order.")
-        mix = cfg.bottleneck_mixer_dim
-        self.in_proj = nn.Linear(self.encoder_spec.feature_dim, mix)
+        internal_dim = cfg.bottleneck_mixer_dim
+        self.in_proj = nn.Linear(self.encoder_spec.feature_dim, internal_dim)
         self.mixers = nn.Sequential(
-            *[ConvNeXtBlock(mix) for _ in range(cfg.bottleneck_convnext_blocks)]
+            *[ConvNeXtBlock(internal_dim) for _ in range(cfg.bottleneck_convnext_blocks)]
         )
-        self.pos_emb = nn.Parameter(torch.empty(1, layout.n_tokens, mix))
+        self.pos_emb = nn.Parameter(torch.empty(1, layout.n_tokens, internal_dim))
         nn.init.trunc_normal_(self.pos_emb, std=0.5)
-        self.to_kv = nn.Linear(mix, mix)
+        self.to_kv = nn.Linear(internal_dim, internal_dim)
         # Fix 1 (Plan Phase 04): orthogonal queries (unit-norm rows). The old
         # v0.2 `randn * 0.02` made the q.k logits tiny, so softmax was near-
         # uniform for every slot and all 32 slots read out ~the mean token.
         # Unit-norm rows fix the scale and start the slots decorrelated.
-        q = torch.empty(cfg.n_c, mix)
+        q = torch.empty(cfg.n_c, internal_dim)
         nn.init.orthogonal_(q)
         self.queries = nn.Parameter(q)
         if cfg.bottleneck_latent_blocks < 1:
@@ -285,16 +295,16 @@ class Bottleneck(nn.Module):
         # bottleneck_mixer_dim a ConvNeXt-only width rather than a true memory width.
         self.latent_blocks = nn.ModuleList(
             [
-                BottleneckLatentBlock(mix, cfg.bottleneck_cross_attn_heads)
+                BottleneckLatentBlock(internal_dim, cfg.bottleneck_cross_attn_heads)
                 for _ in range(cfg.bottleneck_latent_blocks)
             ]
         )
-        if mix == cfg.d_c:
+        if internal_dim == cfg.d_c:
             # No parameters/state keys on the shipped 256-wide path: historical
             # checkpoints remain strict-load compatible and numerically unchanged.
             self.abstract_proj = nn.Identity()
         else:
-            self.abstract_proj = nn.Linear(mix, cfg.d_c)
+            self.abstract_proj = nn.Linear(internal_dim, cfg.d_c)
             nn.init.orthogonal_(self.abstract_proj.weight)
             nn.init.zeros_(self.abstract_proj.bias)
         self.norm = nn.LayerNorm(cfg.d_c)
@@ -324,12 +334,12 @@ class Bottleneck(nn.Module):
                 "Detailed features do not match EncoderSpec: expected "
                 f"(N,D)=({layout.n_tokens},{self.encoder_spec.feature_dim}), got ({n},{d})."
             )
-        mix = cfg.bottleneck_mixer_dim
+        internal_dim = cfg.bottleneck_mixer_dim
         tokens = self.in_proj(detailed)
         t, h, w = layout.temporal, layout.height, layout.width
         # Canonical time-major order: index = t*(h*w) + y*w + x.
-        grid = tokens.reshape(b * t, h, w, mix).permute(0, 3, 1, 2)
-        mixed = self.mixers(grid).permute(0, 2, 3, 1).reshape(b, layout.n_tokens, mix)
+        grid = tokens.reshape(b * t, h, w, internal_dim).permute(0, 3, 1, 2)
+        mixed = self.mixers(grid).permute(0, 2, 3, 1).reshape(b, layout.n_tokens, internal_dim)
         mixed = mixed + self.pos_emb
         memory = self.to_kv(mixed)
         slots = self.queries[None].expand(b, -1, -1)

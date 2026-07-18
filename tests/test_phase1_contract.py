@@ -8,8 +8,16 @@ import numpy as np
 import pytest
 
 
-def test_cli_sets_bottleneck_internal_width_before_stage0(monkeypatch):
-    """The public CLI exposes the internal-width sweep without source edits."""
+def test_cli_sets_bottleneck_internal_width_before_stage0(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Expose the internal-width sweep through the public CLI.
+
+    Args:
+        monkeypatch: Pytest fixture used to capture the finalized Stage 0 config.
+    Returns:
+        None.
+    """
     train = importlib.import_module("train")
     captured = {}
     monkeypatch.setattr(
@@ -25,8 +33,14 @@ def test_cli_sets_bottleneck_internal_width_before_stage0(monkeypatch):
 
 
 @pytest.mark.parametrize("width", [0, 510])
-def test_finalize_rejects_invalid_bottleneck_internal_width(width):
-    """Internal width must be positive and split evenly across attention heads."""
+def test_finalize_rejects_invalid_bottleneck_internal_width(width: int) -> None:
+    """Reject widths that cannot form the configured attention heads.
+
+    Args:
+        width: Invalid internal width supplied to the config finalizer.
+    Returns:
+        None.
+    """
     config = importlib.import_module("config")
     train = importlib.import_module("train")
     cfg = config.Config()

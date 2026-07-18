@@ -77,10 +77,11 @@ healthier recorded-batch content code. The result rejects more query slots as th
 
 ## Unwhitened internal-memory width sweep
 
-[`internal_memory_width_sweep/`](internal_memory_width_sweep/) is the next executable bundle. It
-implements one coherent bottleneck width `M` through memory, learned queries, and all three latent
-blocks, then projects once to the unchanged external `D_c=256`. Two full-EGO4D arms compare
-`M=512` and `M=1024` sequentially on one GPU.
+The next executable bundle has separate run records for
+[`M=512`](run_064_unwhitened_internal_memory_m512/) and
+[`M=1024`](run_065_unwhitened_internal_memory_m1024/). It implements one coherent bottleneck width `M`
+through memory, learned queries, and all three latent blocks, then projects once to the unchanged
+external `D_c=256`. The two full-EGO4D arms execute sequentially on one GPU.
 
 Both arms omit whitening completely and set variance, covariance, SIGReg, and slot-loss weights to
 zero. They retain `N_c=32`, `lambda_recon=1`, the 512-by-4 decoder, and the present-only absolute

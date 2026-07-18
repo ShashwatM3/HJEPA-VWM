@@ -9,8 +9,10 @@ turns three proposed changes into one coherent, minimally invasive design:
    cross-attention latent processor.
 
 This file began as the design plan. The architecture described here was implemented on 2026-07-18;
-the executable two-arm bundle now lives in
-[`internal_memory_width_sweep/`](internal_memory_width_sweep/). Results remain pending.
+the executable two-arm bundle now has separate records for
+[`M=512`](run_064_unwhitened_internal_memory_m512/) and
+[`M=1024`](run_065_unwhitened_internal_memory_m1024/), with the shared launch in [`GUIDE.md`](GUIDE.md).
+Results remain pending.
 The empirical basis is the end-to-end
 [`reconstruction_floor_architecture_audit`](reconstruction_floor_architecture_audit/ANALYSIS.md),
 the completed
@@ -41,18 +43,24 @@ not accidental. Existing whitening artifacts remain on the volume but are never 
 
 The success rule is also joint: raw and whitened cosine values are not numerically interchangeable,
 and a lower correct-code loss counts as preservation only if the correct-versus-shuffled code gap
-does not shrink. See the executable bundle's
-[`PLAN.md`](internal_memory_width_sweep/PLAN.md) for the preregistered effect/cost guard.
+improves. See the 1,024 arm's
+[`PLAN.md`](run_065_unwhitened_internal_memory_m1024/PLAN.md) for the preregistered effect/cost guard.
+
+The previously recommended source-diverse diagnostic repair is not part of these three architecture
+changes. Consequently, this launch may conclude only that exact-chunk preservation improved within
+the recorded source. It is prohibited from claiming global cross-source or global-video
+preservation; that stronger claim remains gated on source-unique validation and cross-source code
+derangement.
 
 ---
 
 ## 0. Executive decision
 
-The three ideas are directionally correct, but changes 2 and 3 are architecturally coupled.
-Increasing the existing `bottleneck_mixer_dim` alone does **not** currently create wide attention
-memory: `Bottleneck.to_kv` immediately maps that wider mixer output back to `D_c=256`, and the
-queries and all three latent blocks still operate at 256. A run that only changes the current mixer
-width would test wider local ConvNeXt preprocessing, not the proposed wide information path.
+The three ideas are directionally correct, but changes 2 and 3 are architecturally coupled. Before
+the 2026-07-18 implementation, increasing `bottleneck_mixer_dim` alone did **not** create wide
+attention memory: `Bottleneck.to_kv` immediately mapped that wider mixer output back to `D_c=256`,
+and the queries and all three latent blocks still operated at 256. A run on that pre-change code
+would have tested wider local ConvNeXt preprocessing, not the proposed wide information path.
 
 The smallest coherent implementation is therefore:
 
@@ -308,7 +316,8 @@ expanded attention memory. That narrower option is deliberately rejected as the 
 
 ### 4.2 Why the existing config field is the right interface
 
-`ModelConfig.bottleneck_mixer_dim` already controls `in_proj`, the ConvNeXt blocks, and `pos_emb`.
+Before this implementation, `ModelConfig.bottleneck_mixer_dim` controlled `in_proj`, the ConvNeXt
+blocks, and `pos_emb`.
 No historical paid run could vary it from the CLI, and repository search finds no recorded
 non-default experiment. The smallest interface change is to deepen the meaning of this existing
 field: it becomes the bottleneck's complete internal width while `d_c` continues to mean only the
@@ -450,7 +459,7 @@ small external code.”
 
 ### 5.1 What moves
 
-Today the dimensional projection to `D_c=256` happens here:
+Before the 2026-07-18 change, the dimensional projection to `D_c=256` happened here:
 
 ```text
 wide/local mixed tokens -> to_kv(..., D_c=256) -> cross-attention -> slots

@@ -72,8 +72,8 @@ class ModelConfig:
     # runs s += CrossAttn(s, memory); s += SelfAttn(s); s += MLP(s) on the slot stream.
     # The old single-read bottleneck is depth-1 without slot self-attention; repeated
     # refinement + slot competition is the recommended 2-4 range. Every residual
-    # branch is zero-init, so identity-at-init (c == norm(queries)) is preserved at
-    # any depth.
+    # branch is zero-init, so the internal slot stream equals the learned queries
+    # at initialization at any depth; Bottleneck then applies its final projection/norm.
     bottleneck_latent_blocks: int = 3
     # Query/residual init is baked into models.py (Plan Phase 04, KANBAN/04):
     # orthogonal queries (Fix 1, fixes the ~0.02-scale near-uniform-attention

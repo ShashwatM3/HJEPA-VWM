@@ -71,8 +71,9 @@ the channel-width/`D_c` squeeze as separate experiments. Full evidence:
 
 ## 2026-07-18 — full-width late-projection implementation prepared
 
-The next bundle is
-[`internal_memory_width_sweep/`](internal_memory_width_sweep/): unwhitened EGO4D at complete
-internal widths 512 and 1,024, both returning the same `32 x 256` external code after one final
-projection. All auxiliary geometry weights are zero. The paid runs are pending; the code and launch
-queue are locally verified before publication.
+The next bundle has separate run records for
+[`M=512`](run_064_unwhitened_internal_memory_m512/) and
+[`M=1024`](run_065_unwhitened_internal_memory_m1024/): unwhitened EGO4D at complete internal widths 512
+and 1,024, both returning the same `32 x 256` external code after one final projection. All
+auxiliary geometry weights are zero. The paid runs are pending; the code and launch queue are
+locally verified before publication.
