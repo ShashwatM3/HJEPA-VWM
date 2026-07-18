@@ -408,27 +408,35 @@ Never put encoder parameters in an optimizer. Never add a target encoder.
 
 Pipeline:
 
-1. `in_proj`: linear resolved `D_e -> bottleneck_mixer_dim=256`.
-2. Reshape time-major tokens with `FeatureLayout` into `(B*T_e,256,H_e,W_e)`.
+1. `in_proj`: linear resolved `D_e -> M`, where
+   `M=bottleneck_mixer_dim` is the complete internal memory/slot width (default 256;
+   sweepable with `--bottleneck-mixer-dim`).
+2. Reshape time-major tokens with `FeatureLayout` into `(B*T_e,M,H_e,W_e)`.
 3. Apply two shared `ConvNeXtBlock`s per temporal slot.
-4. Flatten back to `(B,N_e,256)` and add the learned `pos_emb` memory tags.
-5. `to_kv`: linear `256 -> D_c=256` produces the memory tokens.
+4. Flatten back to `(B,N_e,M)` and add the learned `pos_emb` memory tags.
+5. `to_kv`: linear `M -> M` produces the memory tokens without an early
+   projection to `D_c`.
 6. A Perceiver-style latent processor of `bottleneck_latent_blocks=3`
-   `BottleneckLatentBlock`s refines the `N_c=32` learned query slots. Each
+   `BottleneckLatentBlock`s refines the `N_c=32` learned `M`-wide query slots. Each
    block runs three zero-init residual updates on the slot stream:
    sharpened-cosine cross-attention read from the `N_e` memory tokens
    (`SharpCrossAttention`, zero-init `o_proj`), slot self-attention for slot
    competition (zero-init `out_proj`), and a per-slot MLP (zero-init last
    layer).
-7. Final LayerNorm.
+7. After all input-dependent reads/refinement, `abstract_proj` maps `M -> D_c`;
+   it is a parameter-free identity when `M == D_c` and an orthogonally initialized
+   linear layer otherwise.
+8. Final `LayerNorm(D_c)` produces the external `(B,N_c,D_c)` code consumed by
+   the decoder and flow.
 
 Important current initialization:
 
 - Query slots are initialized with `nn.init.orthogonal_`.
 - Every latent-block residual output (`cross_attn.o_proj`,
   `self_attn.out_proj`, `mlp[-1]`) is zero-initialized and tagged
-  `is_zero_init = True`, so at step 0 the module returns
-  `LayerNorm(queries)` for EVERY input (identity-at-init), and all
+  `is_zero_init = True`, so at step 0 the default path returns
+  `LayerNorm(queries)` and a wide path returns
+  `LayerNorm(abstract_proj(queries))` for EVERY input. All
   input-dependence grows in through training. Tests enforce this at several
   depths.
 - Zero-init and learned geometry parameters are excluded from AGC and weight
@@ -920,6 +928,7 @@ Trainable model defaults (legacy V-JEPA geometry fields remain only for historic
 | `n_ctx`, `n_tgt` | properties, both `1024` |
 | `n_c`, `d_c`, `d_e` | `32`, `256`, `1024` |
 | bottleneck blocks / heads | `2` ConvNeXt blocks, `8` cross-attn heads |
+| `bottleneck_mixer_dim` | `256` complete internal memory/slot width; final projection to `d_c` |
 | `bottleneck_latent_blocks` | `3` Perceiver-style latent blocks |
 | `f_c_blocks`, `f_c_dim`, `f_c_heads` | `6`, `256`, `8` |
 | `condition_dropout` | `0.10` |

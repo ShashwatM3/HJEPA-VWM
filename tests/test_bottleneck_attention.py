@@ -10,7 +10,7 @@ import pytest
 torch = pytest.importorskip("torch")
 
 
-def _small_model_cfg(latent_blocks: int = 3):
+def _small_model_cfg(latent_blocks: int = 3, mixer_dim: int = 8):
     """Return a tiny bottleneck config with the same shape relationships as Phase 1."""
     config = importlib.import_module("config")
     cfg = config.Config()
@@ -19,10 +19,52 @@ def _small_model_cfg(latent_blocks: int = 3):
     cfg.model.n_c = 4
     cfg.model.d_e = 16
     cfg.model.d_c = 8
-    cfg.model.bottleneck_mixer_dim = 8
+    cfg.model.bottleneck_mixer_dim = mixer_dim
     cfg.model.bottleneck_cross_attn_heads = 2
     cfg.model.bottleneck_latent_blocks = latent_blocks
     return cfg.model
+
+
+def test_bottleneck_uses_mixer_dim_for_the_complete_internal_stream():
+    """A wide bottleneck keeps memory and slots wide until the external code projection."""
+    models = importlib.import_module("models")
+    cfg = _small_model_cfg(latent_blocks=2, mixer_dim=16)
+
+    bottleneck = models.Bottleneck(cfg)
+
+    assert bottleneck.to_kv.in_features == 16
+    assert bottleneck.to_kv.out_features == 16
+    assert bottleneck.queries.shape == (cfg.n_c, 16)
+    assert all(block.norm_cross.normalized_shape == (16,) for block in bottleneck.latent_blocks)
+    assert bottleneck.abstract_proj.in_features == 16
+    assert bottleneck.abstract_proj.out_features == cfg.d_c
+
+
+def test_wide_bottleneck_opens_an_input_dependent_path_after_one_update():
+    """Wide zero-init residuals start stable, then learn input-dependent external codes."""
+    torch.manual_seed(0)
+    models = importlib.import_module("models")
+    cfg = _small_model_cfg(latent_blocks=2, mixer_dim=16)
+    bottleneck = models.Bottleneck(cfg)
+    optimizer = torch.optim.SGD(bottleneck.parameters(), lr=0.1)
+    detailed = torch.randn(2, cfg.n_ctx, cfg.d_e)
+    target = torch.randn(2, cfg.n_c, cfg.d_c)
+
+    before = bottleneck(detailed)
+    assert before.shape == (2, cfg.n_c, cfg.d_c)
+    assert torch.isfinite(before).all()
+    assert torch.allclose(before[0], before[1], atol=1e-6)
+
+    torch.nn.functional.mse_loss(before, target).backward()
+    assert bottleneck.abstract_proj.weight.grad.abs().sum().item() > 0.0
+    assert all(
+        block.cross_attn.o_proj.weight.grad.abs().sum().item() > 0.0
+        for block in bottleneck.latent_blocks
+    )
+    optimizer.step()
+
+    after = bottleneck(detailed)
+    assert not torch.allclose(after[0], after[1], atol=1e-6)
 
 
 @pytest.mark.parametrize("latent_blocks", [1, 2, 3])
@@ -44,6 +86,8 @@ def test_bottleneck_starts_as_normalized_slot_identities(latent_blocks):
     assert torch.allclose(attn.sum(dim=-1), torch.ones_like(attn.sum(dim=-1)), atol=1e-6)
     assert torch.allclose(out_a, expected, atol=1e-6)
     assert torch.allclose(out_b, expected, atol=1e-6)
+    assert isinstance(bottleneck.abstract_proj, torch.nn.Identity)
+    assert not any(key.startswith("abstract_proj.") for key in bottleneck.state_dict())
     assert bottleneck.pos_emb.shape == (1, cfg.n_ctx, cfg.bottleneck_mixer_dim)
     assert bottleneck.pos_emb.float().std(unbiased=False).item() > 0.1
     for block in bottleneck.latent_blocks:

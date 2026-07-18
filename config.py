@@ -63,7 +63,9 @@ class ModelConfig:
     d_c: int = 256  # abstract latent dim
 
     # Bottleneck B
-    bottleneck_mixer_dim: int = 256  # input projection D_e -> mixer width (= d_c)
+    # Complete internal memory/slot width. The bottleneck stays at this width
+    # through all latent blocks, then projects once to the external d_c code.
+    bottleneck_mixer_dim: int = 256
     bottleneck_convnext_blocks: int = 2
     bottleneck_cross_attn_heads: int = 8
     # Perceiver-style latent processor depth (tmp/changes_bottleneck <1>): each block

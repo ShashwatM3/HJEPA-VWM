@@ -51,3 +51,14 @@ Ordered action from this result:
    another `N_c` run as general bottleneck capacity;
 4. keep alternate encoders orthogonal and retain source-diverse diagnostic repair before global
    conditioning claims.
+
+## 2026-07-18 — active execution bundle
+
+The human selected the combined no-whitening plus late-projection implementation and a two-arm
+complete-width sweep. Execute
+[`internal_memory_width_sweep/GUIDE.md`](internal_memory_width_sweep/GUIDE.md): first `M=512`, then
+`M=1024`, sequentially on the one A100, with `lambda_var=lambda_cov=lambda_sigreg=lambda_slot=0`.
+
+This supersedes the earlier recommendation for an unwhitened 256 arm in this paid bundle. Interpret
+only the 512-versus-1,024 delta causally, and require correct-versus-shuffled code separation before
+calling a lower raw-feature loss improved preservation.

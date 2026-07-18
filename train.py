@@ -2222,6 +2222,16 @@ def parse_args() -> argparse.Namespace:
         "shape-incompatible across values — do NOT --resume across it.",
     )
     parser.add_argument(
+        "--bottleneck-mixer-dim",
+        type=int,
+        default=None,
+        help="Complete bottleneck memory/slot width before the final projection to d_c "
+        "(cfg.model.bottleneck_mixer_dim, default 256). This controls in_proj, "
+        "ConvNeXt memory, cross-attention, learned queries, and every latent block. "
+        "Architecture knob: checkpoints are shape-incompatible across values — do not "
+        "--resume across widths.",
+    )
+    parser.add_argument(
         "--n-c",
         type=int,
         default=None,
@@ -2242,6 +2252,15 @@ def parse_args() -> argparse.Namespace:
 
 def finalize_training_config(cfg: Config) -> None:
     """Validate and normalize experiment-mode switches before modules are built."""
+    internal_width = cfg.model.bottleneck_mixer_dim
+    attention_heads = cfg.model.bottleneck_cross_attn_heads
+    if internal_width <= 0:
+        raise ValueError(f"cfg.model.bottleneck_mixer_dim must be positive; got {internal_width}")
+    if internal_width % attention_heads != 0:
+        raise ValueError(
+            "cfg.model.bottleneck_mixer_dim must be divisible by "
+            f"bottleneck_cross_attn_heads={attention_heads}; got {internal_width}"
+        )
     if cfg.train.global_batch <= 0:
         raise ValueError("--batch-size must be positive")
     if cfg.train.global_batch <= 1:
@@ -2385,6 +2404,8 @@ def main() -> None:
         cfg.model.decoder_blocks = args.decoder_blocks
     if args.bottleneck_latent_blocks is not None:
         cfg.model.bottleneck_latent_blocks = args.bottleneck_latent_blocks
+    if args.bottleneck_mixer_dim is not None:
+        cfg.model.bottleneck_mixer_dim = args.bottleneck_mixer_dim
     if args.n_c is not None:
         cfg.model.n_c = args.n_c
     if args.checkpoint_dir is not None:

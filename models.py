@@ -236,22 +236,24 @@ class BottleneckLatentBlock(nn.Module):
 class Bottleneck(nn.Module):
     """Compress detailed tokens into the low-bandwidth abstract latent `c_t`.
 
-    Projects the frozen `e_t` from its resolved `D_e` to the mixer width, mixes
-    each resolved temporal/spatial grid with shared ConvNeXt blocks, adds learned
-    memory position tags, then runs a small Perceiver-style latent processor. Its
-    orthogonal slot identities are repeatedly updated by sharpened cosine
+    Projects the frozen `e_t` from its resolved `D_e` to the configured internal
+    width, mixes each resolved temporal/spatial grid with shared ConvNeXt blocks,
+    adds learned memory position tags, then keeps memory and slots at that width
+    through a small Perceiver-style latent processor. Its orthogonal slot identities
+    are repeatedly updated by sharpened cosine
     cross-attention reads from the detailed-token memory, slot self-attention
     (competition), and a per-slot MLP (`bottleneck_latent_blocks` rounds,
     tmp/changes_bottleneck <1>). All updates are zero-init residuals on the slot
-    identities, so slot identity survives into `c_t` and the module starts as
-    exactly `LayerNorm(queries)` for every input. The same module (and its EMA
+    identities. One final learned projection maps the refined slots to external
+    `D_c` when the internal width differs; the default equal-width path uses an
+    exact identity for strict checkpoint compatibility. The same module (and its EMA
     copy) is applied identically to `e_t` (-> `c_t`) and `e_plus` (-> `c_plus`);
     both clips share the selected encoder's resolved time-major geometry, so there
     is no separate target path and no kept-mask in v0.2.
     """
 
     def __init__(self, cfg: ModelConfig, encoder_spec: EncoderSpec | None = None):
-        """Initialize input projection, ConvNeXt mixing, queries, and latent blocks."""
+        """Initialize wide memory/slots, latent refinement, and final code projection."""
         _require_torch()
         super().__init__()
         self.cfg = cfg
@@ -266,27 +268,35 @@ class Bottleneck(nn.Module):
         )
         self.pos_emb = nn.Parameter(torch.empty(1, layout.n_tokens, mix))
         nn.init.trunc_normal_(self.pos_emb, std=0.5)
-        self.to_kv = nn.Linear(mix, cfg.d_c)
+        self.to_kv = nn.Linear(mix, mix)
         # Fix 1 (Plan Phase 04): orthogonal queries (unit-norm rows). The old
         # v0.2 `randn * 0.02` made the q.k logits tiny, so softmax was near-
         # uniform for every slot and all 32 slots read out ~the mean token.
         # Unit-norm rows fix the scale and start the slots decorrelated.
-        q = torch.empty(cfg.n_c, cfg.d_c)
+        q = torch.empty(cfg.n_c, mix)
         nn.init.orthogonal_(q)
         self.queries = nn.Parameter(q)
         if cfg.bottleneck_latent_blocks < 1:
             raise ValueError(
                 f"bottleneck_latent_blocks must be >= 1; got {cfg.bottleneck_latent_blocks}"
             )
-        # The latent-block pre-norms operate on the D_c slot stream (this also fixes
-        # the old `q_norm = nn.LayerNorm(mix)` bug, which only worked because
-        # mix == d_c == 256 — tmp/changes_bottleneck <1> small code issue).
+        # Keep the complete read/compete/refine stream at the configured internal
+        # width. Compressing to D_c before these input-dependent updates would make
+        # bottleneck_mixer_dim a ConvNeXt-only width rather than a true memory width.
         self.latent_blocks = nn.ModuleList(
             [
-                BottleneckLatentBlock(cfg.d_c, cfg.bottleneck_cross_attn_heads)
+                BottleneckLatentBlock(mix, cfg.bottleneck_cross_attn_heads)
                 for _ in range(cfg.bottleneck_latent_blocks)
             ]
         )
+        if mix == cfg.d_c:
+            # No parameters/state keys on the shipped 256-wide path: historical
+            # checkpoints remain strict-load compatible and numerically unchanged.
+            self.abstract_proj = nn.Identity()
+        else:
+            self.abstract_proj = nn.Linear(mix, cfg.d_c)
+            nn.init.orthogonal_(self.abstract_proj.weight)
+            nn.init.zeros_(self.abstract_proj.bias)
         self.norm = nn.LayerNorm(cfg.d_c)
 
     def forward(self, detailed: Tensor, *, return_attn: bool = False):
@@ -303,7 +313,7 @@ class Bottleneck(nn.Module):
                 selectivity. The training path leaves this False so the fast
                 (no-weights) attention kernel is used.
         Returns:
-            abstract: (B, N_c=32, D_c=256) abstract latent. When `return_attn`,
+            abstract: (B, N_c, D_c) abstract latent. When `return_attn`,
             a tuple `(abstract, attn_weights)` with attn (B, num_heads, N_c, N_ctx).
         """
         b, n, d = detailed.shape
@@ -329,7 +339,7 @@ class Bottleneck(nn.Module):
             slots, block_attn = block(slots, memory, need_weights=(return_attn and i == last))
             if block_attn is not None:
                 attn = block_attn
-        abstract = self.norm(slots)
+        abstract = self.norm(self.abstract_proj(slots))
         if return_attn:
             return abstract, attn
         return abstract

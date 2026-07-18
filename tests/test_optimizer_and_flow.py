@@ -32,6 +32,7 @@ def test_make_optimizer_keeps_geometry_and_zero_init_out_of_weight_decay():
     models = importlib.import_module("models")
     train = importlib.import_module("train")
     cfg = _small_cfg()
+    cfg.model.bottleneck_mixer_dim = 16
     _, bottleneck, _, coarse_flow, decoder = models.build_phase1_modules(cfg, load_encoder=False)
 
     optimizer = train.make_optimizer(bottleneck, coarse_flow, decoder, cfg)
@@ -45,6 +46,7 @@ def test_make_optimizer_keeps_geometry_and_zero_init_out_of_weight_decay():
     assert len(optimizer.param_groups) == 6
     assert id(bottleneck.in_proj.weight) in weight_decay_by_id
     assert weight_decay_by_id[id(bottleneck.in_proj.weight)] == cfg.train.weight_decay
+    assert weight_decay_by_id[id(bottleneck.abstract_proj.weight)] == cfg.train.weight_decay
     assert weight_decay_by_id[id(first_block.cross_attn.q_proj.weight)] == cfg.train.weight_decay
     assert weight_decay_by_id[id(first_block.self_attn.in_proj_weight)] == cfg.train.weight_decay
     assert weight_decay_by_id[id(first_block.mlp[1].weight)] == cfg.train.weight_decay
@@ -55,6 +57,7 @@ def test_make_optimizer_keeps_geometry_and_zero_init_out_of_weight_decay():
         bottleneck.queries,
         bottleneck.pos_emb,
         bottleneck.in_proj.bias,
+        bottleneck.abstract_proj.bias,
         bottleneck.norm.weight,
         first_block.cross_attn.logit_scale,
         first_block.cross_attn.o_proj.weight,

@@ -1,9 +1,39 @@
 import importlib
 import json
 import os
+import sys
 from pathlib import Path
 
 import numpy as np
+import pytest
+
+
+def test_cli_sets_bottleneck_internal_width_before_stage0(monkeypatch):
+    """The public CLI exposes the internal-width sweep without source edits."""
+    train = importlib.import_module("train")
+    captured = {}
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["train.py", "--stage0-only", "--bottleneck-mixer-dim", "512"],
+    )
+    monkeypatch.setattr(train, "run_stage0", lambda cfg: captured.setdefault("cfg", cfg))
+
+    train.main()
+
+    assert captured["cfg"].model.bottleneck_mixer_dim == 512
+
+
+@pytest.mark.parametrize("width", [0, 510])
+def test_finalize_rejects_invalid_bottleneck_internal_width(width):
+    """Internal width must be positive and split evenly across attention heads."""
+    config = importlib.import_module("config")
+    train = importlib.import_module("train")
+    cfg = config.Config()
+    cfg.model.bottleneck_mixer_dim = width
+
+    with pytest.raises(ValueError, match="bottleneck_mixer_dim"):
+        train.finalize_training_config(cfg)
 
 
 def test_config_exposes_locked_phase1_constants(monkeypatch):
@@ -21,6 +51,7 @@ def test_config_exposes_locked_phase1_constants(monkeypatch):
     assert cfg.model.n_c == 32
     assert cfg.model.d_e == 1024
     assert cfg.model.d_c == 256
+    assert cfg.model.bottleneck_mixer_dim == 256
     assert cfg.model.encoder_repo == "facebook/vjepa2-vitl-fpc64-256"
     assert cfg.encoder.alias == "vjepa2_vitl16"
     assert cfg.encoder.revision is None

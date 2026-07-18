@@ -74,3 +74,16 @@ specificity worsens from `std/cosine=0.806/0.473` at 32 slots to `0.326/0.914` a
 only to `0.649/0.677` at 128. Larger `N_c` therefore lowers loss slightly without producing a
 healthier recorded-batch content code. The result rejects more query slots as the leading fix; no
 256-slot arm is warranted. Full read: [`bottleneck_slot_capacity_sweep/ANALYSIS.md`](bottleneck_slot_capacity_sweep/ANALYSIS.md).
+
+## Unwhitened internal-memory width sweep
+
+[`internal_memory_width_sweep/`](internal_memory_width_sweep/) is the next executable bundle. It
+implements one coherent bottleneck width `M` through memory, learned queries, and all three latent
+blocks, then projects once to the unchanged external `D_c=256`. Two full-EGO4D arms compare
+`M=512` and `M=1024` sequentially on one GPU.
+
+Both arms omit whitening completely and set variance, covariance, SIGReg, and slot-loss weights to
+zero. They retain `N_c=32`, `lambda_recon=1`, the 512-by-4 decoder, and the present-only absolute
+cosine recipe. Existing whitening files stay on the volume but are ignored. Because whitening
+removal and late projection are shared interventions, this bundle isolates only the 512-to-1,024
+width delta; it cannot separately attribute a change against historical whitened controls.
