@@ -1965,7 +1965,10 @@ def parse_args() -> argparse.Namespace:
         "--encoder",
         choices=("vjepa2_vitl16", "dinov3_vitb16", "siglip2_vitb16"),
         default="vjepa2_vitl16",
-        help="Stable frozen-encoder alias. DINO remains unavailable until its gated lane lands.",
+        help=(
+            "Stable frozen-encoder alias. DINO requires --encoder-revision until its "
+            "default checkpoint is pinned."
+        ),
     )
     parser.add_argument("--encoder-revision", default=None)
     parser.add_argument("--encoder-precision", choices=("fp32", "bf16"), default=None)
