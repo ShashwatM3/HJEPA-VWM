@@ -486,6 +486,70 @@ class _SigLIP2Adapter(nn.Module):
         return tokens
 
 
+class _DINOAdapter(nn.Module):
+    """Private frame-based adapter for DINOv3 ViT-B/16 dense patch tokens."""
+
+    frame_based = True
+    _PATCH_TOKENS = 16 * 16
+    _REGISTER_TOKENS = 4
+    _SPECIAL_TOKENS = 1 + _REGISTER_TOKENS
+
+    def __init__(self, cfg: EncoderConfig, repo_id: str, revision: str) -> None:
+        """Load one immutable DINOv3 vision checkpoint through Transformers."""
+        super().__init__()
+        try:
+            from transformers import DINOv3ViTModel
+        except ModuleNotFoundError as exc:  # pragma: no cover - dependency installation error.
+            raise RuntimeError(
+                "transformers==4.57.6 is required for the DINOv3 encoder adapter."
+            ) from exc
+
+        self.model = DINOv3ViTModel.from_pretrained(
+            repo_id,
+            revision=revision,
+            cache_dir=cfg.hf_cache_dir,
+            attn_implementation=cfg.attention_implementation,
+        )
+        config = getattr(self.model, "config", None)
+        register_tokens = getattr(config, "num_register_tokens", None)
+        if register_tokens != self._REGISTER_TOKENS:
+            raise RuntimeError(
+                "DINOv3 ViT-B/16 adapter expects one CLS token and four register tokens "
+                f"before the 256 patch tokens; got num_register_tokens={register_tokens!r}."
+            )
+        self.resolved_revision = _capture_resolved_revision(
+            self.model, repo_id, revision, cfg.hf_cache_dir
+        )
+
+    def forward_units(self, frames: Tensor) -> Any:
+        """Encode independent ImageNet-normalized frames through the DINO tower.
+
+        Args:
+            frames: ImageNet-normalized images, shape `(U,3,256,256)`.
+        Returns:
+            Transformers vision output containing CLS/register/patch tokens.
+        """
+        return self.model(pixel_values=frames, return_dict=True)
+
+    @classmethod
+    def select_dense_tokens(cls, output: Any) -> Tensor:
+        """Strip DINO's CLS/register prefix and return fixed 16x16 patch tokens."""
+        tokens = getattr(output, "last_hidden_state", None)
+        if not isinstance(tokens, Tensor):
+            raise TypeError("DINOv3 vision output must expose tensor last_hidden_state tokens.")
+        if tokens.shape[-1] != 768:
+            raise RuntimeError(
+                f"DINOv3 ViT-B/16 patch width changed: expected 768, got {tokens.shape[-1]}."
+            )
+        expected_tokens = cls._SPECIAL_TOKENS + cls._PATCH_TOKENS
+        if tokens.shape[1] != expected_tokens:
+            raise RuntimeError(
+                "DINOv3 ViT-B/16 adapter expects one CLS token, four register tokens, "
+                f"and 256 patch tokens; got sequence length {tokens.shape[1]}."
+            )
+        return tokens[:, cls._SPECIAL_TOKENS :, :]
+
+
 @dataclass(frozen=True)
 class _AdapterRegistration:
     """Private stable-alias metadata and optional tested adapter factory."""
@@ -519,11 +583,11 @@ _ADAPTER_REGISTRY = {
         family="dinov3",
         repo_id="facebook/dinov3-vitb16-pretrain-lvd1689m",
         default_revision=None,
-        factory=None,
+        factory=_DINOAdapter,
         feature_dim=768,
         layout=FeatureLayout(8, 16, 16, "time_y_x", "frame", 1, 1),
         normalization_id="imagenet-mean-std",
-        preprocess_version="unresolved",
+        preprocess_version="imagenet-256-dinov3-last-hidden-state-strip-cls-registers-v1",
         normalization_mean=ENCODER_IMAGE_MEAN,
         normalization_std=ENCODER_IMAGE_STD,
     ),
@@ -579,13 +643,18 @@ def build_frozen_encoder(cfg: EncoderConfig) -> FrozenEncoder:
         choices = ", ".join(sorted(_ADAPTER_REGISTRY))
         raise ValueError(f"Unknown encoder alias {cfg.alias!r}; expected one of: {choices}.")
     _validate_config(cfg)
-    if registration.factory is None or registration.default_revision is None:
+    if registration.factory is None:
         raise RuntimeError(
             f"Encoder alias {cfg.alias!r} is reserved but not implemented with a tested "
-            "private adapter and immutable default revision. It will not fall back to main."
+            "private adapter. It will not fall back to main."
         )
 
     requested_revision = cfg.revision or registration.default_revision
+    if requested_revision is None:
+        raise RuntimeError(
+            f"Encoder alias {cfg.alias!r} has a private adapter but no immutable default "
+            "revision yet. Pass an explicit 40-character revision; it will not fall back to main."
+        )
     if _IMMUTABLE_REVISION.fullmatch(requested_revision) is None:
         raise ValueError("Encoder revision must be an immutable 40-character Hub commit SHA.")
     backend = registration.factory(cfg, registration.repo_id, requested_revision)
