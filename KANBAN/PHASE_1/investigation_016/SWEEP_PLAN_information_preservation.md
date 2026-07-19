@@ -12,7 +12,8 @@ This file began as the design plan. The architecture described here was implemen
 the executable two-arm bundle now has separate records for
 [`M=512`](run_064_unwhitened_internal_memory_m512/) and
 [`M=1024`](run_065_unwhitened_internal_memory_m1024/), with the shared launch in [`GUIDE.md`](GUIDE.md).
-Results remain pending.
+Both arms completed on 2026-07-19. M=1024 retained more recorded-batch rank but missed the joint
+loss/gap thresholds, so the empirical width decision is **M=512**.
 The empirical basis is the end-to-end
 [`reconstruction_floor_architecture_audit`](reconstruction_floor_architecture_audit/ANALYSIS.md),
 the completed
@@ -51,6 +52,40 @@ changes. Consequently, this launch may conclude only that exact-chunk preservati
 the recorded source. It is prohibited from claiming global cross-source or global-video
 preservation; that stronger claim remains gated on source-unique validation and cross-source code
 derangement.
+
+## Empirical result — 2026-07-19
+
+Both 15,000-step arms finished on clean commit `9522008` with zero skipped, nonfinite, or warned
+updates. W&B runs are
+[`4biwq87o`](https://wandb.ai/smahalanobis-uc-davis/hjepa-vwm/runs/4biwq87o) for M=512 and
+[`8gr3je5b`](https://wandb.ai/smahalanobis-uc-davis/hjepa-vwm/runs/8gr3je5b) for M=1024.
+
+Medians over the preregistered six diagnostic points at steps 12,000–14,500:
+
+| Metric | M=512 | M=1024 | 1,024 minus 512 |
+|---|---:|---:|---:|
+| Active training `L_recon` | 0.260785 | 0.259879 | -0.000906 |
+| Fixed correct-code loss | 0.305063 | 0.303584 | -0.001478 |
+| Correct-versus-shuffled gap | 0.161563 | 0.163592 | +0.002029 |
+| Exact-chunk conditioned share | 23.2486% | 23.4905% | +0.2419 pp |
+| Mean code std | 0.204902 | 0.215297 | +0.010394 |
+| Cross-example cosine | 0.953795 | 0.949897 | -0.003898 |
+| Effective rank | 10.754587 | 15.375923 | +4.621336 |
+| Slot-diversity rank | 9.917890 | 13.569283 | +3.651394 |
+| W&B runtime | 11,473 s | 12,321 s | +848 s (+7.39%) |
+
+The wider arm passes the required “conditioned share must not decrease” direction, but its
+`0.000906` active-loss improvement is far below `0.01` and its `0.002029` gap improvement is below
+`0.005`. The bottleneck itself is about 3.86 times larger. **Keep M=512.** M=1024 does preserve
+more external-code directions, so early width affects geometry, but the fixed `32 x 256` code and
+decoder extract essentially the same useful reconstruction signal.
+
+Both arms are still low-rank decodable on the recorded batch, not healthy representations. The
+fixed examples all come from one EGO4D source, so global collapse remains indeterminate. The raw
+loss near `0.26` also cannot be compared numerically with the historical whitened floor near
+`0.67`; and because no-whitening plus late projection were bundled in both arms, this pair cannot
+causally divide their individual effects. Full evidence is in the two run folders, especially the
+[`M=1024 paired analysis`](run_065_unwhitened_internal_memory_m1024/OBSERVATIONS.md).
 
 ---
 
@@ -886,9 +921,14 @@ Implement the width/projection change entirely inside `Bottleneck`, keep the def
 state-compatible and computationally identical, and expose the existing mixer field through one
 CLI flag. Do not touch the decoder, flow, losses, detach boundaries, or whitening implementation.
 
-The active launch now runs unwhitened 512 and 1,024 sequentially, both with late projection and all
+The completed launch ran unwhitened 512 and 1,024 sequentially, both with late projection and all
 auxiliary regularizer weights at zero. The earlier unwhitened-256-first recommendation is retained
 in Section 8 only as the cleaner attribution design that the human chose not to fund in this bundle.
+
+That launch is now complete. The data select M=512: going to 1,024 substantially improves
+recorded-batch rank but not reconstruction or correct-code dependence enough to justify its cost.
+Carry the 512-wide late-projection bottleneck forward, and treat final external rate, objective
+honesty/feature magnitude, decoder form, and source-diverse measurement as separate next axes.
 
 If all three arms are executed, interpret them as:
 

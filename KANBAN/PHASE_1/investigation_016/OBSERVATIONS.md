@@ -77,3 +77,28 @@ The next bundle has separate run records for
 and 1,024, both returning the same `32 x 256` external code after one final projection. All
 auxiliary geometry weights are zero. The paid runs are pending; the code and launch queue are
 locally verified before publication.
+
+## 2026-07-19 — unwhitened internal-memory width pair complete; select M=512
+
+Runs 64 and 65 completed as W&B
+[`4biwq87o`](https://wandb.ai/smahalanobis-uc-davis/hjepa-vwm/runs/4biwq87o) and
+[`8gr3je5b`](https://wandb.ai/smahalanobis-uc-davis/hjepa-vwm/runs/8gr3je5b). Both ran all 15,000
+steps on clean commit `9522008` with no skipped, nonfinite, or warned updates. The exact config was
+full EGO4D, no whitening, present-only absolute cosine reconstruction at weight 1, `N_c=32`,
+external `D_c=256`, and zero variance/covariance/SIGReg/slot weights. Only complete internal width
+changed from 512 to 1,024.
+
+Late six-diagnostic medians for M=512 versus M=1024 were `0.260785/0.259879` active reconstruction,
+`0.305063/0.303584` fixed correct-code loss, `0.161563/0.163592` shuffled-code gap, and
+`23.2486%/23.4905%` conditioned share. The 1,024 arm therefore improves active loss by only
+`0.000906` and gap by only `0.002029`, missing the registered `0.01` and `0.005` thresholds. Keep
+M=512 rather than paying for the roughly 3.86-times larger bottleneck.
+
+M=1024 did improve late effective rank `10.7546 -> 15.3759`, slot-diversity rank
+`9.9179 -> 13.5693`, and std/cosine slightly. This proves the wider computation retains more
+directions, but both arms remain far below representation-health gates and receive the
+**LOW-RANK DECODABLE; GLOBAL COLLAPSE INDETERMINATE** verdict. The fixed validation batch contains
+one source UID, so the gap is exact-chunk/within-source evidence only. Raw and whitened cosine
+values are not directly comparable, and this combined pair cannot separately attribute whitening
+removal or late projection. Full table:
+[`run_065.../OBSERVATIONS.md`](run_065_unwhitened_internal_memory_m1024/OBSERVATIONS.md).

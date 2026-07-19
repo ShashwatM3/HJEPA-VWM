@@ -77,14 +77,22 @@ healthier recorded-batch content code. The result rejects more query slots as th
 
 ## Unwhitened internal-memory width sweep
 
-The next executable bundle has separate run records for
+The completed bundle has separate run records for
 [`M=512`](run_064_unwhitened_internal_memory_m512/) and
 [`M=1024`](run_065_unwhitened_internal_memory_m1024/). It implements one coherent bottleneck width `M`
 through memory, learned queries, and all three latent blocks, then projects once to the unchanged
-external `D_c=256`. The two full-EGO4D arms execute sequentially on one GPU.
+external `D_c=256`. The two full-EGO4D arms executed sequentially on one GPU as W&B `4biwq87o`
+and `8gr3je5b`.
 
 Both arms omit whitening completely and set variance, covariance, SIGReg, and slot-loss weights to
 zero. They retain `N_c=32`, `lambda_recon=1`, the 512-by-4 decoder, and the present-only absolute
 cosine recipe. Existing whitening files stay on the volume but are ignored. Because whitening
 removal and late projection are shared interventions, this bundle isolates only the 512-to-1,024
 width delta; it cannot separately attribute a change against historical whitened controls.
+
+Both arms trained stably and learned within-source exact-chunk code dependence, but both contracted
+to low-rank external codes. M=1024 raised late effective rank from `10.75` to `15.38` while
+improving active reconstruction by only `0.000906` and the shuffled-code gap by only `0.002029`.
+Those changes miss the preregistered material-effect thresholds, so M=512 is the selected practical
+width. Full paired evidence:
+[`run_065.../OBSERVATIONS.md`](run_065_unwhitened_internal_memory_m1024/OBSERVATIONS.md).

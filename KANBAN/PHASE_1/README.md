@@ -189,3 +189,26 @@ Newer run index rows (append to the Complete W&B Run Index above):
 - Do not launch 256. Next paid axes are no whitening and the 1,024-to-256 channel/`D_c` squeeze,
   kept separate from alternate-encoder work. Full analysis:
   [`bottleneck_slot_capacity_sweep/ANALYSIS.md`](investigation_016/bottleneck_slot_capacity_sweep/ANALYSIS.md).
+
+## Update (2026-07-19) — investigation_016 internal-memory width pair completed
+
+- Live W&B now has **66 entries**. Run 64 M=512 `4biwq87o` and Run 65 M=1024 `8gr3je5b`
+  both finished 15,000 steps on clean commit `9522008` with zero skipped/nonfinite/warned updates.
+- Both arms use full EGO4D, raw features with whitening disabled, `N_c=32`, external `D_c=256`,
+  one final projection after three latent blocks, `lambda_recon=1`, and zero auxiliary geometry
+  weights. Only complete internal memory/query/latent width differs.
+- Late active reconstruction is `0.260785/0.259879`; fixed correct-code loss is
+  `0.305063/0.303584`; shuffled-code gap is `0.161563/0.163592`. M=1024 improves loss by only
+  `0.000906` and gap by only `0.002029`, below the preregistered `0.01`/`0.005` thresholds.
+- M=1024 raises recorded-batch effective rank `10.75 -> 15.38`, but both arms remain low-rank
+  decodable and the fixed batch is single-source. Keep M=512; global collapse/preservation remains
+  indeterminate until source-diverse diagnostics are repaired.
+- Full paired evidence:
+  [`run_065.../OBSERVATIONS.md`](investigation_016/run_065_unwhitened_internal_memory_m1024/OBSERVATIONS.md).
+
+Newest run index rows:
+
+| # | Run | ID | State | Investigation | Mode | Verdict |
+|---:|---|---|---|---|---|---|
+| 64 | [`Investigation 16 · Internal memory width · EGO4D M=512`](investigation_016/run_064_unwhitened_internal_memory_m512/) | `4biwq87o` | finished | investigation_016 | present-only | Low-rank decodable; global collapse indeterminate; selected width |
+| 65 | [`Investigation 16 · Internal memory width · EGO4D M=1024`](investigation_016/run_065_unwhitened_internal_memory_m1024/) | `8gr3je5b` | finished | investigation_016 | present-only | Low-rank decodable; global collapse indeterminate; not cost-justified |

@@ -3,6 +3,14 @@
 This is the exact guide for the paired 512/1,024 launch. One fail-fast `tmux` queue checks the
 largest architecture, runs 512 to completion, and then runs 1,024 on the same GPU.
 
+## Status — completed 2026-07-19
+
+Do not relaunch this paid pair. The queue passed Stage 0 and the M=1024 resource preflight, then
+completed both arms sequentially. W&B runs are
+[`4biwq87o`](https://wandb.ai/smahalanobis-uc-davis/hjepa-vwm/runs/4biwq87o) and
+[`8gr3je5b`](https://wandb.ai/smahalanobis-uc-davis/hjepa-vwm/runs/8gr3je5b); both are `finished`.
+The remaining sections are the exact reproducibility guide, not a pending action list.
+
 ## 1. Fresh pod setup
 
 On a fresh pod, execute only Sections 1–5 of
@@ -136,3 +144,22 @@ Confirm both W&B states are `finished`, then update the two run records:
 Apply [`SWEEP_PLAN_information_preservation.md`](SWEEP_PLAN_information_preservation.md)'s joint
 loss-plus-gap rule. The gap must improve, not merely stay flat. The current fixed batch supports
 only an exact-chunk/within-source preservation claim; global preservation is prohibited.
+
+## 8. Recorded completion and decision
+
+```text
+M=512 checkpoint:
+/workspace/ckpt/inv016_unwhitened_memory_m512/phase1_step15000.pt
+sha256 1775fe9807886ea820a96cf0a559ce53d81950f6b0658d3c8098780224b62c51
+
+M=1024 checkpoint:
+/workspace/ckpt/inv016_unwhitened_memory_m1024/phase1_step15000.pt
+sha256 ca35295b4997370cf7d5767bd6e460be0681e9cc235621f4e2cb7fcef52630bd
+```
+
+M=1024 improved the six-point late `L_recon` median by only `0.000906` and the
+correct-versus-shuffled gap by only `0.002029`, below the registered `0.01` and `0.005`
+thresholds. Its conditioned share did not decrease and its effective rank was higher, but that is
+not enough to justify a roughly 3.86-times larger bottleneck. The selected width is **M=512**. Full
+paired evidence is in
+[`run_065.../OBSERVATIONS.md`](run_065_unwhitened_internal_memory_m1024/OBSERVATIONS.md).

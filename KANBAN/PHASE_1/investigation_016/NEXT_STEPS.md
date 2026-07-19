@@ -52,14 +52,27 @@ Ordered action from this result:
 4. keep alternate encoders orthogonal and retain source-diverse diagnostic repair before global
    conditioning claims.
 
-## 2026-07-18 — active execution bundle
+## 2026-07-18/19 — execution bundle complete
 
 The human selected the combined no-whitening plus late-projection implementation and a two-arm
-complete-width sweep. Execute
-[`GUIDE.md`](GUIDE.md): first [`M=512`](run_064_unwhitened_internal_memory_m512/), then
+complete-width sweep. The exact [`GUIDE.md`](GUIDE.md) completed successfully: first
+[`M=512`](run_064_unwhitened_internal_memory_m512/), then
 [`M=1024`](run_065_unwhitened_internal_memory_m1024/), sequentially on the one A100, with
 `lambda_var=lambda_cov=lambda_sigreg=lambda_slot=0`.
 
 This supersedes the earlier recommendation for an unwhitened 256 arm in this paid bundle. Interpret
 only the 512-versus-1,024 delta causally, and require correct-versus-shuffled code separation before
-calling a lower raw-feature loss improved preservation.
+calling a lower raw-feature loss improved preservation. The 1,024 arm missed the registered loss
+and gap thresholds, so keep M=512.
+
+Ordered action from this result:
+
+1. carry the 512-wide late-projection bottleneck as the practical default;
+2. repair source-unique validation and cross-source derangement before any global preservation or
+   collapse claim;
+3. do not use the historical whitened `~0.67` versus raw `~0.26` loss difference as a causal or
+   numerically equivalent comparison;
+4. isolate the remaining external-rate (`D_c`/final code size), decoder, and objective-honesty
+   hypotheses one at a time;
+5. restore geometry pressure in a dedicated arm if the goal is a healthy representation rather
+   than reconstruction-only low-rank compression.

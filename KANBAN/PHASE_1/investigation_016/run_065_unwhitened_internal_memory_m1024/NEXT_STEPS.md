@@ -1,7 +1,11 @@
 # Next steps — Run 65, EGO4D internal memory M=1024
 
-1. Pass the largest-shape Stage 0 and resource gate in the parent queue.
-2. Wait for the paired 512 arm to finish successfully; never run both on the one GPU.
-3. Complete 15,000 steps with valid W&B/provenance/checkpoint evidence.
-4. Compare late loss and improved correct-versus-shuffled gap against 512.
-5. Prefer 1,024 only if it clears the parent effect/cost rule without instability or shortcutting.
+1. Keep this completed arm immutable; its W&B run, provenance, and final checkpoint are valid.
+2. Do not promote M=1024 as the default: it missed both material-effect thresholds despite its
+   higher recorded-batch rank. Keep M=512 for the next architecture arm.
+3. Repair the fixed EGO4D diagnostic to use source-unique clips and cross-source derangement before
+   turning the within-source conditioning result into a global preservation claim.
+4. Test the remaining final-rate/objective bottlenecks separately: external `D_c` or final code
+   rate, decoder form, and residual/cosine-plus-magnitude targets must not be bundled together.
+5. If healthy representation geometry is required, restore one geometry force in a dedicated arm;
+   zero regularizer weights intentionally allowed both width arms to become low-rank decodable.
