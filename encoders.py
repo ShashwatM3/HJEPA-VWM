@@ -582,7 +582,7 @@ _ADAPTER_REGISTRY = {
     "dinov3_vitb16": _AdapterRegistration(
         family="dinov3",
         repo_id="facebook/dinov3-vitb16-pretrain-lvd1689m",
-        default_revision=None,
+        default_revision="5931719e67bbdb9737e363e781fb0c67687896bc",
         factory=_DINOAdapter,
         feature_dim=768,
         layout=FeatureLayout(8, 16, 16, "time_y_x", "frame", 1, 1),
