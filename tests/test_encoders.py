@@ -275,12 +275,13 @@ def test_eval_and_freeze_are_sticky():
     assert all(not parameter.requires_grad for parameter in encoder.parameters())
 
 
-def test_dino_registry_requires_explicit_revision_until_default_is_pinned():
-    from config import EncoderConfig
-    from encoders import build_frozen_encoder
+def test_dino_registry_has_pinned_default_revision():
+    from encoders import _ADAPTER_REGISTRY
 
-    with pytest.raises(RuntimeError, match="dinov3_vitb16.*no immutable default revision"):
-        build_frozen_encoder(EncoderConfig(alias="dinov3_vitb16"))
+    assert (
+        _ADAPTER_REGISTRY["dinov3_vitb16"].default_revision
+        == "5931719e67bbdb9737e363e781fb0c67687896bc"
+    )
 
 
 def test_transformers_pin_exposes_both_planned_frame_encoder_architectures():
