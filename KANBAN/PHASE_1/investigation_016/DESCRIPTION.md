@@ -96,3 +96,18 @@ improving active reconstruction by only `0.000906` and the shuffled-code gap by 
 Those changes miss the preregistered material-effect thresholds, so M=512 is the selected practical
 width. Full paired evidence:
 [`run_065.../OBSERVATIONS.md`](run_065_unwhitened_internal_memory_m1024/OBSERVATIONS.md).
+
+## Encoder-substrate comparison at unwhitened M=512
+
+[`run_066_siglip2_unwhitened_internal_memory_m512/`](run_066_siglip2_unwhitened_internal_memory_m512/)
+(PLANNED) takes the selected M=512 arm and swaps **only** the frozen encoder from V-JEPA 2 ViT-L/16
+(`vjepa2_vitl16`) to the standard SigLIP 2 ViT-B/16 (`siglip2_vitb16`
+@ `3f9f96cb90da5dbc758b01813f2f6f1aee24c1ab`). It keeps the unwhitened, present-only, absolute
+cosine recipe with `lambda_recon=1`, `M=512`, `N_c=32`, the 512-by-4 decoder, and every
+variance/covariance/SIGReg/slot weight at zero. The single intended delta versus
+[`run_064`](run_064_unwhitened_internal_memory_m512/) (W&B `4biwq87o`) is the encoder alias +
+revision, so this is the first same-commit V-JEPA-vs-SigLIP control at this operating point. Because
+the two encoders emit different `D_e`/`N_e`/layout feature spaces, raw cross-encoder cosine values
+are not directly comparable; the defensible comparison is within-run diagnostics. This run is a
+low-architectural-significance diagnostic to measure encoder-substrate effect, documented for
+provenance. It does not displace the width conclusion above.
