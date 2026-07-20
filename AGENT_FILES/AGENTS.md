@@ -417,13 +417,15 @@ Pipeline:
 5. `to_kv`: linear `M -> M` produces the memory tokens without an early
    projection to `D_c`.
 6. A Perceiver-style latent processor of `bottleneck_latent_blocks=3`
-   `BottleneckLatentBlock`s refines the `N_c=32` learned `M`-wide query slots. Each
+   `BottleneckLatentBlock`s refines the `N_c` learned `M`-wide query slots (`32` by
+   default, sweepable with `--n-c`). Each
    block runs three zero-init residual updates on the slot stream:
    sharpened-cosine cross-attention read from the `N_e` memory tokens
    (`SharpCrossAttention`, zero-init `o_proj`), slot self-attention for slot
    competition (zero-init `out_proj`), and a per-slot MLP (zero-init last
    layer).
-7. After all input-dependent reads/refinement, `abstract_proj` maps `M -> D_c`;
+7. After all input-dependent reads/refinement, `abstract_proj` maps `M -> D_c`
+   (`256` by default, sweepable with `--d-c`);
    it is a parameter-free identity when `M == D_c` and an orthogonally initialized
    linear layer otherwise.
 8. Final `LayerNorm(D_c)` produces the external `(B,N_c,D_c)` code consumed by
@@ -979,10 +981,13 @@ Data/path defaults:
 | `hf_cache_dir` | `/workspace/hf_cache` |
 | `seed` | `42` |
 
-Current `train.py` CLI additionally exposes encoder alias/revision/precision/frame
-microbatch/attention/cache, physical batch, resource/no-step provenance preflight,
-provenance comparison, strict W&B identity, and explicit resume migration policy. Read
-`parse_args()` before adding or changing an experiment knob.
+Current `train.py` CLI additionally exposes both external bottleneck axes (`--n-c`,
+`--d-c`), the internal width (`--bottleneck-mixer-dim`), encoder
+alias/revision/precision/frame microbatch/attention/cache, physical batch,
+resource/no-step provenance preflight, provenance comparison, strict W&B identity, and
+explicit resume migration policy. `d_c` must be positive and divisible by `f_c_heads`;
+checkpoints are shape-incompatible across either external axis. Read `parse_args()`
+before adding or changing an experiment knob.
 
 ## 13. Stage and phase status
 

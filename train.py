@@ -2240,6 +2240,16 @@ def parse_args() -> argparse.Namespace:
         "64:1 at 64). Tests the capacity-bound hypothesis. Audited: no hard-coded 32.",
     )
     parser.add_argument(
+        "--d-c",
+        type=int,
+        default=None,
+        help="External abstract slot width d_c (cfg.model.d_c, default 256). Together "
+        "with --n-c this sets abstract BANDWIDTH = n_c * d_c. The bottleneck projects "
+        "from --bottleneck-mixer-dim to this width only after latent refinement; F_c "
+        "and D consume the resulting width. Checkpoints are shape-incompatible across "
+        "values, so do not --resume across widths.",
+    )
+    parser.add_argument(
         "--checkpoint-dir",
         type=str,
         default=None,
@@ -2260,6 +2270,15 @@ def finalize_training_config(cfg: Config) -> None:
         raise ValueError(
             "cfg.model.bottleneck_mixer_dim must be divisible by "
             f"bottleneck_cross_attn_heads={attention_heads}; got {internal_width}"
+        )
+    if cfg.model.n_c <= 0:
+        raise ValueError(f"cfg.model.n_c must be positive; got {cfg.model.n_c}")
+    if cfg.model.d_c <= 0:
+        raise ValueError(f"cfg.model.d_c must be positive; got {cfg.model.d_c}")
+    if cfg.model.d_c % cfg.model.f_c_heads != 0:
+        raise ValueError(
+            "cfg.model.d_c must be divisible by "
+            f"f_c_heads={cfg.model.f_c_heads}; got {cfg.model.d_c}"
         )
     if cfg.train.global_batch <= 0:
         raise ValueError("--batch-size must be positive")
@@ -2408,6 +2427,8 @@ def main() -> None:
         cfg.model.bottleneck_mixer_dim = args.bottleneck_mixer_dim
     if args.n_c is not None:
         cfg.model.n_c = args.n_c
+    if args.d_c is not None:
+        cfg.model.d_c = args.d_c
     if args.checkpoint_dir is not None:
         cfg.checkpoint_dir = args.checkpoint_dir
     finalize_training_config(cfg)
