@@ -1,0 +1,122 @@
+# Canonical Phase-1 recipe.
+#
+# Resolution order:
+#   config.py dataclass defaults -> this YAML -> five hot train.py overrides.
+#
+# The five scientific CLI overrides are:
+#   --data, --encoder, --n-c, --d-c, --bottleneck-mixer-dim
+#
+# Keep coupled loss/mode/schedule changes together in this file so W&B provenance records one
+# reviewable recipe rather than reconstructing it from a long shell command.
+
+seed: 42
+debug_shapes: true
+checkpoint_dir: /workspace/checkpoints
+
+encoder:
+  alias: vjepa2_vitl16
+  revision: null
+  input_frames: 8
+  input_height: 256
+  input_width: 256
+  precision: bf16
+  frame_microbatch: 8
+  attention_implementation: sdpa
+  hf_cache_dir: /workspace/hf_cache
+
+model:
+  n_c: 32
+  d_c: 256
+
+  bottleneck_mixer_dim: 256
+  bottleneck_convnext_blocks: 2
+  bottleneck_cross_attn_heads: 8
+  bottleneck_latent_blocks: 3
+
+  f_c_blocks: 6
+  f_c_dim: 256
+  f_c_heads: 8
+  condition_dropout: 0.10
+
+  decoder_dim: 256
+  decoder_blocks: 2
+  decoder_heads: 8
+
+train:
+  global_batch: 64
+  stage1_steps: 15000
+  max_steps: 15000
+
+  lr_bottleneck: 0.0001
+  lr_coarse_flow: 0.0002
+  lr_decoder: 0.0001
+  warmup_steps: 1500
+  total_latent_steps: 105000
+  adam_betas: [0.9, 0.95]
+  weight_decay: 0.05
+
+  grad_clip: 0.5
+  grad_skip_threshold: 150.0
+  agc_enabled: true
+  agc_lambda_bottleneck: 0.20
+  agc_lambda_coarse_flow: 0.10
+  agc_lambda_decoder: 0.20
+  agc_eps: 0.001
+  instability_warn_grad_norm: 30.0
+  instability_warn_l_flow: 1.0
+
+  ema_m_start: 0.996
+  ema_m_end: 0.9999
+  ema_schedule_steps: 105000
+
+  lambda_var: 0.10
+  var_floor_std_target: 1.0
+  lambda_cov: 0.0
+  lambda_slot: 0.0
+  lambda_sigreg: 0.0
+  sigreg_warmup_steps: 2000
+
+  lambda_recon: 0.0
+  lambda_recon_pred: 0.0
+  recon_loss_mode: cosine
+  recon_warmup_steps: 2000
+  recon_residual_target: false
+  recon_mean_momentum: 0.99
+  present_recon_only: false
+  predict_residual: false
+
+  whiten_features: false
+  whiten_stats_path: ""
+  whiten_expected_clips: 12800
+  whiten_eps: 0.0001
+
+  horizon_k: 4
+  frame_stride: 2
+  precision: bf16
+  log_every: 50
+  diag_every: 500
+  checkpoint_every: 2500
+
+data:
+  dataset: ssv2_tiny
+  num_workers: 8
+  pin_memory: true
+  ego4d_selection_manifest: /workspace/ego4d_raw/manifests/selection_manifest.json
+  ego4d_download_manifest: /workspace/ego4d_raw/video_540ss_manifest.csv
+
+runtime:
+  mode: train
+  resume: null
+  provenance_out: null
+  compare_provenance: null
+  require_wandb: false
+  reset_optimizer: false
+  allow_dataset_transfer: false
+  allow_legacy_checkpoint: false
+
+wandb:
+  entity: null
+  project: hjepa-vwm
+  group: null
+  name: null
+  run_id: null

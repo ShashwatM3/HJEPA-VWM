@@ -108,7 +108,7 @@ def test_finalize_training_config_validates_whitening():
     cfg = _small_cfg()
     cfg.train.whiten_features = True
     cfg.train.whiten_stats_path = ""
-    with pytest.raises(ValueError, match="whiten-stats-path"):
+    with pytest.raises(ValueError, match=r"train\.whiten_stats_path"):
         train.finalize_training_config(cfg)
     cfg.train.whiten_stats_path = "/tmp/stats.pt"
     cfg.train.whiten_eps = 0.0

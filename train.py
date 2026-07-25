@@ -28,7 +28,7 @@ except ModuleNotFoundError:  # pragma: no cover
     Tensor = object  # type: ignore[misc,assignment]
     nn = None  # type: ignore[assignment]
 
-from config import Config
+from config import Config, load_experiment_config
 from data import ClipBatch, build_dataloader
 from diagnostics import (
     _no_drop,
@@ -1057,8 +1057,8 @@ def _build_whitener(
     if not stats_path.is_file():
         raise FileNotFoundError(
             f"whiten_features is on but the stats file {stats_path} does not exist; "
-            "run `python whiten_stats.py --data <dataset>` first and pass its output "
-            "via --whiten-stats-path."
+            "run `python whiten_stats.py --data <dataset>` first and set its output "
+            "as train.whiten_stats_path in the experiment YAML."
         )
     envelope = load_whitening_envelope(
         stats_path,
@@ -1951,313 +1951,87 @@ def run_training(
     print(f"Final checkpoint: {final_checkpoint} sha256={checksum}")
 
 
-def parse_args() -> argparse.Namespace:
-    """Parse the Phase 1 training CLI."""
-    parser = argparse.ArgumentParser(description="Train HJEPA-VWM Phase 1 (v0.2).")
-    parser.add_argument(
-        "--data", choices=["ssv2", "ssv2_tiny", "ego4d", "ego4d_tiny"], default="ssv2_tiny"
+def build_arg_parser() -> argparse.ArgumentParser:
+    """Build the compact Phase 1 training CLI.
+
+    Scientific settings live in YAML. Only the five axes repeatedly swept in the latest
+    investigations remain as direct overrides: dataset, encoder, slot count, external slot width,
+    and internal bottleneck width. The remaining flags are operator controls, not hyperparameters.
+    """
+    parser = argparse.ArgumentParser(description="Train HJEPA-VWM Phase 1 from a YAML recipe.")
+    operator = parser.add_argument_group("operator controls")
+    scientific = parser.add_argument_group("scientific hot overrides")
+    operator.add_argument(
+        "--config",
+        default="configs/train.yaml",
+        help="Experiment YAML containing the complete recipe (default: configs/train.yaml).",
     )
-    parser.add_argument("--steps", type=int, default=15_000)
-    parser.add_argument("--resume", default=None)
-    parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--stage0-only", action="store_true")
-    parser.add_argument(
+    scientific.add_argument(
+        "--data",
+        choices=["ssv2", "ssv2_tiny", "ego4d", "ego4d_tiny"],
+        default=None,
+        help="Hot override for the YAML dataset.",
+    )
+    scientific.add_argument(
         "--encoder",
         choices=("vjepa2_vitl16", "dinov3_vitb16", "siglip2_vitb16"),
-        default="vjepa2_vitl16",
-        help="Stable frozen-encoder alias. DINO remains unavailable until its gated lane lands.",
+        default=None,
+        help="Hot override for the YAML frozen-encoder alias.",
     )
-    parser.add_argument("--encoder-revision", default=None)
-    parser.add_argument("--encoder-precision", choices=("fp32", "bf16"), default=None)
-    parser.add_argument("--encoder-frame-microbatch", type=int, default=None)
-    parser.add_argument("--encoder-attention-implementation", default=None)
-    parser.add_argument("--hf-cache-dir", default=None)
-    parser.add_argument("--batch-size", type=int, default=None)
-    parser.add_argument("--lr-decoder", type=float, default=None)
-    parser.add_argument(
+    scientific.add_argument(
+        "--n-c",
+        type=int,
+        default=None,
+        help="Hot override for the YAML abstract slot count.",
+    )
+    scientific.add_argument(
+        "--d-c",
+        type=int,
+        default=None,
+        help="Hot override for the YAML external abstract slot width.",
+    )
+    scientific.add_argument(
+        "--bottleneck-mixer-dim",
+        type=int,
+        default=None,
+        help="Hot override for the YAML internal bottleneck width.",
+    )
+    operator.add_argument("--resume", default=None, help="Operator override for runtime.resume.")
+    mode = operator.add_mutually_exclusive_group()
+    mode.add_argument("--stage0-only", action="store_true")
+    mode.add_argument(
         "--resource-preflight",
         action="store_true",
         help="Run one exact forward/backward/optimizer/diagnostic recipe and write provenance.",
     )
-    parser.add_argument(
+    mode.add_argument(
         "--preflight-only",
         action="store_true",
         help="Materialize and validate resolved provenance without taking a training step.",
     )
-    parser.add_argument("--provenance-out", default=None)
-    parser.add_argument("--compare-provenance", nargs=2, metavar=("LEFT", "RIGHT"))
-    parser.add_argument("--require-wandb", action="store_true")
-    parser.add_argument("--wandb-entity", default=None)
-    parser.add_argument("--wandb-project", default="hjepa-vwm")
-    parser.add_argument("--wandb-group", default=None)
-    parser.add_argument("--wandb-name", default=None)
-    parser.add_argument("--wandb-run-id", default=None)
-    parser.add_argument("--reset-optimizer", action="store_true")
-    parser.add_argument("--allow-dataset-transfer", action="store_true")
-    parser.add_argument("--allow-legacy-checkpoint", action="store_true")
-    parser.add_argument(
-        "--log-every",
-        type=int,
-        default=None,
-        help="Print + W&B-log frequency (overrides cfg.train.log_every).",
-    )
-    parser.add_argument(
-        "--diag-every",
-        type=int,
-        default=None,
-        help="Diagnostic-batch frequency (overrides cfg.train.diag_every).",
-    )
-    # Plan Phase 04 empirical knobs: defaults leave both penalties off; Run A
-    # logs L_cov/L_slot to calibrate them. Init fixes are baked into the model,
-    # not flagged. See EXECUTION_PHASES.md.
-    parser.add_argument(
-        "--lambda-cov",
-        type=float,
-        default=None,
-        help="VICReg-C weight on c_t (Run B). 0 = baseline; ~0.01-0.1 once "
-        "calibrated against Run A's logged L_cov.",
-    )
-    parser.add_argument(
-        "--lambda-slot",
-        type=float,
-        default=None,
-        help="Within-video slot-diversity weight on c_t. 0 = off; use after "
-        "Run A showed slot collapse / near-uniform bottleneck attention.",
-    )
-    parser.add_argument(
-        "--horizon-k",
-        type=int,
-        default=None,
-        help="Prediction horizon in ORIGINAL frames (cfg.train.horizon_k). "
-        "Default 4 (target overlaps context heavily); 12 = harder task with "
-        "slight overlap, 16+ = non-overlapping. Single fixed horizon (Phases 1-3).",
-    )
-    parser.add_argument(
-        "--lambda-var",
-        type=float,
-        default=None,
-        help="Variance-floor (VICReg V) weight on c_t (cfg.train.lambda_var, "
-        "default 0.10). The primary anti-collapse lever: raise it when c_std_mean "
-        "sits well below var_floor_std_target (1.0) and cross_video_cosine climbs.",
-    )
-    parser.add_argument(
-        "--lambda-sigreg",
-        type=float,
-        default=None,
-        help="SIGReg (isotropic-Gaussian) weight on c_t (cfg.train.lambda_sigreg, "
-        "investigation_008). 0 = baseline (L_sigreg logged at diag cadence only). "
-        "Nonzero drives the pooled c_t toward N(0,I) to break the c_effective_rank "
-        "~13/256 ceiling; sweep geometrically (~0.3-10), calibrate vs L_flow scale.",
-    )
-    parser.add_argument(
-        "--sigreg-warmup-steps",
-        type=int,
-        default=None,
-        help="Linear ramp length for lambda_sigreg (cfg.train.sigreg_warmup_steps, "
-        "default 2000, Issue 7). Ramps SIGReg in gradually so a strong weight doesn't "
-        "outrun the EMA target's coordinate system. Ignored when lambda_sigreg=0.",
-    )
-    parser.add_argument(
-        "--lambda-recon",
-        type=float,
-        default=None,
-        help="Reconstruction-anchor weight (option 1: decode c_t -> e_t, grad into "
-        "B only, NOT F_c). Uses per-token cosine distance after unit-normalizing "
-        "e_hat and e. 0 = baseline (decoder runs at diag cadence for "
-        "L_recon_present calibration only). Nonzero ramps in over --recon-warmup-steps.",
-    )
-    parser.add_argument(
-        "--lambda-recon-pred",
-        type=float,
-        default=None,
-        help="Prediction-side reconstruction-anchor weight (option 3: decode the "
-        "PREDICTED c_hat -> e_{t+k}, grad through F_c and into B via the conditioning). "
-        "0 = option-1 baseline (prediction branch not run). Runs alongside --lambda-recon, "
-        "reusing the same decoder and --recon-warmup-steps ramp. Watch L_recon_chat drop "
-        "and coarse_vs_copy_ratio fall below 1.",
-    )
-    parser.add_argument(
-        "--recon-loss-mode",
-        choices=["cosine", "relative_mse"],
-        default=None,
-        help="Reconstruction loss formula. cosine = per-token unit-normalized "
-        "mean(1 - cos), current default. relative_mse = legacy MSE / Var(e).",
-    )
-    parser.add_argument(
-        "--recon-residual-target",
-        action="store_true",
-        help="investigation_013 (run-052 fix): reconstruct the per-position residual "
-        "e - mean instead of the absolute frozen features, where mean is an EMA "
-        "per-lattice-position feature mean tracked over training batches. The shared "
-        "template earns zero loss, so all reconstruction pressure must route "
-        "video-specific content through c_t. Requires an active recon anchor "
-        "(--lambda-recon or --lambda-recon-pred > 0). Watch L_recon_video_gap: near "
-        "zero means template collapse.",
-    )
-    parser.add_argument(
-        "--recon-mean-momentum",
-        type=float,
-        default=None,
-        help="EMA momentum for the per-position feature mean "
-        "(cfg.train.recon_mean_momentum, default 0.99; must be in (0, 1)). Only "
-        "meaningful with --recon-residual-target.",
-    )
-    parser.add_argument(
-        "--present-recon-only",
-        action="store_true",
-        help="Train only the present reconstruction path D(B(e_t))->e_t: skips F_c loss, "
-        "future prediction, residual prediction, and lambda_recon_pred.",
-    )
-    parser.add_argument(
-        "--whiten-features",
-        action="store_true",
-        help="Whiten every selected frozen-encoder feature tensor with FIXED offline training-set "
-        "statistics before the bottleneck / reconstruction targets "
-        "(cfg.train.whiten_features, tmp/changes_bottleneck <2> / investigation_014). "
-        "Requires --whiten-stats-path (output of whiten_stats.py). B, B_EMA, F_c "
-        "targets, and D then all operate in whitened space; L_recon_* readouts score "
-        "whitened features and are NOT comparable to unwhitened runs.",
-    )
-    parser.add_argument(
-        "--whiten-stats-path",
-        type=str,
-        default=None,
-        help="Path to the whitening stats file written by whiten_stats.py "
-        "(cfg.train.whiten_stats_path). Required with --whiten-features.",
-    )
-    parser.add_argument(
-        "--whiten-eps",
-        type=float,
-        default=None,
-        help="Eigenvalue floor added before the inverse square root "
-        "(cfg.train.whiten_eps, default 1e-4). Larger = tail directions amplified "
-        "less; sweepable without recomputing the offline stats.",
-    )
-    parser.add_argument(
-        "--whiten-expected-clips",
-        type=int,
-        default=None,
-        help="Exact --max-clips budget required from the whitening artifact "
-        "(cfg.train.whiten_expected_clips, default 12800).",
-    )
-    parser.add_argument(
-        "--predict-residual",
-        action="store_true",
-        help="investigation_009: predict the temporal residual Δ = c_{t+k} - c_t (EMA both "
-        "ends) instead of the full future latent. The option-3 recon decodes ĉ = c_t + Δ̂, "
-        "the copy baseline becomes the zero residual (ratio stays comparable), and the flow "
-        "noise is scaled to Δ. Default off = full-latent prediction (byte-identical).",
-    )
-    parser.add_argument(
-        "--recon-warmup-steps",
-        type=int,
-        default=None,
-        help="Linear ramp length for lambda_recon / lambda_recon_pred "
-        "(cfg.train.recon_warmup_steps, default 2000). Protects the fragile early phase "
-        "(royal-cherry-17 8600 cliff).",
-    )
-    parser.add_argument(
-        "--lr-bottleneck",
-        type=float,
-        default=None,
-        help="Peak LR for bottleneck B (cfg.train.lr_bottleneck, default 1e-4). "
-        "Applied after --resume; overrides checkpoint scheduled LR.",
-    )
-    parser.add_argument(
-        "--lr-coarse-flow",
-        type=float,
-        default=None,
-        help="Peak LR for coarse flow F_c (cfg.train.lr_coarse_flow, default 2e-4). "
-        "Applied after --resume; overrides checkpoint scheduled LR.",
-    )
-    parser.add_argument(
-        "--no-agc",
-        action="store_true",
-        help="Disable adaptive gradient clipping (cfg.train.agc_enabled).",
-    )
-    parser.add_argument(
-        "--agc-lambda-bottleneck",
-        type=float,
-        default=None,
-        help="AGC λ for bottleneck B (cfg.train.agc_lambda_bottleneck, default 0.20).",
-    )
-    parser.add_argument(
-        "--agc-lambda-coarse-flow",
-        type=float,
-        default=None,
-        help="AGC λ for coarse flow F_c (cfg.train.agc_lambda_coarse_flow, default 0.10).",
-    )
-    parser.add_argument(
-        "--grad-skip-threshold",
-        type=float,
-        default=None,
-        help="Post-AGC global grad-norm tail guard (cfg.train.grad_skip_threshold, "
-        "default 150). Steps above this skip optimizer.step().",
-    )
-    # investigation_007 capacity-floor sweep: decoder size, latent size, checkpoint dir.
-    # All architecture knobs (set on cfg.model BEFORE the modules are built); changing
-    # any of them makes a checkpoint shape-incompatible — do NOT --resume across them.
-    parser.add_argument(
-        "--decoder-dim",
-        type=int,
-        default=None,
-        help="Reconstruction decoder D width (cfg.model.decoder_dim, default 256). "
-        "Capacity-floor sweep axis: tests whether D is too thin to expand c->e.",
-    )
-    parser.add_argument(
-        "--decoder-blocks",
-        type=int,
-        default=None,
-        help="Reconstruction decoder D depth (cfg.model.decoder_blocks, default 2). "
-        "Capacity-floor sweep axis (depth probe).",
-    )
-    parser.add_argument(
-        "--bottleneck-latent-blocks",
-        type=int,
-        default=None,
-        help="Perceiver-style latent-processor depth in the bottleneck "
-        "(cfg.model.bottleneck_latent_blocks, default 3; recommended range 2-4). "
-        "Each block is a zero-init residual read/compete/refine slot update, so any "
-        "depth preserves identity-at-init. Architecture knob: checkpoints are "
-        "shape-incompatible across values — do NOT --resume across it.",
-    )
-    parser.add_argument(
-        "--bottleneck-mixer-dim",
-        type=int,
-        default=None,
-        help="Complete bottleneck memory/slot width before the final projection to d_c "
-        "(cfg.model.bottleneck_mixer_dim, default 256). This controls in_proj, "
-        "ConvNeXt memory, cross-attention, learned queries, and every latent block. "
-        "Architecture knob: checkpoints are shape-incompatible across values — do not "
-        "--resume across widths.",
-    )
-    parser.add_argument(
-        "--n-c",
-        type=int,
-        default=None,
-        help="Abstract latent slot count n_c (cfg.model.n_c, default 32). Latent "
-        "BANDWIDTH = n_c * d_c; raising it widens the information channel (128:1 -> "
-        "64:1 at 64). Tests the capacity-bound hypothesis. Audited: no hard-coded 32.",
-    )
-    parser.add_argument(
-        "--d-c",
-        type=int,
-        default=None,
-        help="External abstract slot width d_c (cfg.model.d_c, default 256). Together "
-        "with --n-c this sets abstract BANDWIDTH = n_c * d_c. The bottleneck projects "
-        "from --bottleneck-mixer-dim to this width only after latent refinement; F_c "
-        "and D consume the resulting width. Checkpoints are shape-incompatible across "
-        "values, so do not --resume across widths.",
-    )
-    parser.add_argument(
+    operator.add_argument("--provenance-out", default=None)
+    operator.add_argument("--compare-provenance", nargs=2, metavar=("LEFT", "RIGHT"))
+    operator.add_argument("--require-wandb", action="store_true")
+    operator.add_argument("--wandb-entity", default=None)
+    operator.add_argument("--wandb-project", default=None)
+    operator.add_argument("--wandb-group", default=None)
+    operator.add_argument("--wandb-name", default=None)
+    operator.add_argument("--wandb-run-id", default=None)
+    operator.add_argument("--reset-optimizer", action="store_true")
+    operator.add_argument("--allow-dataset-transfer", action="store_true")
+    operator.add_argument("--allow-legacy-checkpoint", action="store_true")
+    operator.add_argument(
         "--checkpoint-dir",
         type=str,
         default=None,
-        help="Checkpoint output dir (cfg.checkpoint_dir, default /workspace/checkpoints). "
-        "MANDATORY per-run when launching parallel sweeps — a shared dir clobbers "
-        "phase1_step*.pt across runs in real time.",
+        help="Operator override for the YAML checkpoint directory.",
     )
-    return parser.parse_args()
+    return parser
+
+
+def parse_args() -> argparse.Namespace:
+    """Parse arguments from the compact Phase 1 CLI."""
+    return build_arg_parser().parse_args()
 
 
 def finalize_training_config(cfg: Config) -> None:
@@ -2281,16 +2055,16 @@ def finalize_training_config(cfg: Config) -> None:
             f"f_c_heads={cfg.model.f_c_heads}; got {cfg.model.d_c}"
         )
     if cfg.train.global_batch <= 0:
-        raise ValueError("--batch-size must be positive")
+        raise ValueError("train.global_batch must be positive")
     if cfg.train.global_batch <= 1:
         raise ValueError(
-            "--batch-size must be greater than 1 because the shuffled-c honesty "
+            "train.global_batch must be greater than 1 because the shuffled-c honesty "
             "diagnostic requires another video."
         )
     if cfg.encoder.frame_microbatch <= 0:
-        raise ValueError("--encoder-frame-microbatch must be positive")
+        raise ValueError("encoder.frame_microbatch must be positive")
     if cfg.train.lr_decoder <= 0.0:
-        raise ValueError("--lr-decoder must be positive")
+        raise ValueError("train.lr_decoder must be positive")
     if cfg.train.recon_loss_mode not in {"cosine", "relative_mse"}:
         raise ValueError(
             "cfg.train.recon_loss_mode must be 'cosine' or 'relative_mse'; "
@@ -2298,18 +2072,18 @@ def finalize_training_config(cfg: Config) -> None:
         )
     if cfg.train.present_recon_only:
         if cfg.train.lambda_recon <= 0.0:
-            raise ValueError("--present-recon-only requires --lambda-recon > 0")
+            raise ValueError("train.present_recon_only requires train.lambda_recon > 0")
         if cfg.train.lambda_recon_pred > 0.0:
-            print("--present-recon-only ignores lambda_recon_pred; setting it to 0.0")
+            print("present-only mode ignores train.lambda_recon_pred; setting it to 0.0")
             cfg.train.lambda_recon_pred = 0.0
         if cfg.train.predict_residual:
-            print("--present-recon-only ignores --predict-residual; disabling residual mode")
+            print("present-only mode ignores train.predict_residual; disabling residual mode")
             cfg.train.predict_residual = False
     if cfg.train.recon_residual_target:
         if cfg.train.lambda_recon <= 0.0 and cfg.train.lambda_recon_pred <= 0.0:
             raise ValueError(
-                "--recon-residual-target requires an active reconstruction anchor "
-                "(--lambda-recon > 0 or --lambda-recon-pred > 0); without one the "
+                "train.recon_residual_target requires an active reconstruction anchor "
+                "(train.lambda_recon > 0 or train.lambda_recon_pred > 0); without one the "
                 "residual target would silently train nothing."
             )
         if not 0.0 < cfg.train.recon_mean_momentum < 1.0:
@@ -2320,7 +2094,7 @@ def finalize_training_config(cfg: Config) -> None:
     if cfg.train.whiten_features:
         if not cfg.train.whiten_stats_path:
             raise ValueError(
-                "--whiten-features requires --whiten-stats-path (the offline stats "
+                "train.whiten_features requires train.whiten_stats_path (the offline stats "
                 "file written by whiten_stats.py); per-batch whitening is deliberately "
                 "not supported."
             )
@@ -2336,137 +2110,92 @@ def finalize_training_config(cfg: Config) -> None:
 def main() -> None:
     """Run the requested Phase 1 command (Stage 0 sanity or Stage 1 training)."""
     args = parse_args()
-    if args.compare_provenance:
+    experiment = load_experiment_config(args.config)
+    cfg = experiment.config
+    runtime = experiment.runtime
+    wandb_config = experiment.wandb
+
+    # The only scientific CLI overrides are the five axes repeatedly varied in the latest
+    # KANBAN investigations. Every other recipe value remains an auditable YAML edit.
+    if args.data is not None:
+        cfg.data.dataset = args.data
+    if args.encoder is not None:
+        if args.encoder != cfg.encoder.alias and cfg.encoder.revision is not None:
+            raise ValueError(
+                "--encoder cannot replace encoder.alias while encoder.revision is pinned in YAML; "
+                "set encoder.revision to null or select a recipe pinned for that encoder"
+            )
+        cfg.encoder.alias = args.encoder
+    if args.n_c is not None:
+        cfg.model.n_c = args.n_c
+    if args.d_c is not None:
+        cfg.model.d_c = args.d_c
+    if args.bottleneck_mixer_dim is not None:
+        cfg.model.bottleneck_mixer_dim = args.bottleneck_mixer_dim
+    if args.checkpoint_dir is not None:
+        cfg.checkpoint_dir = args.checkpoint_dir
+
+    compare_provenance = args.compare_provenance or runtime.compare_provenance
+    if compare_provenance:
         from provenance import compare_run_provenance
 
-        left_path, right_path = map(Path, args.compare_provenance)
+        left_path, right_path = map(Path, compare_provenance)
         compare_run_provenance(
             json.loads(left_path.read_text(encoding="utf-8")),
             json.loads(right_path.read_text(encoding="utf-8")),
         )
         print(f"Provenance parity passed: {left_path} == {right_path} (common fields)")
         return
-    cfg = Config()
-    cfg.data.dataset = args.data
-    cfg.seed = args.seed
-    cfg.train.max_steps = args.steps
-    cfg.encoder.alias = args.encoder
-    cfg.encoder.revision = args.encoder_revision
-    if args.encoder_precision is not None:
-        cfg.encoder.precision = args.encoder_precision
-    if args.encoder_frame_microbatch is not None:
-        cfg.encoder.frame_microbatch = args.encoder_frame_microbatch
-    if args.encoder_attention_implementation is not None:
-        cfg.encoder.attention_implementation = args.encoder_attention_implementation
-    if args.hf_cache_dir is not None:
-        cfg.hf_cache_dir = args.hf_cache_dir
-    if args.batch_size is not None:
-        cfg.train.global_batch = args.batch_size
-    if args.lr_decoder is not None:
-        cfg.train.lr_decoder = args.lr_decoder
-    if args.log_every is not None:
-        cfg.train.log_every = args.log_every
-    if args.diag_every is not None:
-        cfg.train.diag_every = args.diag_every
-    if args.lambda_cov is not None:
-        cfg.train.lambda_cov = args.lambda_cov
-    if args.lambda_slot is not None:
-        cfg.train.lambda_slot = args.lambda_slot
-    if args.horizon_k is not None:
-        cfg.train.horizon_k = args.horizon_k
-    if args.lambda_var is not None:
-        cfg.train.lambda_var = args.lambda_var
-    if args.lambda_sigreg is not None:
-        cfg.train.lambda_sigreg = args.lambda_sigreg
-    if args.sigreg_warmup_steps is not None:
-        cfg.train.sigreg_warmup_steps = args.sigreg_warmup_steps
-    if args.lambda_recon is not None:
-        cfg.train.lambda_recon = args.lambda_recon
-    if args.lambda_recon_pred is not None:
-        cfg.train.lambda_recon_pred = args.lambda_recon_pred
-    if args.recon_loss_mode is not None:
-        cfg.train.recon_loss_mode = args.recon_loss_mode
-    if args.recon_residual_target:
-        cfg.train.recon_residual_target = True
-    if args.recon_mean_momentum is not None:
-        cfg.train.recon_mean_momentum = args.recon_mean_momentum
-    if args.present_recon_only:
-        cfg.train.present_recon_only = True
-    if args.predict_residual:
-        cfg.train.predict_residual = True
-    if args.whiten_features:
-        cfg.train.whiten_features = True
-    if args.whiten_stats_path is not None:
-        cfg.train.whiten_stats_path = args.whiten_stats_path
-    if args.whiten_eps is not None:
-        cfg.train.whiten_eps = args.whiten_eps
-    if args.whiten_expected_clips is not None:
-        cfg.train.whiten_expected_clips = args.whiten_expected_clips
-    if args.recon_warmup_steps is not None:
-        cfg.train.recon_warmup_steps = args.recon_warmup_steps
-    if args.lr_bottleneck is not None:
-        cfg.train.lr_bottleneck = args.lr_bottleneck
-    if args.lr_coarse_flow is not None:
-        cfg.train.lr_coarse_flow = args.lr_coarse_flow
-    if args.no_agc:
-        cfg.train.agc_enabled = False
-    if args.agc_lambda_bottleneck is not None:
-        cfg.train.agc_lambda_bottleneck = args.agc_lambda_bottleneck
-    if args.agc_lambda_coarse_flow is not None:
-        cfg.train.agc_lambda_coarse_flow = args.agc_lambda_coarse_flow
-    if args.grad_skip_threshold is not None:
-        cfg.train.grad_skip_threshold = args.grad_skip_threshold
-    # Architecture knobs (investigation_007) — set on cfg.model before modules are built.
-    if args.decoder_dim is not None:
-        cfg.model.decoder_dim = args.decoder_dim
-    if args.decoder_blocks is not None:
-        cfg.model.decoder_blocks = args.decoder_blocks
-    if args.bottleneck_latent_blocks is not None:
-        cfg.model.bottleneck_latent_blocks = args.bottleneck_latent_blocks
-    if args.bottleneck_mixer_dim is not None:
-        cfg.model.bottleneck_mixer_dim = args.bottleneck_mixer_dim
-    if args.n_c is not None:
-        cfg.model.n_c = args.n_c
-    if args.d_c is not None:
-        cfg.model.d_c = args.d_c
-    if args.checkpoint_dir is not None:
-        cfg.checkpoint_dir = args.checkpoint_dir
-    finalize_training_config(cfg)
+
+    mode = runtime.mode
     if args.stage0_only:
-        run_stage0(cfg)
+        mode = "stage0"
     elif args.preflight_only:
-        output = args.provenance_out or "logs/preflight/run_provenance.json"
+        mode = "preflight"
+    elif args.resource_preflight:
+        mode = "resource_preflight"
+    provenance_out = args.provenance_out or runtime.provenance_out
+    resume = args.resume or runtime.resume
+    require_wandb = args.require_wandb or runtime.require_wandb
+    reset_optimizer = args.reset_optimizer or runtime.reset_optimizer
+    allow_dataset_transfer = args.allow_dataset_transfer or runtime.allow_dataset_transfer
+    allow_legacy_checkpoint = args.allow_legacy_checkpoint or runtime.allow_legacy_checkpoint
+    wandb_options = {
+        "entity": args.wandb_entity if args.wandb_entity is not None else wandb_config.entity,
+        "project": (args.wandb_project if args.wandb_project is not None else wandb_config.project),
+        "group": args.wandb_group if args.wandb_group is not None else wandb_config.group,
+        "name": args.wandb_name if args.wandb_name is not None else wandb_config.name,
+        "id": args.wandb_run_id if args.wandb_run_id is not None else wandb_config.run_id,
+    }
+    finalize_training_config(cfg)
+    if mode == "stage0":
+        run_stage0(cfg)
+    elif mode == "preflight":
+        output = provenance_out or "logs/preflight/run_provenance.json"
         materialize_preflight(
             cfg,
             output,
-            tracking_identity={
-                "entity": args.wandb_entity,
-                "project": args.wandb_project,
-                "group": args.wandb_group,
-                "name": args.wandb_name,
-                "id": args.wandb_run_id,
-            },
+            tracking_identity=wandb_options,
         )
-    elif args.resource_preflight:
-        output = args.provenance_out or "logs/preflight/resource_preflight.json"
+    elif mode == "resource_preflight":
+        output = provenance_out or "logs/preflight/resource_preflight.json"
         run_resource_preflight(cfg, output)
-    else:
+    elif mode == "train":
         run_training(
             cfg,
-            args.steps,
-            args.resume,
-            require_wandb=args.require_wandb,
-            wandb_options={
-                "entity": args.wandb_entity,
-                "project": args.wandb_project,
-                "group": args.wandb_group,
-                "name": args.wandb_name,
-                "id": args.wandb_run_id,
-            },
-            provenance_out=args.provenance_out,
-            reset_optimizer=args.reset_optimizer,
-            allow_dataset_transfer=args.allow_dataset_transfer,
-            allow_legacy_checkpoint=args.allow_legacy_checkpoint,
+            cfg.train.max_steps,
+            resume,
+            require_wandb=require_wandb,
+            wandb_options=wandb_options,
+            provenance_out=provenance_out,
+            reset_optimizer=reset_optimizer,
+            allow_dataset_transfer=allow_dataset_transfer,
+            allow_legacy_checkpoint=allow_legacy_checkpoint,
+        )
+    else:
+        raise ValueError(
+            "runtime.mode must be one of train, stage0, preflight, resource_preflight; "
+            f"got {mode!r}"
         )
 
 

@@ -283,11 +283,15 @@ def test_paired_provenance_allows_backend_identity_but_binds_runtime_feature_con
     left_cfg.encoder.alias = "siglip2_vitb16"
     left_cfg.encoder.precision = "fp32"
     left_cfg.encoder.frame_microbatch = 4
+    left_cfg.experiment_config_path = "/workspace/configs/siglip.yaml"
+    left_cfg.experiment_config_sha256 = "a" * 64
     right_cfg = Config()
     right_cfg.data.data_root = str(tmp_path / "data")
     right_cfg.encoder.alias = "dinov3_vitb16"
     right_cfg.encoder.precision = "fp32"
     right_cfg.encoder.frame_microbatch = 4
+    right_cfg.experiment_config_path = "/workspace/configs/dino.yaml"
+    right_cfg.experiment_config_sha256 = "b" * 64
     dataset = {"dataset": "fake", "fingerprint": "d" * 64}
     left_spec = _spec("offline/siglip")
     right_spec = replace(left_spec, repo_id="offline/dino")
@@ -322,6 +326,10 @@ def test_paired_provenance_allows_backend_identity_but_binds_runtime_feature_con
     )
     assert left["tracking_identity"]["name"].endswith("SigLIP 2")
     assert right["tracking_identity"]["name"].endswith("DINOv3")
+    assert left["resolved_config"]["experiment_config_sha256"] == "a" * 64
+    assert right["resolved_config"]["experiment_config_sha256"] == "b" * 64
+    assert "experiment_config_path" not in left["common"]["config"]
+    assert "experiment_config_sha256" not in left["common"]["config"]
     assert left["common"]["seed_streams"] == {
         "base": 42,
         "data_transform": 42,

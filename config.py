@@ -2,19 +2,24 @@
 
 Naming map from AGENT_FILES/AGENT-BEHAVIOUR/CODE_DESIGN.md §3.
 Architecture reference: AGENT_FILES/AGENTS.md and GUIDES/latest_brief.md (narrative only).
-Shipped defaults live in this file; empirical CLI overrides (e.g. --horizon-k 12,
---lambda-var 0.5) are documented in GUIDES/latest_brief.md and KANBAN run folders.
+Typed fallback defaults live in this file; the canonical editable recipe is
+``configs/train.yaml``. Only dataset, encoder, N_c, D_c, and bottleneck mixer width remain
+scientific CLI overrides.
 """
 
 from __future__ import annotations
 
+import hashlib
 import os
-from dataclasses import dataclass, field
+import types
+from dataclasses import dataclass, field, fields, is_dataclass
 from pathlib import Path
+from typing import Any, Union, get_args, get_origin, get_type_hints
 
-# Shared ImageNet constants used by adapters whose tested preprocessing requires
-# them (currently V-JEPA2; the unresolved DINO registration reserves the same
-# values). SigLIP owns its separate 0.5/0.5 mapping inside encoders.py.
+import yaml
+
+# Shared ImageNet constants used by the tested V-JEPA2 and DINOv3 adapters.
+# SigLIP owns its separate 0.5/0.5 mapping inside encoders.py.
 ENCODER_IMAGE_MEAN: tuple[float, float, float] = (0.485, 0.456, 0.406)
 ENCODER_IMAGE_STD: tuple[float, float, float] = (0.229, 0.224, 0.225)
 
@@ -305,7 +310,7 @@ class DataConfig:
     data_root: str = field(
         default_factory=lambda: os.environ.get("JEPA_DATA_ROOT", "/workspace/data")
     )
-    dataset: str = "ssv2_tiny"  # CLI override: ssv2 | ssv2_tiny | ego4d | ego4d_tiny
+    dataset: str = "ssv2_tiny"  # YAML field with a hot CLI override.
     num_workers: int = 8
     pin_memory: bool = True
     # Retained acquisition manifests are provenance inputs, not discovery hints.
@@ -361,6 +366,8 @@ class Config:
     # __post_init__/__setattr__ synchronize it with EncoderConfig's identity field.
     hf_cache_dir: str | None = None
     seed: int = 42
+    experiment_config_path: str = ""
+    experiment_config_sha256: str = ""
 
     def __post_init__(self) -> None:
         """Resolve the legacy top-level cache field to one synchronized value."""
@@ -374,3 +381,218 @@ class Config:
             encoder = self.__dict__.get("encoder")
             if encoder is not None:
                 encoder.hf_cache_dir = str(value)
+
+
+@dataclass
+class RuntimeConfig:
+    """Operator settings loaded from the experiment YAML rather than scientific CLI flags."""
+
+    mode: str = "train"
+    resume: str | None = None
+    provenance_out: str | None = None
+    compare_provenance: tuple[str, str] | None = None
+    require_wandb: bool = False
+    reset_optimizer: bool = False
+    allow_dataset_transfer: bool = False
+    allow_legacy_checkpoint: bool = False
+
+
+@dataclass
+class WandbConfig:
+    """W&B identity associated with one YAML-defined experiment recipe."""
+
+    entity: str | None = None
+    project: str = "hjepa-vwm"
+    group: str | None = None
+    name: str | None = None
+    run_id: str | None = None
+
+
+@dataclass
+class ExperimentConfig:
+    """Resolved training, runtime, and tracking configuration loaded from one YAML file."""
+
+    config: Config
+    runtime: RuntimeConfig
+    wandb: WandbConfig
+    source_path: str
+
+
+_NON_RECIPE_FIELDS: dict[str, frozenset[str]] = {
+    "config": frozenset(
+        {
+            "experiment_config_path",
+            "experiment_config_sha256",
+            "hf_cache_dir",
+        }
+    ),
+    "config.model": frozenset(
+        {
+            "encoder_repo",
+            "encoder_frozen",
+            "encoder_patch",
+            "encoder_tubelet",
+            "t_ctx",
+            "h",
+            "w",
+            "d_e",
+        }
+    ),
+}
+
+
+class _UniqueKeyLoader(yaml.SafeLoader):
+    """Safe YAML loader that refuses duplicate mapping keys."""
+
+
+def _construct_unique_mapping(
+    loader: _UniqueKeyLoader, node: yaml.MappingNode, deep: bool = False
+) -> dict[Any, Any]:
+    """Construct one mapping without PyYAML's last-duplicate-wins behavior."""
+    loader.flatten_mapping(node)
+    mapping: dict[Any, Any] = {}
+    for key_node, value_node in node.value:
+        key = loader.construct_object(key_node, deep=deep)
+        try:
+            duplicate = key in mapping
+        except TypeError as exc:
+            raise TypeError("Experiment YAML mapping keys must be scalar values") from exc
+        if duplicate:
+            line = key_node.start_mark.line + 1
+            raise ValueError(f"Duplicate YAML key {key!r} at line {line}")
+        mapping[key] = loader.construct_object(value_node, deep=deep)
+    return mapping
+
+
+_UniqueKeyLoader.add_constructor(
+    yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG,
+    _construct_unique_mapping,
+)
+
+
+def _coerce_config_value(value: Any, annotation: Any, location: str) -> Any:
+    """Validate one YAML value against its dataclass annotation."""
+    origin = get_origin(annotation)
+    arguments = get_args(annotation)
+    if origin in {types.UnionType, Union}:
+        if value is None and type(None) in arguments:
+            return None
+        candidates = [candidate for candidate in arguments if candidate is not type(None)]
+        errors = []
+        for candidate in candidates:
+            try:
+                return _coerce_config_value(value, candidate, location)
+            except TypeError as exc:
+                errors.append(str(exc))
+        raise TypeError(errors[0] if errors else f"{location} has an unsupported value")
+    if value is None:
+        raise TypeError(f"{location} may not be null")
+    if origin is tuple:
+        if not isinstance(value, (list, tuple)):
+            raise TypeError(f"{location} must be a list")
+        if len(arguments) == 2 and arguments[1] is Ellipsis:
+            return tuple(_coerce_config_value(item, arguments[0], location) for item in value)
+        if len(value) != len(arguments):
+            raise TypeError(f"{location} must contain exactly {len(arguments)} values")
+        return tuple(
+            _coerce_config_value(item, expected, f"{location}[{index}]")
+            for index, (item, expected) in enumerate(zip(value, arguments, strict=True))
+        )
+    if annotation is bool:
+        if not isinstance(value, bool):
+            raise TypeError(f"{location} must be a boolean")
+        return value
+    if annotation is int:
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise TypeError(f"{location} must be an integer")
+        return value
+    if annotation is float:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise TypeError(f"{location} must be a number")
+        return float(value)
+    if annotation is str:
+        if not isinstance(value, str):
+            raise TypeError(f"{location} must be a string")
+        return value
+    return value
+
+
+def _apply_config_mapping(target: object, values: dict[str, Any], section: str) -> None:
+    """Apply a strict YAML mapping recursively to one dataclass instance.
+
+    Unknown keys fail before training so a misspelled hyperparameter cannot silently waste a run.
+
+    Args:
+        target: Dataclass instance whose existing defaults are being overridden.
+        values: YAML mapping for this section.
+        section: Dotted section name used in validation errors.
+    Returns:
+        None.
+    """
+    forbidden = sorted(set(values) & _NON_RECIPE_FIELDS.get(section, frozenset()))
+    if forbidden:
+        raise ValueError(
+            f"{section}.{forbidden[0]} is not configurable from experiment YAML; "
+            "it is a legacy, derived, or audit-owned field"
+        )
+    allowed = {item.name for item in fields(target)}
+    unknown = sorted(set(values) - allowed)
+    if unknown:
+        raise ValueError(f"Unknown experiment config key(s) in {section}: {', '.join(unknown)}")
+    annotations = get_type_hints(type(target))
+    for name, value in values.items():
+        current = getattr(target, name)
+        location = f"{section}.{name}"
+        if is_dataclass(current):
+            if not isinstance(value, dict):
+                raise TypeError(f"{location} must be a mapping")
+            _apply_config_mapping(current, value, location)
+        else:
+            setattr(target, name, _coerce_config_value(value, annotations[name], location))
+
+
+def load_experiment_config(path: str | Path) -> ExperimentConfig:
+    """Load one strict YAML recipe over the shipped dataclass defaults.
+
+    The YAML may be partial, but every supplied key must name a real dataclass field. Scientific
+    command-line overrides are applied later by ``train.py`` only for the five active sweep axes.
+
+    Args:
+        path: YAML file containing Config sections plus optional ``runtime`` and ``wandb`` maps.
+    Returns:
+        Resolved experiment configuration and its source path.
+    """
+    config_path = Path(path)
+    payload = yaml.load(
+        config_path.read_text(encoding="utf-8"),
+        Loader=_UniqueKeyLoader,
+    )
+    if payload is None:
+        payload = {}
+    if not isinstance(payload, dict):
+        raise TypeError("Experiment config root must be a mapping")
+    runtime_values = payload.pop("runtime", {})
+    wandb_values = payload.pop("wandb", {})
+    if not isinstance(runtime_values, dict):
+        raise TypeError("runtime must be a mapping")
+    if not isinstance(wandb_values, dict):
+        raise TypeError("wandb must be a mapping")
+    config = Config()
+    runtime = RuntimeConfig()
+    wandb_config = WandbConfig()
+    _apply_config_mapping(config, payload, "config")
+    config.hf_cache_dir = config.encoder.hf_cache_dir
+    _apply_config_mapping(runtime, runtime_values, "runtime")
+    _apply_config_mapping(wandb_config, wandb_values, "wandb")
+    valid_modes = {"train", "stage0", "preflight", "resource_preflight"}
+    if runtime.mode not in valid_modes:
+        choices = ", ".join(sorted(valid_modes))
+        raise ValueError(f"runtime.mode must be one of {choices}; got {runtime.mode!r}")
+    config.experiment_config_path = str(config_path.resolve())
+    config.experiment_config_sha256 = hashlib.sha256(config_path.read_bytes()).hexdigest()
+    return ExperimentConfig(
+        config=config,
+        runtime=runtime,
+        wandb=wandb_config,
+        source_path=str(config_path.resolve()),
+    )

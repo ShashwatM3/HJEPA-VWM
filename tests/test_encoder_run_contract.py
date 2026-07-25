@@ -301,23 +301,17 @@ def test_checkpoint_rejects_optimizer_tensor_shape_before_mutating_models(tmp_pa
     assert all(torch.equal(before[name], value) for name, value in modules[1].state_dict().items())
 
 
-def test_training_cli_exposes_complete_encoder_and_operator_surface(monkeypatch):
+def test_training_cli_exposes_hot_encoder_and_operator_surface(monkeypatch):
     train = importlib.import_module("train")
     monkeypatch.setattr(
         sys,
         "argv",
         [
             "train.py",
+            "--config",
+            "configs/train.yaml",
             "--encoder",
             "siglip2_vitb16",
-            "--encoder-precision",
-            "fp32",
-            "--encoder-frame-microbatch",
-            "2",
-            "--batch-size",
-            "4",
-            "--lr-decoder",
-            "2e-4",
             "--preflight-only",
             "--provenance-out",
             "/tmp/run.json",
@@ -326,10 +320,10 @@ def test_training_cli_exposes_complete_encoder_and_operator_surface(monkeypatch)
     )
     args = train.parse_args()
     assert args.encoder == "siglip2_vitb16"
-    assert args.encoder_precision == "fp32"
-    assert args.encoder_frame_microbatch == 2
-    assert args.batch_size == 4
-    assert args.lr_decoder == pytest.approx(2e-4)
+    assert not hasattr(args, "encoder_precision")
+    assert not hasattr(args, "encoder_frame_microbatch")
+    assert not hasattr(args, "batch_size")
+    assert not hasattr(args, "lr_decoder")
     assert args.preflight_only and args.require_wandb
 
 

@@ -90,5 +90,5 @@ def test_present_recon_only_requires_present_recon_weight():
     cfg = _small_cfg()
     cfg.train.lambda_recon = 0.0
 
-    with pytest.raises(ValueError, match="requires --lambda-recon > 0"):
+    with pytest.raises(ValueError, match=r"requires train\.lambda_recon > 0"):
         train.finalize_training_config(cfg)

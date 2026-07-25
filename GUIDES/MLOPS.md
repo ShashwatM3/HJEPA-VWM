@@ -156,11 +156,11 @@ Requires `wandb login` or `WANDB_API_KEY`. Uses unsampled `scan_history()` per W
 ### Run grouping
 
 ```bash
-python train.py ... \
+python train.py --config configs/train.yaml \
   --wandb-entity smahalanobis-uc-davis \
   --wandb-project hjepa-vwm \
-  --wandb-group inv012_sharp_slot_recon_only \
-  --wandb-name "Investigation 12 · Sharp-slot reconstruction · Baseline" \
+  --wandb-group manual_phase1_recipe \
+  --wandb-name "Manual Phase 1 · configs/train.yaml" \
   --require-wandb
 ```
 
@@ -170,7 +170,7 @@ python train.py ... \
 
 | Path | Contents |
 |---|---|
-| `--checkpoint-dir` (default `/workspace/checkpoints`) | Atomic `phase1_step*.pt` — B/B_EMA/F_c/D, optimizer, fixed buffers, RNG/sampler, resolved encoder/dataset/run identity |
+| YAML `checkpoint_dir` or operator override `--checkpoint-dir` (default `/workspace/checkpoints`) | Atomic `phase1_step*.pt` — B/B_EMA/F_c/D, optimizer, fixed buffers, RNG/sampler, resolved encoder/dataset/run identity |
 | `logs/` (convention, under repo) | Console captures from `train.py` redirects |
 
 The frozen encoder weights are **not** checkpointed; its exact repository, immutable revision,
@@ -182,8 +182,13 @@ external stats file.
 Resume:
 
 ```bash
-python train.py --resume /workspace/checkpoints/phase1_step15000.pt ...
+python train.py \
+  --config configs/train.yaml \
+  --resume /workspace/checkpoints/phase1_step15000.pt
 ```
+
+Losses, schedules, modes, and optimizer settings come from the selected YAML recipe. Only dataset,
+encoder, `N_c`, `D_c`, and bottleneck mixer width remain scientific CLI overrides.
 
 ---
 
