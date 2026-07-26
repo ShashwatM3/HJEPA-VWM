@@ -1,5 +1,11 @@
 # Post-SigLIP setup for DINOv3 ViT-B/16
 
+> Historical setup handoff, completed by PR #6 on 2026-07-26. The production adapter now
+> exists and defaults to immutable Hub commit
+> `5931719e67bbdb9737e363e781fb0c67687896bc`. The authentication guidance remains relevant
+> because the checkpoint is gated; the implementation prompts below describe the pre-merge
+> state and must not be read as current code status.
+
 This is the handoff from the completed standard-ViT/SigLIP lane to the gated DINO lane. The
 selected weights are already known:
 

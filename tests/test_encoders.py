@@ -284,6 +284,47 @@ def test_dino_registry_has_pinned_default_revision():
     )
 
 
+def test_dino_public_factory_uses_pinned_default_revision(monkeypatch):
+    """Selecting DINO alone must load the reviewed immutable checkpoint."""
+    import transformers
+
+    from config import EncoderConfig
+    from encoders import build_frozen_encoder
+
+    pinned_revision = "5931719e67bbdb9737e363e781fb0c67687896bc"
+    captured = {}
+
+    class FakeDINOModel(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.weight = nn.Parameter(torch.ones(1))
+            self.config = SimpleNamespace(
+                _commit_hash=pinned_revision,
+                num_register_tokens=4,
+            )
+
+    def fake_from_pretrained(repo_id, **kwargs):
+        captured["repo_id"] = repo_id
+        captured.update(kwargs)
+        return FakeDINOModel()
+
+    monkeypatch.setattr(transformers.DINOv3ViTModel, "from_pretrained", fake_from_pretrained)
+
+    encoder = build_frozen_encoder(
+        EncoderConfig(
+            alias="dinov3_vitb16",
+            revision=None,
+            precision="fp32",
+            hf_cache_dir="/tmp/dino-default-cache",
+        )
+    )
+
+    assert captured["repo_id"] == "facebook/dinov3-vitb16-pretrain-lvd1689m"
+    assert captured["revision"] == pinned_revision
+    assert encoder.spec.requested_revision == pinned_revision
+    assert encoder.spec.resolved_revision == pinned_revision
+
+
 def test_transformers_pin_exposes_both_planned_frame_encoder_architectures():
     """The shared wheel must contain DINOv3 ViT and SigLIP vision classes offline."""
     import transformers
@@ -310,7 +351,7 @@ def test_dino_registry_loads_explicit_revision_and_strips_special_tokens(monkeyp
 
         def forward(self, *, pixel_values, return_dict):
             assert return_dict is True
-            frame_ids = pixel_values.mean(dim=(1, 2, 3)).view(-1, 1, 1) * 1_000
+            frame_ids = pixel_values[:, 0, 0, 0].view(-1, 1, 1) * 1_000
             specials = torch.full(
                 (pixel_values.shape[0], 5, 768),
                 -999.0,
@@ -361,10 +402,36 @@ def test_dino_registry_loads_explicit_revision_and_strips_special_tokens(monkeyp
     mean = torch.tensor(ENCODER_IMAGE_MEAN).view(1, 1, 3, 1, 1)
     std = torch.tensor(ENCODER_IMAGE_STD).view(1, 1, 3, 1, 1)
     normalized = (raw - mean) / std
-    frame_signal = normalized.mean(dim=(0, 2, 3, 4)) * 1_000
+    frame_signal = normalized[0, :, 0, 0, 0] * 1_000
     assert tokens[0, 0, 0].item() == pytest.approx(frame_signal[0].item())
     assert tokens[0, 255, 0].item() == pytest.approx(frame_signal[0].item() + 255)
     assert tokens[0, 256, 0].item() == pytest.approx(frame_signal[1].item())
+    assert tokens.dtype == torch.float32
+    assert torch.isfinite(tokens).all()
+    assert all(not parameter.requires_grad for parameter in encoder.parameters())
+
+    # The adapter is frame-native: identical images have identical patch blocks,
+    # while a temporal permutation only permutes those complete blocks.
+    repeated = torch.full_like(raw, 0.6)
+    repeated_tokens = encoder(repeated).reshape(1, 8, 256, 768)
+    assert all(
+        torch.equal(repeated_tokens[:, 0], repeated_tokens[:, index]) for index in range(1, 8)
+    )
+
+    permutation = torch.tensor([7, 2, 5, 0, 6, 1, 4, 3])
+    permuted_tokens = encoder(raw[:, permutation]).reshape(1, 8, 256, 768)
+    assert torch.equal(permuted_tokens, tokens.reshape(1, 8, 256, 768)[:, permutation])
+
+    # Chunking flattened frames is an execution detail, not feature semantics.
+    encoder_one = build_frozen_encoder(replace(cfg, frame_microbatch=1))
+    encoder_eight = build_frozen_encoder(replace(cfg, frame_microbatch=8))
+    assert torch.equal(encoder_one(raw), tokens)
+    assert torch.equal(encoder_eight(raw), tokens)
+
+    encoder.train(True)
+    encoder.requires_grad_(True)
+    assert encoder.training is False
+    assert encoder._backend.training is False
     assert all(not parameter.requires_grad for parameter in encoder.parameters())
 
 

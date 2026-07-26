@@ -109,9 +109,13 @@ python -c "from models import smoke_test_models; smoke_test_models()"
 
 Encoder experiments additionally update W&B config with the resolved `EncoderSpec`, feature and
 dataset fingerprints, dependency/git identity, initialization/data-order hashes, and stats
-fingerprint. Runtime provenance includes CUDA, cuDNN, GPU model, and the explicit data/model/
-training/diagnostic seed streams. Whitening additionally binds the transform seed, exact clip
-budget (12,800 by default), token-row count, and eigensolver. `--require-wandb` makes
+fingerprint. For queries and dashboards, `resolved_encoder_spec` and
+`resolved_feature_fingerprint` are the authoritative encoder geometry and identity. In particular,
+do not read alternate-encoder geometry from legacy `model.d_e` or `model.encoder_repo` fields,
+which remain only for historical checkpoint/config compatibility. The complete copy also lives at
+`resolved_provenance.encoder_spec`. Runtime provenance includes CUDA, cuDNN, GPU model, and the
+explicit data/model/training/diagnostic seed streams. Whitening additionally binds the transform
+seed, exact clip budget (12,800 by default), token-row count, and eigensolver. `--require-wandb` makes
 initialization, logging, and final checksum recording fatal
 instead of silently continuing. The small provenance/stats artifacts may be uploaded; giant
 checkpoints are not uploaded automatically, and the final checkpoint is referenced by SHA-256.
