@@ -109,7 +109,7 @@ Override dataset parent locally: `export JEPA_DATA_ROOT=/path/to/data`.
 |---|---|
 | `python encoders.py --smoke --encoder vjepa2_vitl16 --batch-size 1` | Real pinned-adapter shape/revision/freeze/memory report (downloads weights if absent) |
 | `python encoders.py --smoke --encoder siglip2_vitb16 --batch-size 1` | Real pinned SigLIP 2 vision-only patch-tower smoke |
-| `python encoders.py --smoke --encoder dinov3_vitb16 --revision <40-char-sha> --batch-size 1` | Real DINOv3 patch-token smoke; explicit revision required until a default is pinned |
+| `python encoders.py --smoke --encoder dinov3_vitb16 --batch-size 1` | Real DINOv3 patch-token smoke at the pinned default revision |
 | `python train.py --stage0-only` | Synthetic one-step sanity (encoder load + shapes) |
 | `python train.py --resource-preflight ...` | Exact one-step forward/backward/diagnostic memory and throughput report |
 | `python train.py --preflight-only --provenance-out run.json ...` | Materialize a no-step immutable run identity for paired comparison |

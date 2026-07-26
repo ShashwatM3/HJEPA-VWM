@@ -386,8 +386,9 @@ The private registry currently has:
   `3f9f96cb90da5dbc758b01813f2f6f1aee24c1ab`, vision-only retained patch tower
   `85,843,200` parameters, layout `8x16x16`, `D_e=768`;
 - `dinov3_vitb16`: implemented frame-based DINOv3 ViT-B/16 adapter with layout
-  `8x16x16`, `D_e=768`; it still has no validated default immutable revision, so callers
-  must pass an explicit 40-character revision. It never falls back to `main`.
+  `8x16x16`, `D_e=768`, pinned by default to Hub commit
+  `5931719e67bbdb9737e363e781fb0c67687896bc`. An explicit 40-character revision remains
+  available as an override; the alias never falls back to `main`.
 
 `transformers==4.57.6` is the shared dependency pin. Its installed source exposes the
 planned V-JEPA2, DINOv3 ViT, and SigLIP2 vision architectures. Any later dependency change

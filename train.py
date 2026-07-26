@@ -1521,6 +1521,26 @@ def materialize_preflight(
     return provenance
 
 
+def _wandb_config_from_provenance(provenance: dict[str, Any]) -> dict[str, Any]:
+    """Expose resolved encoder identity beside legacy compatibility configuration.
+
+    ``ModelConfig`` retains historical V-JEPA geometry so old checkpoints and scripts
+    remain readable. Alternate encoders are constructed from ``EncoderSpec`` instead,
+    so W&B needs an explicitly named resolved block that cannot be mistaken for those
+    compatibility fields.
+
+    Args:
+        provenance: Validated run-provenance envelope built after encoder loading.
+    Returns:
+        Independent JSON-compatible W&B config with authoritative resolved identities.
+    """
+    config = json.loads(json.dumps(provenance["resolved_config"]))
+    config["resolved_encoder_spec"] = json.loads(json.dumps(provenance["encoder_spec"]))
+    config["resolved_feature_fingerprint"] = provenance["feature_fingerprint"]
+    config["resolved_dataset_fingerprint"] = provenance["dataset_identity"]["fingerprint"]
+    return config
+
+
 def _throughput_rates(
     seconds: float,
     batch_size: int,
@@ -1812,7 +1832,7 @@ def run_training(
             entity=options.pop("entity", None),
             group=options.pop("group", None),
             name=options.pop("name", None),
-            config=provenance["resolved_config"],
+            config=_wandb_config_from_provenance(provenance),
             **options,
         )
         run.config.update({"resolved_provenance": provenance}, allow_val_change=True)
@@ -1966,8 +1986,8 @@ def parse_args() -> argparse.Namespace:
         choices=("vjepa2_vitl16", "dinov3_vitb16", "siglip2_vitb16"),
         default="vjepa2_vitl16",
         help=(
-            "Stable frozen-encoder alias. DINO requires --encoder-revision until its "
-            "default checkpoint is pinned."
+            "Stable frozen-encoder alias. Every supported alias has an immutable default "
+            "revision; --encoder-revision is an explicit override."
         ),
     )
     parser.add_argument("--encoder-revision", default=None)
