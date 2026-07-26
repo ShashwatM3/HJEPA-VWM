@@ -10,11 +10,12 @@ scientific CLI overrides.
 from __future__ import annotations
 
 import hashlib
+import math
 import os
 import types
 from dataclasses import dataclass, field, fields, is_dataclass
 from pathlib import Path
-from typing import Any, Union, get_args, get_origin, get_type_hints
+from typing import Any, Literal, Union, get_args, get_origin, get_type_hints
 
 import yaml
 
@@ -32,14 +33,14 @@ class EncoderConfig:
     means the mutable Hub ``main`` branch.
     """
 
-    alias: str = "vjepa2_vitl16"
+    alias: Literal["vjepa2_vitl16", "siglip2_vitb16", "dinov3_vitb16"] = "vjepa2_vitl16"
     revision: str | None = None
     input_frames: int = 8
     input_height: int = 256
     input_width: int = 256
-    precision: str = "bf16"
-    frame_microbatch: int = 8
-    attention_implementation: str = "sdpa"
+    precision: Literal["bf16", "fp32"] = "bf16"
+    frame_microbatch: int | None = 8
+    attention_implementation: Literal["sdpa", "eager"] = "sdpa"
     hf_cache_dir: str = "/workspace/hf_cache"
 
 
@@ -222,7 +223,7 @@ class TrainConfig:
     # Reconstruction loss formula switch. "cosine" is the current norm-invariant
     # per-token objective; "relative_mse" restores the legacy MSE / Var(e)
     # objective used before the norm-cheating fix.
-    recon_loss_mode: str = "cosine"
+    recon_loss_mode: Literal["cosine", "relative_mse"] = "cosine"
     # Present-only reconstruction bottleneck test. When True, Stage 1 trains
     # D(B(e_t)) -> e_t and skips F_c / future prediction losses entirely. Optional
     # non-prediction regularizers (variance, SIGReg, cov, slot) still follow their
@@ -297,7 +298,7 @@ class TrainConfig:
     whiten_eps: float = 1e-4
     horizon_k: int = 4  # single fixed horizon for Phases 1-3 (Phase 4: multi-horizon)
     frame_stride: int = 2
-    precision: str = "bf16"
+    precision: Literal["bf16", "fp32"] = "bf16"
     log_every: int = 50
     diag_every: int = 500
     checkpoint_every: int = 2_500  # finer checkpoints on the shorter 15k run
@@ -310,7 +311,9 @@ class DataConfig:
     data_root: str = field(
         default_factory=lambda: os.environ.get("JEPA_DATA_ROOT", "/workspace/data")
     )
-    dataset: str = "ssv2_tiny"  # YAML field with a hot CLI override.
+    dataset: Literal["ssv2", "ssv2_tiny", "ego4d", "ego4d_tiny"] = (
+        "ssv2_tiny"  # YAML field with a hot CLI override.
+    )
     num_workers: int = 8
     pin_memory: bool = True
     # Retained acquisition manifests are provenance inputs, not discovery hints.
@@ -387,7 +390,7 @@ class Config:
 class RuntimeConfig:
     """Operator settings loaded from the experiment YAML rather than scientific CLI flags."""
 
-    mode: str = "train"
+    mode: Literal["train", "stage0", "preflight", "resource_preflight"] = "train"
     resume: str | None = None
     provenance_out: str | None = None
     compare_provenance: tuple[str, str] | None = None
@@ -432,6 +435,7 @@ _NON_RECIPE_FIELDS: dict[str, frozenset[str]] = {
             "encoder_frozen",
             "encoder_patch",
             "encoder_tubelet",
+            "f_c_dim",
             "t_ctx",
             "h",
             "w",
@@ -498,6 +502,11 @@ def _coerce_config_value(value: Any, annotation: Any, location: str) -> Any:
             _coerce_config_value(item, expected, f"{location}[{index}]")
             for index, (item, expected) in enumerate(zip(value, arguments, strict=True))
         )
+    if origin is Literal:
+        if value not in arguments:
+            choices = ", ".join(repr(choice) for choice in arguments)
+            raise ValueError(f"{location} must be one of: {choices}; got {value!r}")
+        return value
     if annotation is bool:
         if not isinstance(value, bool):
             raise TypeError(f"{location} must be a boolean")
@@ -509,7 +518,10 @@ def _coerce_config_value(value: Any, annotation: Any, location: str) -> Any:
     if annotation is float:
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise TypeError(f"{location} must be a number")
-        return float(value)
+        coerced = float(value)
+        if not math.isfinite(coerced):
+            raise ValueError(f"{location} must be finite")
+        return coerced
     if annotation is str:
         if not isinstance(value, str):
             raise TypeError(f"{location} must be a string")

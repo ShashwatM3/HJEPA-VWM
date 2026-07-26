@@ -156,7 +156,7 @@ Requires `wandb login` or `WANDB_API_KEY`. Uses unsampled `scan_history()` per W
 ### Run grouping
 
 ```bash
-python train.py --config configs/train.yaml \
+python train.py \
   --wandb-entity smahalanobis-uc-davis \
   --wandb-project hjepa-vwm \
   --wandb-group manual_phase1_recipe \
@@ -183,11 +183,10 @@ Resume:
 
 ```bash
 python train.py \
-  --config configs/train.yaml \
   --resume /workspace/checkpoints/phase1_step15000.pt
 ```
 
-Losses, schedules, modes, and optimizer settings come from the selected YAML recipe. Only dataset,
+Losses, schedules, modes, and optimizer settings always come from `configs/train.yaml`. Only dataset,
 encoder, `N_c`, `D_c`, and bottleneck mixer width remain scientific CLI overrides.
 
 ---

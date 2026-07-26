@@ -84,6 +84,7 @@ train:
     "body",
     [
         "model:\n  encoder_frozen: false\n",
+        "model:\n  f_c_dim: 512\n",
         "experiment_config_sha256: forged\n",
         "hf_cache_dir: /tmp/legacy-cache\n",
     ],
@@ -123,8 +124,6 @@ def test_cli_keeps_only_five_scientific_sweep_overrides(
         "argv",
         [
             "train.py",
-            "--config",
-            "configs/train.yaml",
             "--data",
             "ego4d",
             "--encoder",
@@ -140,7 +139,7 @@ def test_cli_keeps_only_five_scientific_sweep_overrides(
 
     args = train.parse_args()
 
-    assert args.config == "configs/train.yaml"
+    assert not hasattr(args, "config")
     assert args.data == "ego4d"
     assert args.encoder == "dinov3_vitb16"
     assert args.n_c == 16
@@ -150,7 +149,14 @@ def test_cli_keeps_only_five_scientific_sweep_overrides(
     monkeypatch.setattr(
         sys,
         "argv",
-        ["train.py", "--config", "configs/train.yaml", "--lambda-var", "0.5"],
+        ["train.py", "--lambda-var", "0.5"],
+    )
+    with pytest.raises(SystemExit):
+        train.parse_args()
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["train.py", "--config", "configs/another.yaml"],
     )
     with pytest.raises(SystemExit):
         train.parse_args()
@@ -211,14 +217,13 @@ runtime:
         "argv",
         [
             "train.py",
-            "--config",
-            str(path),
             "--encoder",
             "dinov3_vitb16",
             "--n-c",
             "16",
         ],
     )
+    monkeypatch.setattr(train, "EXPERIMENT_CONFIG_PATH", path)
     monkeypatch.setattr(train, "run_stage0", lambda cfg: captured.setdefault("cfg", cfg))
 
     train.main()
@@ -253,32 +258,113 @@ runtime:
     monkeypatch.setattr(
         sys,
         "argv",
-        ["train.py", "--config", str(path), "--encoder", "dinov3_vitb16"],
+        ["train.py", "--encoder", "dinov3_vitb16"],
     )
+    monkeypatch.setattr(train, "EXPERIMENT_CONFIG_PATH", path)
 
     with pytest.raises(ValueError, match=r"--encoder.*encoder\.revision"):
         train.main()
 
 
-def test_shipped_yaml_is_a_complete_runnable_default_recipe() -> None:
-    """Ship one versioned recipe so training never depends on a long ad-hoc command."""
+def test_shipped_yaml_is_the_only_complete_runnable_recipe() -> None:
+    """Keep exactly one recipe, always read by train.py."""
     from config import load_experiment_config
 
-    path = Path(__file__).resolve().parents[1] / "configs" / "train.yaml"
+    root = Path(__file__).resolve().parents[1]
+    path = root / "configs" / "train.yaml"
+    assert sorted(candidate.name for candidate in path.parent.glob("*.yaml")) == ["train.yaml"]
     experiment = load_experiment_config(path)
 
     assert experiment.config.data.dataset == "ssv2_tiny"
     assert experiment.config.encoder.alias == "vjepa2_vitl16"
     assert experiment.config.model.n_c == 32
     assert experiment.config.model.d_c == 256
-    assert experiment.config.model.bottleneck_mixer_dim == 256
+    assert experiment.config.model.bottleneck_mixer_dim == 512
+    assert experiment.config.model.decoder_dim == 512
+    assert experiment.config.model.decoder_blocks == 4
     assert experiment.config.train.max_steps == 15000
-    assert experiment.config.train.lambda_var == 0.10
-    assert experiment.config.train.lambda_recon == 0.0
+    assert experiment.config.train.horizon_k == 12
+    assert experiment.config.train.lambda_var == 0.5
+    assert experiment.config.train.lambda_cov == 0.01
+    assert experiment.config.train.lambda_recon == 1.0
+    assert experiment.config.train.present_recon_only is True
     assert experiment.runtime.mode == "train"
     assert experiment.wandb.project == "hjepa-vwm"
     assert experiment.config.experiment_config_path == str(path)
     assert len(experiment.config.experiment_config_sha256) == 64
+
+
+@pytest.mark.parametrize(
+    ("encoder_alias", "expected_frame_microbatch"),
+    [
+        ("vjepa2_vitl16", 8),
+        ("siglip2_vitb16", 8),
+        ("dinov3_vitb16", 32),
+    ],
+)
+def test_single_yaml_resolves_tested_microbatch_for_each_encoder(
+    encoder_alias: str, expected_frame_microbatch: int
+) -> None:
+    """Preserve each encoder lane's tested execution identity from one shared YAML."""
+    from config import load_experiment_config
+    from train import finalize_training_config
+
+    path = Path(__file__).resolve().parents[1] / "configs" / "train.yaml"
+    cfg = load_experiment_config(path).config
+    cfg.encoder.alias = encoder_alias
+
+    finalize_training_config(cfg)
+
+    assert cfg.encoder.frame_microbatch == expected_frame_microbatch
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "encoder:\n  alias: typo_encoder\n",
+        "encoder:\n  precision: fp16\n",
+        "encoder:\n  attention_implementation: flash_attention_2\n",
+        "train:\n  precision: fp16\n",
+        "train:\n  recon_loss_mode: mse\n",
+        "data:\n  dataset: typo_dataset\n",
+    ],
+)
+def test_yaml_rejects_values_outside_documented_categories(tmp_path: Path, body: str) -> None:
+    """Make categorical inline comments an enforced pre-launch contract."""
+    from config import load_experiment_config
+
+    path = tmp_path / "invalid-category.yaml"
+    path.write_text(body, encoding="utf-8")
+
+    with pytest.raises(ValueError, match=r"must be one of"):
+        load_experiment_config(path)
+
+
+@pytest.mark.parametrize(
+    ("field_path", "invalid_value", "message"),
+    [
+        ("model.condition_dropout", 1.1, "condition_dropout"),
+        ("train.ema_m_start", 1.0, "ema_m_start"),
+        ("train.ema_m_end", 0.9, "ema_m_end"),
+        ("train.warmup_steps", 15_000, "warmup_steps"),
+        ("train.max_steps", 15_001, "max_steps"),
+        ("train.adam_betas", (0.9, 1.0), "adam_betas"),
+        ("train.log_every", 0, "log_every"),
+    ],
+)
+def test_finalizer_rejects_invalid_hard_yaml_constraints(
+    field_path: str, invalid_value: object, message: str
+) -> None:
+    """Reject hard range/order violations before model, data, or W&B construction."""
+    from config import Config
+    from train import finalize_training_config
+
+    cfg = Config()
+    target_name, field_name = field_path.split(".")
+    setattr(getattr(cfg, target_name), field_name, invalid_value)
+
+    with pytest.raises(ValueError, match=message):
+        finalize_training_config(cfg)
 
 
 def test_yaml_rejects_wrong_value_types_before_training(tmp_path: Path) -> None:
@@ -295,6 +381,21 @@ train:
     )
 
     with pytest.raises(TypeError, match=r"config\.train\.global_batch.*integer"):
+        load_experiment_config(path)
+
+
+@pytest.mark.parametrize("yaml_number", [".nan", ".inf", "-.inf"])
+def test_yaml_rejects_non_finite_numbers_before_training(tmp_path: Path, yaml_number: str) -> None:
+    """Never allow NaN or infinity to evade range checks and reach an optimizer."""
+    from config import load_experiment_config
+
+    path = tmp_path / "non-finite.yaml"
+    path.write_text(
+        f"train:\n  lr_bottleneck: {yaml_number}\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match=r"config\.train\.lr_bottleneck.*finite"):
         load_experiment_config(path)
 
 
@@ -315,27 +416,45 @@ runtime:
         load_experiment_config(path)
 
 
-@pytest.mark.parametrize(
-    ("name", "encoder_alias", "frame_microbatch"),
-    [
-        ("inv017_latent_shape.yaml", "vjepa2_vitl16", 8),
-        ("inv017_dinov3_latent_shape.yaml", "dinov3_vitb16", 32),
-    ],
-)
-def test_active_latent_shape_recipes_are_valid(
-    name: str, encoder_alias: str, frame_microbatch: int
-) -> None:
-    """Keep the active Investigation-17 launcher backgrounds valid after CLI simplification."""
-    from config import load_experiment_config
-    from train import finalize_training_config
+def test_every_shipped_yaml_value_has_an_inline_allowed_value_comment() -> None:
+    """Keep the single recipe self-documenting at every editable leaf."""
+    path = Path(__file__).resolve().parents[1] / "configs" / "train.yaml"
+    missing_comments = []
+    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or stripped.endswith(":"):
+            continue
+        if "  # " not in line:
+            missing_comments.append((line_number, stripped))
 
-    path = Path(__file__).resolve().parents[1] / "configs" / name
-    experiment = load_experiment_config(path)
-    finalize_training_config(experiment.config)
+    assert missing_comments == []
 
-    assert experiment.config.train.present_recon_only is True
-    assert experiment.config.train.lambda_recon == 1.0
-    assert experiment.config.train.lambda_var == 0.5
-    assert experiment.config.train.lambda_cov == 0.01
-    assert experiment.config.encoder.alias == encoder_alias
-    assert experiment.config.encoder.frame_microbatch == frame_microbatch
+
+def test_single_yaml_has_explicit_category_titles() -> None:
+    """Segment the long recipe into scannable named hyperparameter categories."""
+    path = Path(__file__).resolve().parents[1] / "configs" / "train.yaml"
+    category_titles = {
+        line.strip().removeprefix("# CATEGORY: ").strip()
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip().startswith("# CATEGORY: ")
+    }
+
+    assert category_titles == {
+        "Reproducibility and outputs",
+        "Frozen encoder and input contract",
+        "Abstract latent shape",
+        "Bottleneck architecture",
+        "Coarse flow architecture",
+        "Reconstruction decoder architecture",
+        "Batch and training duration",
+        "Optimizer and learning-rate schedule",
+        "Gradient stability",
+        "EMA target schedule",
+        "Latent geometry objectives",
+        "Reconstruction objectives",
+        "Offline feature whitening",
+        "Temporal prediction and logging",
+        "Dataset and loader",
+        "Runtime controls",
+        "Weights & Biases identity",
+    }

@@ -5,22 +5,20 @@ set -Eeuo pipefail
 ROOT=/workspace/hierarchal-jepa-flow-world-model
 EXPECTED_COMMIT=${INV017_EXPECTED_COMMIT:?set INV017_EXPECTED_COMMIT to the published tested SHA}
 LANE=${1:?usage: RUN_LATENT_SHAPE_SWEEP.sh vjepa2|siglip2|dinov3}
+RECIPE=configs/train.yaml
 
 case "$LANE" in
   vjepa2)
     ENCODER_ALIAS=vjepa2_vitl16
     ENCODER_LABEL=V-JEPA2
-    RECIPE=configs/inv017_latent_shape.yaml
     ;;
   siglip2)
     ENCODER_ALIAS=siglip2_vitb16
     ENCODER_LABEL="SigLIP 2"
-    RECIPE=configs/inv017_latent_shape.yaml
     ;;
   dinov3)
     ENCODER_ALIAS=dinov3_vitb16
     ENCODER_LABEL=DINOv3
-    RECIPE=configs/inv017_dinov3_latent_shape.yaml
     ;;
   *)
     echo "usage: RUN_LATENT_SHAPE_SWEEP.sh vjepa2|siglip2|dinov3" >&2
@@ -37,7 +35,7 @@ export PYTHONHASHSEED=42
 
 test "$(git rev-parse HEAD)" = "$EXPECTED_COMMIT"
 test -z "$(git status --porcelain --untracked-files=no)"
-python train.py --help | grep -q -- '--config'
+python train.py --help | grep -q -- '--n-c'
 test -f "$RECIPE"
 
 if pgrep -af '[p]ython.*train.py' >/dev/null; then
@@ -100,7 +98,6 @@ test -d /workspace/data/ego4d/train
 test -d /workspace/data/ego4d/validation
 
 COMMON_ARGS=(
-  --config "$RECIPE"
   --data ego4d
   --encoder "$ENCODER_ALIAS"
   --bottleneck-mixer-dim 512

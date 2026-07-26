@@ -58,6 +58,8 @@ from models import build_phase1_modules
 if TYPE_CHECKING:
     from encoders import EncoderSpec
 
+EXPERIMENT_CONFIG_PATH = Path(__file__).resolve().parent / "configs" / "train.yaml"
+
 # Module bundle order throughout: (encoder E, bottleneck B, target_bottleneck B_EMA,
 # coarse_flow F_c, decoder D). D is the reconstruction-anchor decoder (option 1);
 # it is built/saved/loaded always but only trained when lambda_recon > 0.
@@ -1958,14 +1960,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     investigations remain as direct overrides: dataset, encoder, slot count, external slot width,
     and internal bottleneck width. The remaining flags are operator controls, not hyperparameters.
     """
-    parser = argparse.ArgumentParser(description="Train HJEPA-VWM Phase 1 from a YAML recipe.")
+    parser = argparse.ArgumentParser(
+        description="Train HJEPA-VWM Phase 1 from the repository's single configs/train.yaml."
+    )
     operator = parser.add_argument_group("operator controls")
     scientific = parser.add_argument_group("scientific hot overrides")
-    operator.add_argument(
-        "--config",
-        default="configs/train.yaml",
-        help="Experiment YAML containing the complete recipe (default: configs/train.yaml).",
-    )
     scientific.add_argument(
         "--data",
         choices=["ssv2", "ssv2_tiny", "ego4d", "ego4d_tiny"],
@@ -2034,26 +2033,77 @@ def parse_args() -> argparse.Namespace:
     return build_arg_parser().parse_args()
 
 
+_ENCODER_FRAME_MICROBATCH_DEFAULTS = {
+    "vjepa2_vitl16": 8,
+    "siglip2_vitb16": 8,
+    "dinov3_vitb16": 32,
+}
+
+
 def finalize_training_config(cfg: Config) -> None:
-    """Validate and normalize experiment-mode switches before modules are built."""
+    """Resolve automatic values and reject invalid settings before paid work starts."""
+    if cfg.encoder.alias not in _ENCODER_FRAME_MICROBATCH_DEFAULTS:
+        choices = ", ".join(sorted(_ENCODER_FRAME_MICROBATCH_DEFAULTS))
+        raise ValueError(f"cfg.encoder.alias must be one of {choices}; got {cfg.encoder.alias!r}")
+    if cfg.encoder.frame_microbatch is None:
+        cfg.encoder.frame_microbatch = _ENCODER_FRAME_MICROBATCH_DEFAULTS[cfg.encoder.alias]
+    if cfg.encoder.frame_microbatch <= 0:
+        raise ValueError("encoder.frame_microbatch must be positive")
+    if (cfg.encoder.input_frames, cfg.encoder.input_height, cfg.encoder.input_width) != (
+        8,
+        256,
+        256,
+    ):
+        raise ValueError("encoder input contract must be exactly 8 frames at 256x256")
+    if cfg.encoder.precision not in {"bf16", "fp32"}:
+        raise ValueError("cfg.encoder.precision must be 'bf16' or 'fp32'")
+    if cfg.encoder.attention_implementation not in {"sdpa", "eager"}:
+        raise ValueError("cfg.encoder.attention_implementation must be 'sdpa' or 'eager'")
+
+    if not 0 <= cfg.seed <= 4_294_967_295:
+        raise ValueError(f"cfg.seed must be in [0, 4294967295]; got {cfg.seed}")
     internal_width = cfg.model.bottleneck_mixer_dim
     attention_heads = cfg.model.bottleneck_cross_attn_heads
     if internal_width <= 0:
         raise ValueError(f"cfg.model.bottleneck_mixer_dim must be positive; got {internal_width}")
+    if attention_heads <= 0:
+        raise ValueError("cfg.model.bottleneck_cross_attn_heads must be positive")
     if internal_width % attention_heads != 0:
         raise ValueError(
             "cfg.model.bottleneck_mixer_dim must be divisible by "
             f"bottleneck_cross_attn_heads={attention_heads}; got {internal_width}"
         )
+    if cfg.model.bottleneck_convnext_blocks < 0:
+        raise ValueError("cfg.model.bottleneck_convnext_blocks must be non-negative")
+    if cfg.model.bottleneck_latent_blocks < 1:
+        raise ValueError("cfg.model.bottleneck_latent_blocks must be at least 1")
     if cfg.model.n_c <= 0:
         raise ValueError(f"cfg.model.n_c must be positive; got {cfg.model.n_c}")
     if cfg.model.d_c <= 0:
         raise ValueError(f"cfg.model.d_c must be positive; got {cfg.model.d_c}")
+    if cfg.model.f_c_blocks <= 0:
+        raise ValueError("cfg.model.f_c_blocks must be positive")
+    if cfg.model.f_c_heads <= 0:
+        raise ValueError("cfg.model.f_c_heads must be positive")
     if cfg.model.d_c % cfg.model.f_c_heads != 0:
         raise ValueError(
             "cfg.model.d_c must be divisible by "
             f"f_c_heads={cfg.model.f_c_heads}; got {cfg.model.d_c}"
         )
+    if not 0.0 <= cfg.model.condition_dropout <= 1.0:
+        raise ValueError("cfg.model.condition_dropout must be in [0, 1]")
+    if cfg.model.decoder_dim <= 0:
+        raise ValueError("cfg.model.decoder_dim must be positive")
+    if cfg.model.decoder_blocks <= 0:
+        raise ValueError("cfg.model.decoder_blocks must be positive")
+    if cfg.model.decoder_heads <= 0:
+        raise ValueError("cfg.model.decoder_heads must be positive")
+    if cfg.model.decoder_dim % cfg.model.decoder_heads != 0:
+        raise ValueError(
+            "cfg.model.decoder_dim must be divisible by "
+            f"decoder_heads={cfg.model.decoder_heads}; got {cfg.model.decoder_dim}"
+        )
+
     if cfg.train.global_batch <= 0:
         raise ValueError("train.global_batch must be positive")
     if cfg.train.global_batch <= 1:
@@ -2061,15 +2111,67 @@ def finalize_training_config(cfg: Config) -> None:
             "train.global_batch must be greater than 1 because the shuffled-c honesty "
             "diagnostic requires another video."
         )
-    if cfg.encoder.frame_microbatch <= 0:
-        raise ValueError("encoder.frame_microbatch must be positive")
-    if cfg.train.lr_decoder <= 0.0:
-        raise ValueError("train.lr_decoder must be positive")
+    if cfg.train.stage1_steps <= 0:
+        raise ValueError("train.stage1_steps must be positive")
+    if not 0 <= cfg.train.warmup_steps < cfg.train.stage1_steps:
+        raise ValueError("train.warmup_steps must be in [0, train.stage1_steps)")
+    if not 0 < cfg.train.max_steps <= cfg.train.stage1_steps:
+        raise ValueError("train.max_steps must be in (0, train.stage1_steps]")
+    if cfg.train.total_latent_steps < cfg.train.stage1_steps:
+        raise ValueError("train.total_latent_steps must be >= train.stage1_steps")
+    for field_name in ("lr_bottleneck", "lr_coarse_flow", "lr_decoder"):
+        value = getattr(cfg.train, field_name)
+        if value <= 0.0:
+            raise ValueError(f"train.{field_name} must be positive")
+    if any(not 0.0 <= beta < 1.0 for beta in cfg.train.adam_betas):
+        raise ValueError("train.adam_betas entries must be in [0, 1)")
+    if not 0.0 <= cfg.train.weight_decay <= 1.0:
+        raise ValueError("train.weight_decay must be in [0, 1]")
+    if cfg.train.grad_clip <= 0.0:
+        raise ValueError("train.grad_clip must be positive")
+    if cfg.train.grad_skip_threshold <= cfg.train.grad_clip:
+        raise ValueError("train.grad_skip_threshold must be greater than train.grad_clip")
+    for field_name in (
+        "agc_lambda_bottleneck",
+        "agc_lambda_coarse_flow",
+        "agc_lambda_decoder",
+        "agc_eps",
+        "instability_warn_grad_norm",
+        "instability_warn_l_flow",
+    ):
+        value = getattr(cfg.train, field_name)
+        if value <= 0.0:
+            raise ValueError(f"train.{field_name} must be positive")
+    if not 0.0 <= cfg.train.ema_m_start < 1.0:
+        raise ValueError("train.ema_m_start must be in [0, 1)")
+    if not cfg.train.ema_m_start <= cfg.train.ema_m_end < 1.0:
+        raise ValueError("train.ema_m_end must be in [train.ema_m_start, 1)")
+    if cfg.train.ema_schedule_steps <= 0:
+        raise ValueError("train.ema_schedule_steps must be positive")
+    for field_name in (
+        "lambda_var",
+        "lambda_cov",
+        "lambda_slot",
+        "lambda_sigreg",
+        "lambda_recon",
+        "lambda_recon_pred",
+    ):
+        value = getattr(cfg.train, field_name)
+        if value < 0.0:
+            raise ValueError(f"train.{field_name} must be non-negative")
+    if cfg.train.var_floor_std_target <= 0.0:
+        raise ValueError("train.var_floor_std_target must be positive")
+    if cfg.train.sigreg_warmup_steps < 0:
+        raise ValueError("train.sigreg_warmup_steps must be non-negative")
     if cfg.train.recon_loss_mode not in {"cosine", "relative_mse"}:
         raise ValueError(
             "cfg.train.recon_loss_mode must be 'cosine' or 'relative_mse'; "
             f"got {cfg.train.recon_loss_mode!r}"
         )
+    if cfg.train.recon_warmup_steps < 0:
+        raise ValueError("train.recon_warmup_steps must be non-negative")
+    if not 0.0 < cfg.train.recon_mean_momentum < 1.0:
+        raise ValueError("cfg.train.recon_mean_momentum must be in (0, 1)")
     if cfg.train.present_recon_only:
         if cfg.train.lambda_recon <= 0.0:
             raise ValueError("train.present_recon_only requires train.lambda_recon > 0")
@@ -2086,11 +2188,10 @@ def finalize_training_config(cfg: Config) -> None:
                 "(train.lambda_recon > 0 or train.lambda_recon_pred > 0); without one the "
                 "residual target would silently train nothing."
             )
-        if not 0.0 < cfg.train.recon_mean_momentum < 1.0:
-            raise ValueError(
-                "cfg.train.recon_mean_momentum must be in (0, 1); "
-                f"got {cfg.train.recon_mean_momentum}"
-            )
+    if cfg.train.whiten_expected_clips <= 0:
+        raise ValueError("cfg.train.whiten_expected_clips must be positive")
+    if cfg.train.whiten_eps <= 0.0:
+        raise ValueError(f"cfg.train.whiten_eps must be > 0; got {cfg.train.whiten_eps}")
     if cfg.train.whiten_features:
         if not cfg.train.whiten_stats_path:
             raise ValueError(
@@ -2098,19 +2199,28 @@ def finalize_training_config(cfg: Config) -> None:
                 "file written by whiten_stats.py); per-batch whitening is deliberately "
                 "not supported."
             )
-        if cfg.train.whiten_eps <= 0.0:
-            raise ValueError(f"cfg.train.whiten_eps must be > 0; got {cfg.train.whiten_eps}")
-        if cfg.train.whiten_expected_clips <= 0:
-            raise ValueError(
-                "cfg.train.whiten_expected_clips must be positive; "
-                f"got {cfg.train.whiten_expected_clips}"
-            )
+    if cfg.train.horizon_k < 0:
+        raise ValueError("train.horizon_k must be non-negative")
+    if cfg.train.frame_stride <= 0:
+        raise ValueError("train.frame_stride must be positive")
+    if cfg.train.precision not in {"bf16", "fp32"}:
+        raise ValueError("cfg.train.precision must be 'bf16' or 'fp32'")
+    for field_name in ("log_every", "diag_every", "checkpoint_every"):
+        value = getattr(cfg.train, field_name)
+        if value <= 0:
+            raise ValueError(f"train.{field_name} must be positive")
+    if cfg.train.checkpoint_every > cfg.train.max_steps:
+        raise ValueError("train.checkpoint_every must be <= train.max_steps")
+    if cfg.data.dataset not in {"ssv2", "ssv2_tiny", "ego4d", "ego4d_tiny"}:
+        raise ValueError(f"cfg.data.dataset is unsupported: {cfg.data.dataset!r}")
+    if cfg.data.num_workers < 0:
+        raise ValueError("cfg.data.num_workers must be non-negative")
 
 
 def main() -> None:
     """Run the requested Phase 1 command (Stage 0 sanity or Stage 1 training)."""
     args = parse_args()
-    experiment = load_experiment_config(args.config)
+    experiment = load_experiment_config(EXPERIMENT_CONFIG_PATH)
     cfg = experiment.config
     runtime = experiment.runtime
     wandb_config = experiment.wandb
@@ -2123,7 +2233,7 @@ def main() -> None:
         if args.encoder != cfg.encoder.alias and cfg.encoder.revision is not None:
             raise ValueError(
                 "--encoder cannot replace encoder.alias while encoder.revision is pinned in YAML; "
-                "set encoder.revision to null or select a recipe pinned for that encoder"
+                "set encoder.revision to null or edit the pinned revision in configs/train.yaml"
             )
         cfg.encoder.alias = args.encoder
     if args.n_c is not None:

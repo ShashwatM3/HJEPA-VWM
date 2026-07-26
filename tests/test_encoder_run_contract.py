@@ -308,8 +308,6 @@ def test_training_cli_exposes_hot_encoder_and_operator_surface(monkeypatch):
         "argv",
         [
             "train.py",
-            "--config",
-            "configs/train.yaml",
             "--encoder",
             "siglip2_vitb16",
             "--preflight-only",
