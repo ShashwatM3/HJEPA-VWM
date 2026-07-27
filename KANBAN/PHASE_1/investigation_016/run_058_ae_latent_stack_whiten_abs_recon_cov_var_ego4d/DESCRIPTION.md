@@ -5,8 +5,10 @@
 
 ## Status
 
-FINISHED — all 15,000 steps completed. Reading Cycle B verdict: **Collapsed rep / template
-shortcut**. Full result and the reconstruction-weight audit: [`ANALYSIS.md`](ANALYSIS.md).
+FINISHED — all 15,000 steps completed. The original verdict was **Collapsed rep / template
+shortcut**; the later validation-identity audit narrows it to **weak recorded-batch geometry and
+weak exact-chunk dependence; global collapse/template shortcut indeterminate** because all
+diagnostic chunks share one source UID. Full result and correction: [`ANALYSIS.md`](ANALYSIS.md).
 
 ## Hypothesis
 

@@ -1,15 +1,11 @@
 # Guide: Encoder-Pluggable Experiments
 
-> Updated 2026-07-14: the encoder-independent foundation, raw data path, generic model
-> geometry, deterministic training/checkpoints, strict provenance, whitening, rank, drift,
-> W&B policy, resource preflight, V-JEPA2 regression adapter, and real SigLIP 2 adapter are
-> implemented. SigLIP 2 passed a real fp32 Mac/MPS smoke at its pinned Hub commit. DINO is
-> intentionally the only unresolved alias until its gated real lane supplies an immutable
-> revision and evidence. The remaining SigLIP work below requires the RunPod's CUDA GPU and
-> real datasets; it is verification/artifact generation, not another coding stage. The
-> final pre-RunPod audit also binds decoded frame counts in dataset identity, restores the
-> saved sampler epoch/offset directly, reports CUDA-event examples/frames/tokens throughput,
-> and preserves per-frame feature norms/ranks before temporal concatenation.
+> Current status, 2026-07-21: the common encoder-independent stack and all three private adapters
+> are implemented. V-JEPA2, SigLIP 2, and DINOv3 use immutable default revisions; DINOv3 is pinned
+> to `5931719e67bbdb9737e363e781fb0c67687896bc` and has passed authenticated CUDA plus a complete
+> EGO4D training run. The pre-approval and implementation stages below are retained as the
+> historical validation/repinning procedure. Use the active experiment's KANBAN `GUIDE.md` for a
+> current paid launch.
 
 ## Start here — brain-dead Standard ViT hand-off
 
@@ -237,7 +233,7 @@ COMMON TRACK — IMPLEMENTED; RunPod data/CUDA evidence remains
           15k runs concurrently OR sequentially
 ```
 
-### What is complete before DINO approval
+### Historical pre-approval status: what was complete
 
 The coding work below is complete; only the explicitly external RunPod evidence remains:
 
@@ -261,7 +257,7 @@ Do **not** launch the 15,000-step SigLIP run yet. A DINO-specific fix could stil
 the shared commit or dependency lock. Short SigLIP smokes are disposable; the paid pair
 must start only after the join gate.
 
-### What genuinely waits for DINO approval
+### Historical pre-approval status: what still waited
 
 Only these items wait:
 

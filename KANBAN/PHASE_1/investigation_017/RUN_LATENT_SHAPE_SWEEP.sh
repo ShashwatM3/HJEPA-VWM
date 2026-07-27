@@ -36,6 +36,7 @@ export PYTHONHASHSEED=42
 test "$(git rev-parse HEAD)" = "$EXPECTED_COMMIT"
 test -z "$(git status --porcelain --untracked-files=no)"
 python train.py --help | grep -q -- '--n-c'
+python train.py --help | grep -q -- '--d-c'
 test -f "$RECIPE"
 
 if pgrep -af '[p]ython.*train.py' >/dev/null; then
@@ -45,26 +46,11 @@ if pgrep -af '[p]ython.*train.py' >/dev/null; then
 fi
 
 case "$LANE" in
-  vjepa2|siglip2)
-    # The exact geometry-active 32x256 centers already exist as guiduvjp (V-JEPA2)
-    # and ufbeokj2 (SigLIP 2). Reuse those observations instead of paying for
-    # duplicate configurations.
+  vjepa2|siglip2|dinov3)
+    # Exact geometry-active 32x256 centers already exist as guiduvjp (V-JEPA2),
+    # ufbeokj2 (SigLIP 2), and fiactcw6 (DINOv3). Reuse those observations
+    # instead of paying for duplicate configurations.
     ARMS=(
-      "16 512"
-      "64 128"
-      "16 128"
-      "16 256"
-      "32 128"
-      "32 512"
-      "64 256"
-      "64 512"
-    )
-    ;;
-  dinov3)
-    # Run 69 had variance/covariance disabled, so every geometry-active DINOv3
-    # shape, including the center, is new evidence.
-    ARMS=(
-      "32 256"
       "16 512"
       "64 128"
       "16 128"

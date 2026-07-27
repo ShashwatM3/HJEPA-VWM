@@ -2,7 +2,8 @@
 
 > Fetched with `python run_history.py --run <id> --report` and unsampled W&B
 > histories. Completed runs were read through all 300 logged rows / 30 diagnostic
-> checkpoints. The live run-060 snapshot was fetched on 2026-07-16 through step 5,450.
+> checkpoints. The run-060 block below is a preserved 2026-07-16 live snapshot through step 5,450;
+> the final reconciliation is recorded immediately after it.
 
 ## Run identities
 
@@ -10,7 +11,8 @@
 |---|---|---|---|---:|---|
 | SSv2 control (057) | `ssv2` | [`cdvp6hou`](https://wandb.ai/smahalanobis-uc-davis/hjepa-vwm/runs/cdvp6hou) | finished | 14,950 | `5ea4421ff7aa034894dc07ab6270ae766a00d83a` |
 | EGO4D target (058) | `ego4d` | [`mvbx96nv`](https://wandb.ai/smahalanobis-uc-davis/hjepa-vwm/runs/mvbx96nv) | finished | 14,950 | `21d2aa8a97e8f60536a681bc5a4324d1a2c28838` |
-| EGO4D weight arm (060) | `ego4d` | [`2423b84g`](https://wandb.ai/smahalanobis-uc-davis/hjepa-vwm/runs/2423b84g) | running | 5,450 | `a27cd84dd67783f7ee8e68bb68e7c1a38a309534` |
+| EGO4D weight arm (060), historical snapshot | `ego4d` | [`2423b84g`](https://wandb.ai/smahalanobis-uc-davis/hjepa-vwm/runs/2423b84g) | running at snapshot | 5,450 | `a27cd84dd67783f7ee8e68bb68e7c1a38a309534` |
+| EGO4D weight arm (060), final reconciliation | `ego4d` | [`2423b84g`](https://wandb.ai/smahalanobis-uc-davis/hjepa-vwm/runs/2423b84g) | finished | 14,950 | `a27cd84dd67783f7ee8e68bb68e7c1a38a309534` |
 
 ## Config highlights
 
@@ -114,7 +116,7 @@ later-discovered batch-identity limitation that changes what the metrics can sup
 | 12,500 | 0.6789 | 0.6966 | 0.0177 | 53.04 | 0.862 | 0.421 |
 | 14,500 | 0.6782 | 0.6962 | 0.0180 | 52.91 | 0.863 | 0.419 |
 
-## Live run-060 snapshot — no final verdict
+## Historical live run-060 snapshot — no final verdict at that time
 
 | Step | Present | Rolled code | Gap | Rank | Pairwise cosine | Std |
 |---:|---:|---:|---:|---:|---:|---:|
@@ -130,6 +132,25 @@ later-discovered batch-identity limitation that changes what the metrics can sup
 At snapshot step 5,450, train `L_recon=0.69212`, `grad_norm=0.1565`, LR multiplier
 `0.8032`, skipped steps 0, B AGC events 0, and D AGC events 0. Of 110 logged rows,
 33 had a pre-global-clip norm above 0.5.
+
+## Final run-060 addendum
+
+Run 060 later finished all 15,000 scheduled updates. W&B contains 300 training rows through step
+14,950 and 30 diagnostics through step 14,500, with zero skipped steps, NaN-gradient rows, or
+instability warnings. The final fixed-batch read is:
+
+| Metric | Final value |
+|---|---:|
+| `L_recon_present` | 0.670912 |
+| `L_recon_shuffled_c` | 0.697356 |
+| exact-chunk gap | 0.026444 |
+| `c_effective_rank` | 84.363 |
+| `c_std_mean` | 0.8004 |
+| within-source pair cosine | 0.4790 |
+
+The batch contains one source UID, so the gap is exact-chunk/within-source evidence. The completed
+Reading Cycle B and causal limitations are in
+[`../run_060_ae_latent_stack_whiten_abs_recon_cov_var_ego4d_recon1/ANALYSIS.md`](../run_060_ae_latent_stack_whiten_abs_recon_cov_var_ego4d_recon1/ANALYSIS.md).
 
 ## EGO4D validation-batch identity
 

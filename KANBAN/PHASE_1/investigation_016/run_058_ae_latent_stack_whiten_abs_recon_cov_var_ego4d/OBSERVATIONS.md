@@ -20,3 +20,14 @@ Verdict: **Collapsed rep / template shortcut**. The run is stable and interpreta
 absolute-target EGO4D objective learns mostly shared structure and the train regularizer gains do
 not generalize to the fixed validation batch. See [`ANALYSIS.md`](ANALYSIS.md) for the full Cycle-B
 read, comparison with SSv2 run 057, and the project-wide `lambda_recon=1` audit.
+
+## 2026-07-16 — correction after validation-batch identity audit
+
+All 16 fixed diagnostic chunks share one EGO4D source UID. The reported cosine is therefore
+within-source cross-chunk cosine, and rolling codes swaps adjacent chunks from that same source.
+The weak std/rank and small `0.0180` gap remain valid recorded-batch findings, but the 5.4% phrase
+does not measure global video conditioning and the batch does not prove a global template.
+
+Current qualified verdict: **WEAK RECORDED-BATCH GEOMETRY AND WEAK EXACT-CHUNK DEPENDENCE; GLOBAL
+COLLAPSE/TEMPLATE SHORTCUT INDETERMINATE**. The 2026-07-14 conclusion above is preserved as the
+historical interpretation that this audit corrected.

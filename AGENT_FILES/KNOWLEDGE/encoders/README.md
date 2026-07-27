@@ -26,13 +26,13 @@ The first pair is intentionally shape-matched: both frame encoders produce an
 present-only reconstruction is a substrate test; a later full-prediction control is needed
 to evaluate the loss of V-JEPA2's tubelet-level temporal modeling.
 
-Implementation status (2026-07-14): the encoder-independent data/model/training,
+Implementation status (2026-07-21): the encoder-independent data/model/training,
 determinism/checkpoint, whitening/rank/drift, artifact, and preflight stages are complete.
-`encoders.py` provides pinned real V-JEPA2 and SigLIP 2 adapters on
-`transformers==4.57.6`; SigLIP's vision-only 8x16x16x768 path has passed a real Mac/MPS
-smoke. Dataset identities include container frame counts, exact resume consumes the saved
-sampler position, resource reports include CUDA-event examples/frames/tokens rates, and
-frame encoders receive pre-concatenation frame rank/norm diagnostics. DINO remains the only
-deliberately unresolved alias until its separate offline and gated-real lane pins and
-validates an immutable snapshot. CUDA, real SSv2/EGO4D, stats, resource, and paid-run
-evidence must be produced on the authenticated RunPod using `GUIDE_encoders.md`.
+`encoders.py` provides pinned real V-JEPA2, SigLIP 2, and DINOv3 adapters on
+`transformers==4.57.6`. DINOv3 is pinned at
+`5931719e67bbdb9737e363e781fb0c67687896bc`; its authenticated CUDA path and complete
+EGO4D training path have both passed. Dataset identities include container frame counts,
+exact resume consumes the saved sampler position, resource reports include CUDA-event
+examples/frames/tokens rates, and frame encoders receive pre-concatenation frame rank/norm
+diagnostics. Any new checkpoint, preprocessing, or dependency revision must repeat the relevant
+real-adapter gates in `GUIDE_encoders.md`.

@@ -11,10 +11,16 @@ runtime:    Transformers 4.57.6, DINOv3ViTModel
 target:     8 frames x 256 patches x 768 = (B,2048,768)
 ```
 
-The repository does **not** yet have a usable DINO adapter. The alias is deliberately reserved
-with no private factory and no default revision, so `--encoder dinov3_vitb16` currently fails
-instead of falling back to mutable `main`. Do not fit DINO stats or start a DINO run until the
-implementation and real-weight gates below are complete.
+## Current status — completed 2026-07-20
+
+The gated lane below is complete. The repository now has a private DINOv3 adapter and the stable
+`dinov3_vitb16` alias is pinned to validated revision
+`5931719e67bbdb9737e363e781fb0c67687896bc`. It returns the intended `(B,2048,768)` patch lattice,
+and the authenticated CUDA path completed a 15,000-step full-EGO4D present-only run. The setup
+procedure remains below as a reproducibility and repinning checklist; do not repeat its access or
+pinning steps unless the checkpoint, Transformers version, or adapter contract changes.
+
+## Historical setup checklist
 
 ## The steps you personally need to do
 

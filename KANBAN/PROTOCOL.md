@@ -30,6 +30,26 @@ Every **investigation** and every **run** has exactly three markdown files:
 Do **not** create other ad-hoc markdown files (no `HYPOTHESES.md`, `RUNS.md`, postmortems,
 etc.). Hypothesis history belongs in `OBSERVATIONS.md` or `ANALYSIS.md` as dated sections.
 
+### Historical file exception
+
+The rule above governs **new** records. A small set of pre-protocol files uses older names such as
+`RESULTS_ANALYSIS.md`, `INSIGHTS.md`, and `HYPOTHESIS.md`. Those files are grandfathered research
+history: do not rename or delete them merely to make the current tree match this vocabulary. Add
+all new evidence to the triad or to one of the allowed filenames above.
+
+### Run identity and numbering
+
+Two identifiers coexist and must never be presented as the same thing:
+
+- **W&B ordinal** means creation order inside
+  `smahalanobis-uc-davis/hjepa-vwm`. It includes smokes, duplicates, and interrupted launches.
+- **Local scientific label** means the historical `run_NNN_*` folder sequence. It may skip
+  operational smokes and may point to a different W&B ordinal.
+
+The W&B ID is the immutable join key. Every current index row and every new run record must state
+the W&B ID explicitly. When the ordinal and local label differ, write both; never call either one
+simply “the run number.”
+
 ---
 
 ## When to update which file
@@ -156,3 +176,7 @@ hypothesis or fact-check benefits from real run data:
   conclusions (post-AGC grad norm hid the royal-cherry cliff; the cliff was at 8600,
   not 8500).
 - **Never invent metric values from memory — pull them.**
+
+The canonical live inventory is the newest dated reconciliation in
+[`PHASE_1/README.md`](PHASE_1/README.md). Older generated tables and dated status blocks are
+chronological snapshots, not current state.

@@ -15,6 +15,7 @@ _REVISION_A = "a" * 40
 _REVISION_B = "b" * 40
 _VJEPA2_REVISION = "b3c1679b7c34d3255ef3547f27c7b226aefab26f"
 _SIGLIP2_REVISION = "3f9f96cb90da5dbc758b01813f2f6f1aee24c1ab"
+_DINOV3_REVISION = "5931719e67bbdb9737e363e781fb0c67687896bc"
 
 
 class _FakeTubeletBackend(nn.Module):
@@ -275,13 +276,10 @@ def test_eval_and_freeze_are_sticky():
     assert all(not parameter.requires_grad for parameter in encoder.parameters())
 
 
-@pytest.mark.parametrize("alias", ["dinov3_vitb16"])
-def test_reserved_unresolved_registry_aliases_fail_without_main_fallback(alias):
-    from config import EncoderConfig
-    from encoders import build_frozen_encoder
+def test_dino_registry_has_pinned_default_revision():
+    from encoders import _ADAPTER_REGISTRY
 
-    with pytest.raises(RuntimeError, match=rf"{alias}.*not implemented.*immutable"):
-        build_frozen_encoder(EncoderConfig(alias=alias))
+    assert _ADAPTER_REGISTRY["dinov3_vitb16"].default_revision == _DINOV3_REVISION
 
 
 def test_transformers_pin_exposes_both_planned_frame_encoder_architectures():
@@ -291,6 +289,151 @@ def test_transformers_pin_exposes_both_planned_frame_encoder_architectures():
     assert transformers.__version__ == "4.57.6"
     assert transformers.DINOv3ViTModel.__name__ == "DINOv3ViTModel"
     assert transformers.SiglipVisionModel.__name__ == "SiglipVisionModel"
+
+
+def test_dino_registry_loads_pinned_revision_and_strips_special_tokens(monkeypatch):
+    """The public factory exposes 8x16x16 DINO patch tokens at the validated pin."""
+    import transformers
+
+    from config import ENCODER_IMAGE_MEAN, ENCODER_IMAGE_STD, EncoderConfig
+    from encoders import build_frozen_encoder
+
+    captured = {}
+
+    class FakeDINOModel(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.weight = nn.Parameter(torch.ones(11))
+            self.config = SimpleNamespace(_commit_hash=_DINOV3_REVISION, num_register_tokens=4)
+
+        def forward(self, *, pixel_values, return_dict):
+            assert return_dict is True
+            frame_ids = pixel_values.mean(dim=(1, 2, 3)).view(-1, 1, 1) * 1_000
+            specials = torch.full(
+                (pixel_values.shape[0], 5, 768),
+                -999.0,
+                device=pixel_values.device,
+                dtype=pixel_values.dtype,
+            )
+            patches = torch.arange(256, device=pixel_values.device, dtype=pixel_values.dtype).view(
+                1, 256, 1
+            )
+            tokens = (frame_ids + patches).expand(pixel_values.shape[0], 256, 768)
+            return SimpleNamespace(last_hidden_state=torch.cat((specials, tokens), dim=1))
+
+    def fake_from_pretrained(repo_id, **kwargs):
+        captured["repo_id"] = repo_id
+        captured.update(kwargs)
+        return FakeDINOModel()
+
+    monkeypatch.setattr(transformers.DINOv3ViTModel, "from_pretrained", fake_from_pretrained)
+    cfg = EncoderConfig(
+        alias="dinov3_vitb16",
+        precision="fp32",
+        frame_microbatch=3,
+        hf_cache_dir="/tmp/dino-cache",
+    )
+    raw = torch.zeros(1, 8, 3, 256, 256)
+    for frame_index in range(8):
+        raw[:, frame_index].fill_(0.5 + frame_index / 100)
+
+    encoder = build_frozen_encoder(cfg)
+    tokens = encoder(raw)
+
+    assert captured == {
+        "repo_id": "facebook/dinov3-vitb16-pretrain-lvd1689m",
+        "revision": _DINOV3_REVISION,
+        "cache_dir": "/tmp/dino-cache",
+        "attn_implementation": "sdpa",
+    }
+    assert encoder.spec.family == "dinov3"
+    assert encoder.spec.normalization_mean == ENCODER_IMAGE_MEAN
+    assert encoder.spec.normalization_std == ENCODER_IMAGE_STD
+    assert encoder.spec.layout.n_tokens == 2048
+    assert encoder.spec.feature_dim == 768
+    assert encoder.spec.parameter_count == 11
+    assert tokens.shape == (1, 2048, 768)
+    assert torch.count_nonzero(tokens == -999.0) == 0
+
+    mean = torch.tensor(ENCODER_IMAGE_MEAN).view(1, 1, 3, 1, 1)
+    std = torch.tensor(ENCODER_IMAGE_STD).view(1, 1, 3, 1, 1)
+    normalized = (raw - mean) / std
+    frame_signal = normalized.mean(dim=(0, 2, 3, 4)) * 1_000
+    assert tokens[0, 0, 0].item() == pytest.approx(frame_signal[0].item())
+    assert tokens[0, 255, 0].item() == pytest.approx(frame_signal[0].item() + 255)
+    assert tokens[0, 256, 0].item() == pytest.approx(frame_signal[1].item())
+    assert all(not parameter.requires_grad for parameter in encoder.parameters())
+
+
+@pytest.mark.parametrize(
+    ("register_tokens", "sequence_length", "width", "message"),
+    [
+        (3, 261, 768, "four register tokens"),
+        (4, 260, 768, "256 patch tokens"),
+        (4, 261, 512, "patch width changed"),
+    ],
+)
+def test_dino_registry_rejects_bad_dense_contracts(
+    monkeypatch, register_tokens, sequence_length, width, message
+):
+    import transformers
+
+    from config import EncoderConfig
+    from encoders import build_frozen_encoder
+
+    class FakeDINOModel(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.weight = nn.Parameter(torch.ones(1))
+            self.config = SimpleNamespace(
+                _commit_hash=_DINOV3_REVISION, num_register_tokens=register_tokens
+            )
+
+        def forward(self, *, pixel_values, return_dict):
+            assert return_dict is True
+            return SimpleNamespace(
+                last_hidden_state=torch.zeros(
+                    pixel_values.shape[0], sequence_length, width, device=pixel_values.device
+                )
+            )
+
+    monkeypatch.setattr(
+        transformers.DINOv3ViTModel,
+        "from_pretrained",
+        lambda repo_id, **kwargs: FakeDINOModel(),
+    )
+    cfg = EncoderConfig(alias="dinov3_vitb16", precision="fp32")
+
+    with pytest.raises(RuntimeError, match=message):
+        encoder = build_frozen_encoder(cfg)
+        encoder(torch.zeros(1, 8, 3, 256, 256))
+
+
+def test_dino_registry_requires_last_hidden_state(monkeypatch):
+    import transformers
+
+    from config import EncoderConfig
+    from encoders import build_frozen_encoder
+
+    class FakeDINOModel(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.weight = nn.Parameter(torch.ones(1))
+            self.config = SimpleNamespace(_commit_hash=_DINOV3_REVISION, num_register_tokens=4)
+
+        def forward(self, *, pixel_values, return_dict):
+            assert return_dict is True
+            return SimpleNamespace(pooler_output=torch.zeros(pixel_values.shape[0], 768))
+
+    monkeypatch.setattr(
+        transformers.DINOv3ViTModel,
+        "from_pretrained",
+        lambda repo_id, **kwargs: FakeDINOModel(),
+    )
+    encoder = build_frozen_encoder(EncoderConfig(alias="dinov3_vitb16", precision="fp32"))
+
+    with pytest.raises(TypeError, match="last_hidden_state"):
+        encoder(torch.zeros(1, 8, 3, 256, 256))
 
 
 def test_siglip_registry_loads_only_vision_tower_and_preserves_patch_order(monkeypatch):
