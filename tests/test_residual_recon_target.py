@@ -17,6 +17,18 @@ class IdentityEncoder(nn.Module):
         return clip
 
 
+class CountingIdentityEncoder(nn.Module):
+    """Frozen-encoder stand-in that records diagnostic forward calls."""
+
+    def __init__(self):
+        super().__init__()
+        self.inputs = []
+
+    def forward(self, clip):
+        self.inputs.append(clip)
+        return clip.clone()
+
+
 def _small_cfg(present_only: bool = True):
     config = importlib.import_module("config")
     cfg = config.Config()
@@ -303,6 +315,49 @@ def test_full_prediction_diagnostics_emit_residual_readouts():
     ):
         assert key in metrics
         assert torch.isfinite(torch.tensor(metrics[key]))
+
+
+@pytest.mark.parametrize("present_only, expected_encoder_calls", [(True, 1), (False, 2)])
+def test_diagnostics_measure_encoder_and_latent_cosine_without_extra_forward(
+    monkeypatch, present_only, expected_encoder_calls
+):
+    """Both cosine keys use their intended tensors from the same diagnostic pass."""
+    train = importlib.import_module("train")
+    cfg = _small_cfg(present_only=present_only)
+    if not present_only:
+        cfg.train.lambda_recon_pred = 1.0
+    train.finalize_training_config(cfg)
+    modules, _, tracker = _build(cfg)
+    encoder = CountingIdentityEncoder()
+    modules = (encoder, *modules[1:])
+    batch = (
+        torch.randn(4, cfg.model.n_ctx, cfg.model.d_e, requires_grad=True),
+        torch.randn(4, cfg.model.n_ctx, cfg.model.d_e, requires_grad=True),
+    )
+    calls = []
+
+    def cosine_spy(representation):
+        calls.append(representation)
+        value = 0.25 if representation.shape[1:] == batch[0].shape[1:] else 0.75
+        return {"c_cross_video_cosine": value}
+
+    monkeypatch.setattr(train, "cross_video_cosine", cosine_spy)
+
+    metrics = train.run_diagnostics(batch, modules, cfg, torch.device("cpu"), mean_tracker=tracker)
+
+    assert metrics["e_cross_video_cosine"] == pytest.approx(0.25)
+    assert metrics["c_cross_video_cosine"] == pytest.approx(0.75)
+    assert len(calls) == 2
+    detailed, abstract = calls
+    assert detailed.shape == (4, cfg.model.n_ctx, cfg.model.d_e)
+    assert abstract.shape == (4, cfg.model.n_c, cfg.model.d_c)
+    assert detailed is not abstract
+    assert all(not representation.requires_grad for representation in calls)
+    assert all(representation.grad_fn is None for representation in calls)
+    assert len(encoder.inputs) == expected_encoder_calls
+    assert encoder.inputs[0].data_ptr() == batch[0].data_ptr()
+    if not present_only:
+        assert encoder.inputs[1].data_ptr() == batch[1].data_ptr()
 
 
 def test_default_config_keeps_baseline_untouched():

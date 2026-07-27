@@ -846,8 +846,12 @@ Representation health:
 
 - `variance_stats(c_t)` logs `c_std_mean`, `c_std_median`,
   `c_dead_dim_frac`.
-- `cross_video_cosine(c_t)` logs mean pairwise cosine between batch examples.
-  High values indicate video-independent collapse.
+- `cross_video_cosine(e_t)` logs `e_cross_video_cosine` before the bottleneck, and
+  `cross_video_cosine(c_t)` preserves the historical `c_cross_video_cosine` key after
+  the bottleneck. Both use the same unique-source fixed diagnostic batch. High values
+  indicate video-independent collapse. Here `e_t` is the `detailed` representation
+  presented to the bottleneck: raw encoder output when whitening is disabled, or the
+  whitened representation when whitening is enabled.
 - `effective_rank(c_t)` pools batch and slots, computes covariance over
   `D_c`, then logs `exp(entropy(normalized_eigenvalues))`.
 - `slot_diversity_rank(c_t)` computes within-video effective rank over the

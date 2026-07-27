@@ -243,9 +243,14 @@ This is the fraction of dimensions whose std is much smaller than the median.
 High values mean part of the latent is dead. Low values mean dimensions are at least numerically
 active, but this does not guarantee they are semantically useful.
 
-#### `c_cross_video_cosine`
+#### `e_cross_video_cosine` and `c_cross_video_cosine`
 
-This measures mean pairwise cosine similarity between different videos' flattened `c_t`.
+These measure mean pairwise cosine similarity between different videos on the same
+unique-source fixed diagnostic batch. `e_cross_video_cosine` flattens the frozen encoder
+representation `e_t` (`detailed`) presented to the bottleneck; this is raw encoder output
+when whitening is disabled, as in Run 069, and the whitened representation when whitening
+is enabled. The historical `c_cross_video_cosine` key flattens the abstract latent `c_t`
+after the bottleneck.
 
 Interpretation:
 

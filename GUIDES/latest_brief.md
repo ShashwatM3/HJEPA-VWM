@@ -283,7 +283,7 @@ Run on a fixed diagnostic batch every **500** steps (`diag_every`).
 | Gradient health | `grad_norm`, `grad_skipped`, `grad_has_nan` | Frequent skips, 10³+ spikes, NaNs |
 
 **Metric caveats:**
-- `c_cross_video_cosine` is mean pairwise cosine among **random batch pairs** — detects
+- `c_cross_video_cosine` is mean pairwise cosine among **fixed unique-source diagnostic pairs** — detects
   video-agnostic collapse, not semantic clustering of similar actions.
 - `c_attn_entropy` is weak (near 1.0 even when slots differ) — prefer `c_slot_diversity_rank`.
 - `coarse_vs_copy_ratio` is only trustworthy when `copy_loss` is stable (latent not drifting in scale).
