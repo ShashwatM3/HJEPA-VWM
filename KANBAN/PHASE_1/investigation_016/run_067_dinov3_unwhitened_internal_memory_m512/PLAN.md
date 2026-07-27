@@ -1,5 +1,9 @@
 # Plan — Run 67, DINOv3 unwhitened internal-memory M=512
 
+> **Local-label correction (2026-07-27):** this source-branch plan produced W&B `it7sq8nz`,
+> recorded canonically as local
+> [Run 069](../run_069_unwhitened_dinov3_m512_no_geometry_regularizers/).
+
 ## Role
 
 Completed DINOv3 encoder-substrate reproduction of the run-066 unwhitened M=512 recipe: change only

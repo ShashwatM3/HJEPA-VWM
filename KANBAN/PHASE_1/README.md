@@ -256,6 +256,11 @@ Newest scientific run rows:
 This section is the current source of truth. All earlier tables and dated updates above are
 preserved snapshots and may contain states that were true only when written.
 
+- Historical source-branch folders named
+  `run_067_dinov3_unwhitened_internal_memory_m512` and
+  `run_068_dinov3_whitened_internal_memory_m512_cov_var` preserve pre-reconciliation labels.
+  Their canonical local records are Run 069 (`it7sq8nz`) and Run 070 (`qqozribu`),
+  respectively; do not count the historical folders as additional scientific runs.
 - Live project: `smahalanobis-uc-davis/hjepa-vwm`.
 - W&B inventory: **75 entries** — 34 finished, 29 crashed, 11 killed, 1 failed, and **0 running**.
 - Documentation snapshot: the 75-entry reconciliation was published in Git history through merge

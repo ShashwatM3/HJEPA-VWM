@@ -1,5 +1,9 @@
 # Observations — Run 67, DINOv3 unwhitened internal-memory M=512
 
+> **Local-label correction (2026-07-27):** W&B `it7sq8nz` is canonical local
+> [Run 069](../run_069_unwhitened_dinov3_m512_no_geometry_regularizers/). The canonical analysis
+> supersedes the pending late-window placeholders retained below.
+
 ## Result
 
 Run 67 completed all 15,000 steps. W&B run

@@ -7,3 +7,5 @@
    despite rank above 60.
 4. Require source-diverse diagnostics before a global-collapse claim and a separate run before any
    DINO prediction-readiness claim.
+5. Preserve the PR #8 upload inventory alongside the run identity: `7` checkpoint objects
+   (`2.9 GiB`) and `1` preflight object in the run-specific `s3://hjepa-volume/` directories.

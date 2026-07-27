@@ -1,5 +1,9 @@
 # Observations — Run 68, DINOv3 whitened internal-memory M=512 covariance plus variance
 
+> **Local-label/status correction (2026-07-27):** exact completed evidence now lives under
+> canonical local [Run 070](../run_070_whitened_dinov3_m512_cov_var/), W&B `qqozribu`.
+> Its W&B-backed analysis supersedes the empty pre-launch placeholder below.
+
 ## Status
 
 PLANNED — not yet launched. No metrics recorded yet.

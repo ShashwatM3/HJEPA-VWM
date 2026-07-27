@@ -1,5 +1,9 @@
 # GUIDE — Run 68, DINOv3 whitened internal-memory M=512 covariance plus variance (EGO4D)
 
+> **Local-label/status correction (2026-07-27):** this historical launch guide corresponds to
+> canonical local [Run 070](../run_070_whitened_dinov3_m512_cov_var/), W&B `qqozribu`.
+> Use that folder for completed evidence; do not relaunch this retained recipe.
+
 This is the exact gated launch guide for the whitened counterpart to completed DINOv3 Run 67
 ([`../run_067_dinov3_unwhitened_internal_memory_m512/`](../run_067_dinov3_unwhitened_internal_memory_m512/),
 W&B [`it7sq8nz`](https://wandb.ai/smahalanobis-uc-davis/hjepa-vwm/runs/it7sq8nz)). Preserve the

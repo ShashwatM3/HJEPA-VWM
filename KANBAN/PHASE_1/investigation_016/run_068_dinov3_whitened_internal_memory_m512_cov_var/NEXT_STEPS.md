@@ -1,5 +1,9 @@
 # Next steps — Run 68, DINOv3 whitened internal-memory M=512 covariance plus variance
 
+> **Local-label/status correction (2026-07-27):** completed follow-up is recorded under canonical
+> local [Run 070](../run_070_whitened_dinov3_m512_cov_var/), W&B `qqozribu`. The pre-launch list
+> below is retained source-branch history, not current work.
+
 Before launch:
 
 1. Execute [`GUIDE.md`](GUIDE.md) in order and stop at the first failed gate.

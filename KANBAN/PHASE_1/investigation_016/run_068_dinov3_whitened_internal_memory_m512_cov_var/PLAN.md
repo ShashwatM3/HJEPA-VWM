@@ -1,5 +1,9 @@
 # Plan — Run 68, DINOv3 whitened internal-memory M=512 covariance plus variance
 
+> **Local-label/status correction (2026-07-27):** this plan produced the experiment recorded
+> canonically as local [Run 070](../run_070_whitened_dinov3_m512_cov_var/), W&B `qqozribu`.
+> The plan remains an audit trail, not a current launch instruction.
+
 ## Scope
 
 CLI-only whitening-bundle follow-up to completed DINOv3 Run 67. Preserve the full unwhitened M=512

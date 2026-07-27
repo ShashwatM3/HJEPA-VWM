@@ -1,5 +1,10 @@
 # Run 67 — Investigation 16 · Encoder substrate · DINOv3 unwhitened memory M=512
 
+> **Local-label correction (2026-07-27):** W&B `it7sq8nz` is canonical local
+> [Run 069](../run_069_unwhitened_dinov3_m512_no_geometry_regularizers/), not local Run 067.
+> This directory preserves source-branch history; use the canonical folder for the current
+> analysis and verdict.
+
 ## Status
 
 COMPLETE — 15,000/15,000 steps; W&B finished; final checkpoint verified.

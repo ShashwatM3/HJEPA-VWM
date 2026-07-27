@@ -1,5 +1,9 @@
 # GUIDE — Run 67, DINOv3 unwhitened internal-memory M=512 (EGO4D)
 
+> **Local-label correction (2026-07-27):** W&B `it7sq8nz` is canonical local
+> [Run 069](../run_069_unwhitened_dinov3_m512_no_geometry_regularizers/). This retained guide
+> records the source-branch launch and must not be treated as a separate Run 067.
+
 This records the exact successful 15,000-step DINOv3 encoder-substrate launch. It follows the
 run-066 SigLIP 2 guide with the encoder identity and collision-avoiding operational paths changed.
 There is no whitening and no variance/covariance/SIGReg/slot regularizer. Do not use `--resume`.

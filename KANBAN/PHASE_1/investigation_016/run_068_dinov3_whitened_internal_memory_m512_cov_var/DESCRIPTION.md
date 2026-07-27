@@ -1,5 +1,10 @@
 # Run 68 — Investigation 16 · Encoder substrate · DINOv3 whitened memory M=512 covariance plus variance
 
+> **Local-label/status correction (2026-07-27):** this experiment is canonical local
+> [Run 070](../run_070_whitened_dinov3_m512_cov_var/), W&B `qqozribu`, and finished all
+> 15,000 updates. The source-branch `PLANNED` record below is retained as history and is not the
+> current run status.
+
 ## Status
 
 PLANNED — not yet launched. This folder is the pre-launch record (triad + `PLAN.md` + `GUIDE.md`).

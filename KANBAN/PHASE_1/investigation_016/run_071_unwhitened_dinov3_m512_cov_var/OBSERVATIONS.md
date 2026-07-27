@@ -7,6 +7,11 @@ W&B `fiactcw6` finished all 15,000 updates and recorded checkpoint
 `fbd4bda4c75780c06b35c837a1291218c4525c1549baf978ef3561eaf81e7cb8`. Every logged
 `grad_skipped`, `grad_has_nan`, and `instability_warn` value is zero.
 
+The [PR #8 completion handoff](https://github.com/ShashwatM3/HJEPA-VWM/pull/8) additionally
+records upload verification for `7` checkpoint objects (`2.9 GiB`) under
+`s3://hjepa-volume/ckpt/inv016_dinov3_unwhitened_memory_m512_cov_var/` and `1` preflight object
+under `s3://hjepa-volume/preflight/inv016_dinov3_unwhitened_memory_m512_cov_var/`.
+
 Late six-diagnostic medians:
 
 | Metric | Value |
