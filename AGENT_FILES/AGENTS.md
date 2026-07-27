@@ -233,6 +233,7 @@ Root implementation files:
 | `train.py` | Stage-0/1, CLI, optimizer/EMA, exact sampler/RNG atomic resume, parity/CUDA-event resource preflights, and strict/optional W&B policy. |
 | `parse_logs.py` | Parses `step=N {dict}` console logs into JSON. |
 | `run_history.py` | W&B Public API export/report helper for logged metrics. |
+| `evaluate_checkpoint_diagnostics.py` | Offline checkpoint evaluator for paired encoder/online-bottleneck cross-video cosine on the corrected fixed source-diverse batch; no optimizer or training state mutation. |
 | `drift_probe.py` | Offline within-video temporal drift probe: frozen-encoder drift vs bottleneck-latent drift over a pinned probe set, evaluated from checkpoints. |
 | `rank_probe.py` | Encoder-generic raw/effective-rank probe over the strict drift manifest/feature cache, including pre-concatenation frame-layout norms/ranks. |
 | `whiten_stats.py` | Deterministic context-only fp64 statistics through the same encoder/data seam; writes a strict encoder/dataset-bound eigensystem envelope. |
