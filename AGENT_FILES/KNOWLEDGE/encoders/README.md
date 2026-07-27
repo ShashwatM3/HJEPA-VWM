@@ -36,3 +36,5 @@ exact resume consumes the saved sampler position, resource reports include CUDA-
 examples/frames/tokens rates, and frame encoders receive pre-concatenation frame rank/norm
 diagnostics. Any new checkpoint, preprocessing, or dependency revision must repeat the relevant
 real-adapter gates in `GUIDE_encoders.md`.
+The DINO weights remain gated, so each new runtime still needs authorized Hugging Face access
+even though the source revision is pinned.

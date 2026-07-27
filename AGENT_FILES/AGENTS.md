@@ -389,6 +389,7 @@ The private registry currently has:
   `5931719e67bbdb9737e363e781fb0c67687896bc`, framewise tower `85,660,416`
   parameters, layout `8x16x16`, `D_e=768`; the adapter asserts four register tokens,
   strips the CLS/register prefix, and never falls back to `main`.
+  An explicit 40-character revision remains available as an override.
 
 `transformers==4.57.6` is the shared dependency pin. Its installed source exposes the
 planned V-JEPA2, DINOv3 ViT, and SigLIP2 vision architectures. Any later dependency change

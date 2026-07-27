@@ -325,6 +325,59 @@ def test_training_cli_exposes_hot_encoder_and_operator_surface(monkeypatch):
     assert args.preflight_only and args.require_wandb
 
 
+def test_training_cli_describes_dino_as_a_pinned_one_flag_choice(monkeypatch, capsys):
+    import train
+
+    monkeypatch.setattr(sys, "argv", ["train.py", "--help"])
+    with pytest.raises(SystemExit) as exit_info:
+        train.parse_args()
+
+    assert exit_info.value.code == 0
+    help_text = capsys.readouterr().out
+    assert "DINO requires --encoder-revision" not in help_text
+    assert "immutable default revision" in help_text
+
+
+def test_wandb_config_surfaces_resolved_encoder_geometry_over_legacy_fields():
+    import train
+
+    fingerprint = "f" * 64
+    provenance = {
+        "resolved_config": {
+            "encoder": {"alias": "dinov3_vitb16"},
+            "model": {
+                "d_e": 1024,
+                "encoder_repo": "facebook/vjepa2-vitl-fpc64-256",
+            },
+        },
+        "encoder_spec": {
+            "family": "dinov3",
+            "repo_id": "facebook/dinov3-vitb16-pretrain-lvd1689m",
+            "feature_dim": 768,
+            "layout": {"temporal": 8, "height": 16, "width": 16},
+            "feature_fingerprint": fingerprint,
+        },
+        "feature_fingerprint": fingerprint,
+        "dataset_identity": {"fingerprint": "d" * 64},
+    }
+
+    config = train._wandb_config_from_provenance(provenance)
+
+    # Historical model fields remain for checkpoint/config compatibility.
+    assert config["model"]["d_e"] == 1024
+    # New consumers have one explicitly resolved, encoder-native source of truth.
+    resolved = config["resolved_encoder_spec"]
+    assert resolved["family"] == "dinov3"
+    assert resolved["feature_dim"] == 768
+    assert (
+        resolved["layout"]["temporal"] * resolved["layout"]["height"] * resolved["layout"]["width"]
+        == 2048
+    )
+    assert config["resolved_feature_fingerprint"] == fingerprint
+    assert config["resolved_dataset_fingerprint"] == "d" * 64
+    assert "resolved_encoder_spec" not in provenance["resolved_config"]
+
+
 def test_training_rejects_batch_one_because_shuffled_video_probe_needs_a_peer():
     """A one-sample validation batch makes shuffled-c an identity operation."""
     import train
