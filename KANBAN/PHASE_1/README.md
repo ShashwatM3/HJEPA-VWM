@@ -258,10 +258,10 @@ preserved snapshots and may contain states that were true only when written.
 
 - Live project: `smahalanobis-uc-davis/hjepa-vwm`.
 - W&B inventory: **75 entries** — 34 finished, 29 crashed, 11 killed, 1 failed, and **0 running**.
-- Documentation snapshot: this local ledger is based on Git HEAD
-  `ccf6ed5fe90e07a8ecd934c8a0cb5501511662b4` and currently has uncommitted KANBAN changes. The
-  W&B run records retain their own clean runtime commits; do not imply that this documentation
-  snapshot is already a published repository commit.
+- Documentation snapshot: the 75-entry reconciliation was published in Git history through merge
+  commit `b73bfa918c77da2574bf152f99935010c878b963`. Investigation 018 and local scientific run 072
+  are newer pre-launch registrations and do not yet have a W&B entry. Individual W&B runs retain
+  their own clean runtime commits.
 - Investigation 016 is closed after recording the two completed DINO geometry arms.
 - Investigation 017 remains open but has **no active queue**. Its only unique V-JEPA2 arm,
   `ihiuptdp` (`16×512`), is crashed at step 7,100; the remaining arms are unlaunched.
@@ -286,6 +286,7 @@ The runtime authority is `resolved_provenance.encoder_spec`: DINOv3 resolves to 
 |---|---|---|
 | [investigation_016](investigation_016/) | CLOSED | The EGO4D transfer, bottleneck, and three-encoder substrate arc is recorded through local scientific runs 071. DINO is validated only for present reconstruction. |
 | [investigation_017](investigation_017/) | OPEN — no active runs | Three within-encoder `N_c×D_c` sweeps remain incomplete. Exact `32×256` recipe evidence now exists for all three encoder lanes; `ihiuptdp` is an invalid partial V-JEPA2 arm, not an active process. |
+| [investigation_018](investigation_018/) | OPEN — run 072 registered | Test pure SIGReg on the current raw V-JEPA2 `M=512`, `32×256` present-reconstruction recipe with variance and covariance disabled. |
 
 ### Complete current W&B inventory
 
@@ -370,3 +371,12 @@ authoritative join key.
 | 073 | `lwx0mu34` | finished | 90 | operational DINOv3 whitened cov+var smoke |
 | 074 | `qqozribu` | finished | 14,950 | [local 070](investigation_016/run_070_whitened_dinov3_m512_cov_var/), investigation 016 DINOv3 whitened cov+var |
 | 075 | `fiactcw6` | finished | 14,950 | [local 071](investigation_016/run_071_unwhitened_dinov3_m512_cov_var/), DINOv3 unwhitened cov+var / investigation 017 center |
+
+## Registered next experiment (2026-07-27)
+
+Local scientific
+[run 072](investigation_018/run_072_vjepa2_unwhitened_m512_sigreg10_only/) is registered under
+[investigation 018](investigation_018/). It keeps the latest raw/unwhitened `M=512`, `32×256`,
+decoder-`512×4`, reconstruction-only recipe, selects V-JEPA2, and replaces covariance plus
+variance with `lambda_sigreg=10` alone. No W&B entry exists until launch; the W&B ID remains the
+required join key once created.
