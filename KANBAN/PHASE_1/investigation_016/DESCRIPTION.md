@@ -111,3 +111,11 @@ the two encoders emit different `D_e`/`N_e`/layout feature spaces, raw cross-enc
 are not directly comparable; the defensible comparison is within-run diagnostics. This run is a
 low-architectural-significance diagnostic to measure encoder-substrate effect, documented for
 provenance. It does not displace the width conclusion above.
+
+## DINOv3 Run 67–69 sequence
+
+- [`run_067_dinov3_unwhitened_internal_memory_m512/`](run_067_dinov3_unwhitened_internal_memory_m512/) completed 15,000 steps as W&B `it7sq8nz`; exact final snapshot and checkpoint identity are recorded, while preregistered late-window medians remain pending.
+- [`run_068_dinov3_whitened_internal_memory_m512_cov_var/`](run_068_dinov3_whitened_internal_memory_m512_cov_var/) was launched. Preliminary qualitative reporting says whitening remained active, reconstruction worsened to approximately `0.3`, effective rank improved, and cross-video cosine decreased. Exact identity, completion, and metrics remain pending.
+- [`run_069_dinov3_unwhitened_internal_memory_m512_cov_var/`](run_069_dinov3_unwhitened_internal_memory_m512_cov_var/) completed successfully as W&B `fiactcw6`, with final checkpoint SHA-256 `fbd4bda4c75780c06b35c837a1291218c4525c1549baf978ef3561eaf81e7cb8`. Its reconstruction is consistent with whitening contributing to Run 68 degradation, qualified by the absence of exact verified Run 68 metrics.
+
+The broader sequence is confounded by the combination of whitening and late-projection architecture changes; only the matched Run 68/69 comparison is intended to isolate whitening.

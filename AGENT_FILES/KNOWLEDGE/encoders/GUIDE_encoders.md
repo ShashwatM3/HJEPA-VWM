@@ -1,11 +1,16 @@
 # Guide: Encoder-Pluggable Experiments
+> Live-status correction (2026-07-26): the DINOv3 ViT-B/16 adapter is implemented and defaults
+> to validated immutable revision `5931719e67bbdb9737e363e781fb0c67687896bc`. Callers may still
+> supply an explicit immutable override. Real-model evidence is manual smoke validation, not CI.
+> Historical staged prompts below are retained as an audit trail and do not override the live registry.
 
-> Updated 2026-07-14: the encoder-independent foundation, raw data path, generic model
+> Historical status recorded 2026-07-14: the encoder-independent foundation, raw data path, generic model
 > geometry, deterministic training/checkpoints, strict provenance, whitening, rank, drift,
 > W&B policy, resource preflight, V-JEPA2 regression adapter, and real SigLIP 2 adapter are
-> implemented. SigLIP 2 passed a real fp32 Mac/MPS smoke at its pinned Hub commit. DINO is
-> intentionally the only unresolved alias until its gated real lane supplies an immutable
-> revision and evidence. The remaining SigLIP work below requires the RunPod's CUDA GPU and
+> implemented. SigLIP 2 passed a real fp32 Mac/MPS smoke at its pinned Hub commit. At that
+> time, DINO was the only unresolved alias pending an immutable revision and evidence; that
+> historical gate has since been cleared as recorded in the live-status correction above.
+> The remaining SigLIP work below requires the RunPod's CUDA GPU and
 > real datasets; it is verification/artifact generation, not another coding stage. The
 > final pre-RunPod audit also binds decoded frame counts in dataset identity, restores the
 > saved sampler epoch/offset directly, reports CUDA-event examples/frames/tokens throughput,
@@ -220,8 +225,8 @@ COMMON TRACK — IMPLEMENTED; RunPod data/CUDA evidence remains
                          |
              +-----------+-----------+
              |                       |
-   SIGLIP 2 ViT LANE          DINOV3 LANE
-   adapter implemented        alias intentionally unresolved
+   SIGLIP 2 ViT LANE          DINOV3 LANE (historical state)
+   adapter implemented        alias was intentionally unresolved
    Mac/MPS smoke passed       approval + auth, then implementation
    RunPod CUDA/data gates     real smoke/data gates
    SSv2/EGO4D smokes          SSv2/EGO4D smokes
@@ -458,9 +463,10 @@ package tree:
    encoder inference precision, frame microbatching, sticky eval/freeze, cache/revision
    loading, resolved commit capture, shape/range/finiteness checks, and the immutable
    feature fingerprint.
-2. Add EncoderConfig and a private adapter registry. Refactor the existing V-JEPA2 backend
+2. Historical implementation instruction: add EncoderConfig and a private adapter registry.
+   Refactor the existing V-JEPA2 backend
    behind it and pin vjepa2_vitl16 to its exact tested 40-character Hub commit SHA. Reserve
-   stable aliases dinov3_vitb16 and siglip2_vitb16, but make either unresolved alias fail
+   stable aliases dinov3_vitb16 and siglip2_vitb16, but make either then-unresolved alias fail
    clearly until its lane supplies a tested private adapter and immutable default revision;
    never fall back to main. Keep square 8x256x256 as the supported v1 contract and fail
    loudly otherwise. Make requested immutable revision, cache directory, precision, frame

@@ -7,10 +7,10 @@ the frozen encoder to DINOv3 ViT-B/16 while preserving the full EGO4D scientific
 
 ## No code change required
 
-This was a pure configuration run on branch `codex/task3-dino-run066`, commit
-`083cf8a6e87168702efe46ac6bfe485756dcb439`. The bottleneck input projection and decoder output
-projection resolved their dimensions from the selected encoder's `EncoderSpec`; no training-code
-change was required for the experiment.
+This was a pure configuration run on branch `codex/task3-dino-run066`, launched from base commit
+`083cf8a6e87168702efe46ac6bfe485756dcb439`. Later documentation and registry-maintenance
+changes do not alter the completed run identity. The bottleneck input projection and decoder output projection resolved their dimensions
+from the selected encoder's `EncoderSpec`; no training-code change was required for the experiment.
 
 ## Locked config
 

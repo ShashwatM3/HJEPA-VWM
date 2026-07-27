@@ -42,6 +42,7 @@ from diagnostics import (
     slot_diversity_rank,
     variance_stats,
 )
+from encoders import registered_encoder_aliases
 from losses import (
     covariance_floor,
     flow_matching_loss,
@@ -1963,11 +1964,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--stage0-only", action="store_true")
     parser.add_argument(
         "--encoder",
-        choices=("vjepa2_vitl16", "dinov3_vitb16", "siglip2_vitb16"),
+        choices=registered_encoder_aliases(),
         default="vjepa2_vitl16",
         help=(
-            "Stable frozen-encoder alias. DINO requires --encoder-revision until its "
-            "default checkpoint is pinned."
+            "Stable frozen-encoder alias. Every live alias has a pinned immutable default; "
+            "--encoder-revision may override it with another immutable Hub commit SHA."
         ),
     )
     parser.add_argument("--encoder-revision", default=None)

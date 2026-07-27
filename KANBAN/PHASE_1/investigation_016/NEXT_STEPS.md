@@ -76,3 +76,10 @@ Ordered action from this result:
    hypotheses one at a time;
 5. restore geometry pressure in a dedicated arm if the goal is a healthy representation rather
    than reconstruction-only low-rank compression.
+
+## 2026-07-26 — active DINOv3 sequence
+
+1. Extract Run 67's preregistered late-window medians without changing its completed identity.
+2. Verify Run 68's exact W&B/checkpoint/completion evidence before promoting the qualitative report.
+3. Preserve completed Run 69 W&B `fiactcw6`, its verified final checkpoint checksum, and uploaded checkpoint/preflight directories.
+4. Keep the Run 68/69 whitening interpretation qualified until exact Run 68 metrics are verified; Run 69 reconstruction is consistent with, but does not precisely quantify, a whitening contribution.

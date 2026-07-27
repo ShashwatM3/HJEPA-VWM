@@ -102,3 +102,7 @@ one source UID, so the gap is exact-chunk/within-source evidence only. Raw and w
 values are not directly comparable, and this combined pair cannot separately attribute whitening
 removal or late projection. Full table:
 [`run_065.../OBSERVATIONS.md`](run_065_unwhitened_internal_memory_m1024/OBSERVATIONS.md).
+
+## 2026-07-27 — DINOv3 whitening ablation completed
+
+Run 67 is complete with exact final snapshot evidence but pending late-window extraction. Run 68 retains only preliminary qualitative evidence: whitening active, reconstruction approximately `0.3`, effective rank improved, and cross-video cosine decreased. Matched unwhitened Run 69 completed successfully as W&B `fiactcw6`; its final `L_recon=0.11770` and `L_recon_present=0.13343` are consistent with whitening contributing to the Run 68 reconstruction degradation. This remains qualified because Run 68 exact metrics are not verified in the repository.

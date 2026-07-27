@@ -221,7 +221,7 @@ Root implementation files:
 |---|---|
 | `config.py` | Dataclass configuration, path contract, dimensions, optimizer/loss knobs. |
 | `data.py` | Deterministic clip-per-file loader. Produces typed raw `[0,1]` context-only or context/target `ClipBatch` values from SSv2 `.webm` or EGO4D `.mp4`. |
-| `encoders.py` | Only encoder seam: immutable specs/fingerprints, normalization/precision/frame microbatching, private registry, pinned V-JEPA2 and SigLIP2 adapters, explicit-revision DINO adapter, real smoke CLI. |
+| `encoders.py` | Only encoder seam: immutable specs/fingerprints, normalization/precision/frame microbatching, private registry with a public alias view, pinned V-JEPA2, SigLIP2, and DINO adapters, real smoke CLI. |
 | `make_subset.py` | Builds `ssv2_tiny` as symlinks plus `manifest.json`. |
 | `select_ego4d_uids.py` | Selects scenario-diverse EGO4D source-video UIDs, train/validation split, and download batches from `ego4d.json`. |
 | `chunk_ego4d.py` | Chunks downloaded EGO4D 540ss videos into 4-second, 12 FPS, 256px-shorter-side H.264 `.mp4` clips under `data/ego4d`. |
@@ -251,7 +251,7 @@ Agent and architecture docs:
 | `AGENT_FILES/GUIDE_AUTONOMOUS_REMOTE_RUN.md` | Autonomous, observable end-to-end execution from a raw SSH command and run guide. |
 | `AGENT_FILES/SETUPS/VOLUME_LAYOUT.md` | RunPod `/workspace` data/checkpoint/cache layout. |
 | `.agents/skills/run-remote-experiment/SKILL.md` | Repository skill for SSH/RunPod/tmux experiment execution; shared with Claude Code through `.claude/skills`. |
-| `AGENT_FILES/KNOWLEDGE/encoders/README.md` | Encoder research/status index and RunPod guide. Common pluggability plus V-JEPA/SigLIP adapters are shipped; DINO and the real join remain gated. |
+| `AGENT_FILES/KNOWLEDGE/encoders/README.md` | Encoder research/status index and RunPod guide. Common pluggability plus pinned V-JEPA, SigLIP, and DINO adapters are shipped; paid-run evidence remains separately gated. |
 | `GUIDES/latest_brief.md` | Architecture narrative (v0.3) — **historical intent, not ground truth**. |
 | `GUIDES/PROBLEMS_METRICS_AND_EXPERIMENTS.md` | Metric glossary + experiment problem history. |
 | `GUIDES/CODEBASE_STRUCTURE.md` | File map: training code, MLOps, docs, KANBAN. |
@@ -386,8 +386,9 @@ The private registry currently has:
   `3f9f96cb90da5dbc758b01813f2f6f1aee24c1ab`, vision-only retained patch tower
   `85,843,200` parameters, layout `8x16x16`, `D_e=768`;
 - `dinov3_vitb16`: implemented frame-based DINOv3 ViT-B/16 adapter with layout
-  `8x16x16`, `D_e=768`; it still has no validated default immutable revision, so callers
-  must pass an explicit 40-character revision. It never falls back to `main`.
+  `8x16x16`, `D_e=768`, pinned by default to Hub commit
+  `5931719e67bbdb9737e363e781fb0c67687896bc`. Callers may override it with an explicit
+  immutable revision; it never falls back to `main`.
 
 `transformers==4.57.6` is the shared dependency pin. Its installed source exposes the
 planned V-JEPA2, DINOv3 ViT, and SigLIP2 vision architectures. Any later dependency change

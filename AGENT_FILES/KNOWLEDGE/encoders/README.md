@@ -26,14 +26,4 @@ The first pair is intentionally shape-matched: both frame encoders produce an
 present-only reconstruction is a substrate test; a later full-prediction control is needed
 to evaluate the loss of V-JEPA2's tubelet-level temporal modeling.
 
-Implementation status (2026-07-14): the encoder-independent data/model/training,
-determinism/checkpoint, whitening/rank/drift, artifact, and preflight stages are complete.
-`encoders.py` provides pinned real V-JEPA2 and SigLIP 2 adapters plus an explicit-revision
-DINOv3 ViT-B/16 adapter on `transformers==4.57.6`; SigLIP's vision-only 8x16x16x768 path
-has passed a real Mac/MPS smoke. Dataset identities include container frame counts, exact
-resume consumes the saved sampler position, resource reports include CUDA-event
-examples/frames/tokens rates, and frame encoders receive pre-concatenation frame rank/norm
-diagnostics. DINO still has no validated default immutable revision, so it remains gated
-from default use until a real snapshot is pinned and validated. CUDA, real SSv2/EGO4D,
-stats, resource, and paid-run evidence must be produced on the authenticated RunPod using
-`GUIDE_encoders.md`.
+Implementation status (updated 2026-07-26): the encoder-independent data/model/training, determinism/checkpoint, whitening/rank/drift, artifact, and preflight stages are complete. `encoders.py` provides pinned real V-JEPA2, SigLIP 2, and DINOv3 ViT-B/16 adapters on `transformers==4.57.6`. DINOv3 defaults to validated immutable revision `5931719e67bbdb9737e363e781fb0c67687896bc`; an explicit immutable revision may still override it. Real-model validation is manual smoke evidence, not CI coverage. CUDA/data/stats/resource and paid-run evidence remain separate RunPod gates in `GUIDE_encoders.md`.

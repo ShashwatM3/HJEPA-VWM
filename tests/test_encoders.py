@@ -141,6 +141,8 @@ def test_public_encoder_surface_is_small():
         "FeatureLayout",
         "EncoderSpec",
         "FrozenEncoder",
+        "DINOV3_VITB16_REVISION",
+        "registered_encoder_aliases",
         "build_frozen_encoder",
     ]
 
@@ -276,12 +278,61 @@ def test_eval_and_freeze_are_sticky():
 
 
 def test_dino_registry_has_pinned_default_revision():
-    from encoders import _ADAPTER_REGISTRY
+    from encoders import _ADAPTER_REGISTRY, DINOV3_VITB16_REVISION
 
-    assert (
-        _ADAPTER_REGISTRY["dinov3_vitb16"].default_revision
-        == "5931719e67bbdb9737e363e781fb0c67687896bc"
-    )
+    assert DINOV3_VITB16_REVISION == "5931719e67bbdb9737e363e781fb0c67687896bc"
+    assert _ADAPTER_REGISTRY["dinov3_vitb16"].default_revision == DINOV3_VITB16_REVISION
+
+
+def test_dino_registry_uses_pinned_default_revision_at_runtime(monkeypatch):
+    import transformers
+
+    from config import EncoderConfig
+    from encoders import DINOV3_VITB16_REVISION, build_frozen_encoder
+
+    captured = {}
+
+    class FakeDINOModel(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.weight = nn.Parameter(torch.ones(1))
+            self.config = SimpleNamespace(
+                _commit_hash=DINOV3_VITB16_REVISION,
+                num_register_tokens=4,
+            )
+
+    def fake_from_pretrained(repo_id, **kwargs):
+        captured["repo_id"] = repo_id
+        captured.update(kwargs)
+        return FakeDINOModel()
+
+    monkeypatch.setattr(transformers.DINOv3ViTModel, "from_pretrained", fake_from_pretrained)
+
+    build_frozen_encoder(EncoderConfig(alias="dinov3_vitb16"))
+
+    assert captured["revision"] == DINOV3_VITB16_REVISION
+
+
+def test_training_cli_encoder_choices_match_registered_aliases(monkeypatch):
+    import argparse
+    import sys
+
+    from encoders import registered_encoder_aliases
+    from train import parse_args
+
+    captured = {}
+    original_add_argument = argparse.ArgumentParser.add_argument
+
+    def record_encoder_choices(parser, *names, **kwargs):
+        if "--encoder" in names:
+            captured["choices"] = kwargs.get("choices")
+        return original_add_argument(parser, *names, **kwargs)
+
+    monkeypatch.setattr(argparse.ArgumentParser, "add_argument", record_encoder_choices)
+    monkeypatch.setattr(sys, "argv", ["train.py"])
+    parse_args()
+
+    assert captured["choices"] == registered_encoder_aliases()
 
 
 def test_transformers_pin_exposes_both_planned_frame_encoder_architectures():

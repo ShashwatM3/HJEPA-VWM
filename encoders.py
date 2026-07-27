@@ -1,6 +1,6 @@
 """Frozen vision-encoder seam for dense video features.
 
-The four exported names are the whole common-pipeline interface. Backend models,
+The exported names are the whole common-pipeline interface. Backend models,
 their output objects, and their token-selection rules stay private to this file.
 Version 1 deliberately supports only raw 8-frame 256x256 RGB clips.
 """
@@ -26,6 +26,8 @@ __all__ = [
     "FeatureLayout",
     "EncoderSpec",
     "FrozenEncoder",
+    "DINOV3_VITB16_REVISION",
+    "registered_encoder_aliases",
     "build_frozen_encoder",
 ]
 
@@ -33,6 +35,7 @@ _IMMUTABLE_REVISION = re.compile(r"[0-9a-f]{40}")
 _FINGERPRINT_SCHEMA = "hje-vwm-frozen-feature-v1"
 _VJEPA2_VITL16_REVISION = "b3c1679b7c34d3255ef3547f27c7b226aefab26f"
 _SIGLIP2_VITB16_REVISION = "3f9f96cb90da5dbc758b01813f2f6f1aee24c1ab"
+DINOV3_VITB16_REVISION = "5931719e67bbdb9737e363e781fb0c67687896bc"
 
 
 @dataclass(frozen=True)
@@ -582,7 +585,7 @@ _ADAPTER_REGISTRY = {
     "dinov3_vitb16": _AdapterRegistration(
         family="dinov3",
         repo_id="facebook/dinov3-vitb16-pretrain-lvd1689m",
-        default_revision="5931719e67bbdb9737e363e781fb0c67687896bc",
+        default_revision=DINOV3_VITB16_REVISION,
         factory=_DINOAdapter,
         feature_dim=768,
         layout=FeatureLayout(8, 16, 16, "time_y_x", "frame", 1, 1),
@@ -604,6 +607,12 @@ _ADAPTER_REGISTRY = {
         normalization_std=(0.5, 0.5, 0.5),
     ),
 }
+
+
+def registered_encoder_aliases() -> tuple[str, ...]:
+    """Return the stable encoder aliases exposed by the live adapter registry."""
+
+    return tuple(sorted(_ADAPTER_REGISTRY))
 
 
 def _validate_config(cfg: EncoderConfig) -> None:
@@ -640,7 +649,7 @@ def build_frozen_encoder(cfg: EncoderConfig) -> FrozenEncoder:
         raise TypeError("build_frozen_encoder expects config.EncoderConfig.")
     registration = _ADAPTER_REGISTRY.get(cfg.alias)
     if registration is None:
-        choices = ", ".join(sorted(_ADAPTER_REGISTRY))
+        choices = ", ".join(registered_encoder_aliases())
         raise ValueError(f"Unknown encoder alias {cfg.alias!r}; expected one of: {choices}.")
     _validate_config(cfg)
     if registration.factory is None:
@@ -697,7 +706,7 @@ def _smoke_cli() -> None:
     """Run a credential-safe real adapter forward and emit a JSON evidence report."""
     parser = argparse.ArgumentParser(description="Authenticated frozen-encoder smoke test")
     parser.add_argument("--smoke", action="store_true", help="run one real adapter forward")
-    parser.add_argument("--encoder", default="vjepa2_vitl16", choices=sorted(_ADAPTER_REGISTRY))
+    parser.add_argument("--encoder", default="vjepa2_vitl16", choices=registered_encoder_aliases())
     parser.add_argument("--revision", default=None)
     parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--precision", choices=("fp32", "bf16"), default=None)
