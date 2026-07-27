@@ -834,10 +834,13 @@ Checkpoints:
 
 ## 11. Diagnostics and what each one proves
 
-Diagnostics are pure functions in `diagnostics.py` and are run on a fixed
-validation batch in `train.run_diagnostics`. The configured and realized validation batch
-must contain at least two videos; otherwise the shuffled-c honesty probe would be an identity
-operation and training fails loudly.
+Diagnostics are pure functions in `diagnostics.py` and are run on a fixed validation batch in
+`train.run_diagnostics`. EGO4D fixed batches scan the deterministic validation order and retain
+only the first chunk from each source-video UID; SSv2 keeps its existing first-N behavior because
+each file is already a distinct source video. If fewer unique sources exist than requested, the
+loader warns and uses all available sources without duplicate refill. The configured and realized
+validation batch must contain at least two distinct source videos; otherwise the shuffled-c
+honesty probe would be an identity operation and training fails loudly.
 
 Representation health:
 

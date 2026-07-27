@@ -29,7 +29,7 @@ except ModuleNotFoundError:  # pragma: no cover
     nn = None  # type: ignore[assignment]
 
 from config import Config
-from data import ClipBatch, build_dataloader
+from data import ClipBatch, build_dataloader, build_fixed_diagnostic_batch
 from diagnostics import (
     _no_drop,
     apply_trainable_agc,
@@ -1621,15 +1621,10 @@ def run_resource_preflight(cfg: Config, output: str | Path) -> dict[str, Any]:
             )
         )
     )
-    validation_batch = next(
-        iter(
-            build_dataloader(
-                cfg,
-                "validation",
-                batch_size=min(16, cfg.train.global_batch),
-                needs_target=not cfg.train.present_recon_only,
-            )
-        )
+    validation_batch = build_fixed_diagnostic_batch(
+        cfg,
+        batch_size=min(16, cfg.train.global_batch),
+        needs_target=not cfg.train.present_recon_only,
     )
     if device.type == "cuda":
         torch.cuda.synchronize(device)
@@ -1787,13 +1782,11 @@ def run_training(
                 "WARN: residual reconstruction target is on but the checkpoint has no "
                 "recon_feature_mean state; the per-position mean re-warms from live batches."
             )
-    val_loader = build_dataloader(
+    val_batch = build_fixed_diagnostic_batch(
         cfg,
-        "validation",
         batch_size=min(16, cfg.train.global_batch),
         needs_target=not cfg.train.present_recon_only,
     )
-    val_batch = next(iter(val_loader))
     checkpoint_dir = Path(cfg.checkpoint_dir)
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     resolved_provenance_path = Path(provenance_out or checkpoint_dir / "run_provenance.json")
