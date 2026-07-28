@@ -2,10 +2,11 @@
 set -Eeuo pipefail
 
 REPO=/workspace/hierarchal-jepa-flow-world-model
-CHECKPOINT_ROOT=/workspace/ckpt/inv019_bottleneck_shape
+CHECKPOINT_ROOT=${INV019_CHECKPOINT_ROOT:-/workspace/ckpt/inv019_bottleneck_shape_covvar}
 WANDB_ENTITY=smahalanobis-uc-davis
 WANDB_PROJECT=hjepa-vwm
-WANDB_GROUP=inv019_three_encoder_bottleneck_shape
+WANDB_GROUP=${INV019_WANDB_GROUP:-inv019_three_encoder_bottleneck_shape_covvar}
+ONLY_ENCODER=${INV019_ONLY_ENCODER:-all}
 EXPECTED_SHA=${INV019_EXPECTED_SHA:?INV019_EXPECTED_SHA must be set to the synchronized commit SHA}
 
 ARM_NAMES=(tight width_heavy slot_heavy expanded)
@@ -28,11 +29,24 @@ if (( $(nvidia-smi -L | wc -l) < 4 )); then
   printf 'GPU_COUNT_FAIL expected_at_least=4\n'
   exit 2
 fi
-if [[ -e "$CHECKPOINT_ROOT" ]]; then
-  printf 'CHECKPOINT_COLLISION path=%s\n' "$CHECKPOINT_ROOT"
-  exit 2
-fi
 mkdir -p "$CHECKPOINT_ROOT" logs
+
+python3 - <<'PY'
+from config import load_experiment_config
+from train import EXPERIMENT_CONFIG_PATH, finalize_training_config
+
+cfg = load_experiment_config(EXPERIMENT_CONFIG_PATH).config
+finalize_training_config(cfg)
+assert cfg.train.present_recon_only
+assert not cfg.train.whiten_features
+assert cfg.train.lambda_recon == 1.0
+assert cfg.train.lambda_recon_pred == 0.0
+assert cfg.train.lambda_var == 0.5
+assert cfg.train.lambda_cov == 0.01
+assert cfg.train.lambda_sigreg == 0.0
+assert cfg.train.lambda_slot == 0.0
+print("INV019_COVVAR_RECIPE_OK")
+PY
 
 run_arm() {
   local encoder=$1
@@ -43,11 +57,11 @@ run_arm() {
   local arm=${ARM_NAMES[$arm_index]}
   local n_c=${ARM_N[$arm_index]}
   local d_c=${ARM_D[$arm_index]}
-  local run_slug="inv019_${lane_slug}_n${n_c}_d${d_c}_m${ARM_M}"
+  local run_slug="inv019_covvar_${lane_slug}_n${n_c}_d${d_c}_m${ARM_M}"
   local checkpoint_dir="$CHECKPOINT_ROOT/$run_slug"
   local provenance_out="$checkpoint_dir/run_provenance.json"
   local log_path="logs/${run_slug}.log"
-  local wandb_name="Investigation 19 · Bottleneck capacity · ${encoder_label} ${n_c} slots, slot width ${d_c}, memory ${ARM_M}"
+  local wandb_name="Investigation 19 · Bottleneck capacity · Covariance + variance · ${encoder_label} ${n_c} slots, slot width ${d_c}, memory ${ARM_M}"
 
   if [[ -e "$checkpoint_dir" || -e "$log_path" ]]; then
     printf 'ARM_COLLISION encoder=%s arm=%s checkpoint=%s log=%s\n' \
@@ -128,8 +142,27 @@ run_lane() {
   printf 'LANE_DONE encoder=%s\n' "$encoder"
 }
 
-printf 'SWEEP_START sha=%s group=%s\n' "$actual_sha" "$WANDB_GROUP"
-run_lane vjepa2_vitl16 V-JEPA2 vjepa2
-run_lane dinov3_vitb16 DINOv3 dinov3
-run_lane siglip2_vitb16 'SigLIP 2' siglip2
+printf 'SWEEP_START sha=%s group=%s encoder_selection=%s\n' \
+  "$actual_sha" "$WANDB_GROUP" "$ONLY_ENCODER"
+case "$ONLY_ENCODER" in
+  all)
+    run_lane vjepa2_vitl16 V-JEPA2 vjepa2
+    run_lane dinov3_vitb16 DINOv3 dinov3
+    run_lane siglip2_vitb16 'SigLIP 2' siglip2
+    ;;
+  vjepa2)
+    run_lane vjepa2_vitl16 V-JEPA2 vjepa2
+    ;;
+  dinov3)
+    run_lane dinov3_vitb16 DINOv3 dinov3
+    ;;
+  siglip2)
+    run_lane siglip2_vitb16 'SigLIP 2' siglip2
+    ;;
+  *)
+    printf 'ENCODER_SELECTION_FAIL value=%s expected=all|vjepa2|dinov3|siglip2\n' \
+      "$ONLY_ENCODER"
+    exit 2
+    ;;
+esac
 printf 'SWEEP_DONE sha=%s group=%s\n' "$actual_sha" "$WANDB_GROUP"

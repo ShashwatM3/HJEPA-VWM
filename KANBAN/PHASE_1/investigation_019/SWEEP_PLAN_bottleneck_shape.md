@@ -57,7 +57,9 @@ recon_loss_mode=cosine
 recon_residual_target=false
 recon_warmup_steps=2000
 whiten_features=false
-lambda_var=lambda_cov=lambda_sigreg=lambda_slot=0
+lambda_var=0.5
+lambda_cov=0.01
+lambda_sigreg=lambda_slot=0
 bottleneck_mixer_dim=512
 bottleneck_latent_blocks=3
 decoder_dim=512

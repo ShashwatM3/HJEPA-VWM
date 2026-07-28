@@ -9,12 +9,12 @@ preflight. It performs only fast identity/config/auth/data checks, then launches
 - Repository: `/workspace/hierarchal-jepa-flow-world-model`
 - Dataset: `/workspace/data/ego4d`
 - Hugging Face cache: `/workspace/hf_cache`
-- Checkpoints: `/workspace/ckpt/inv019_bottleneck_shape/`
-- Logs: `/workspace/hierarchal-jepa-flow-world-model/logs/inv019_*.log`
-- Controller log: `/workspace/hierarchal-jepa-flow-world-model/logs/inv019_controller.log`
-- tmux: `inv019_bottleneck_shape`
+- Checkpoints: `/workspace/ckpt/inv019_bottleneck_shape_covvar/`
+- Logs: `/workspace/hierarchal-jepa-flow-world-model/logs/inv019_covvar_*.log`
+- Controller log: `/workspace/hierarchal-jepa-flow-world-model/logs/inv019_covvar_controller.log`
+- tmux: `inv019_bottleneck_shape_covvar`
 - W&B entity/project: `smahalanobis-uc-davis/hjepa-vwm`
-- W&B group: `inv019_three_encoder_bottleneck_shape`
+- W&B group: `inv019_three_encoder_bottleneck_shape_covvar`
 
 ## 1. Synchronize one exact clean commit
 
@@ -73,8 +73,8 @@ assert cfg.train.present_recon_only
 assert not cfg.train.whiten_features
 assert cfg.train.lambda_recon == 1.0
 assert cfg.train.lambda_recon_pred == 0.0
-assert cfg.train.lambda_var == 0.0
-assert cfg.train.lambda_cov == 0.0
+assert cfg.train.lambda_var == 0.5
+assert cfg.train.lambda_cov == 0.01
 assert cfg.train.lambda_sigreg == 0.0
 assert cfg.train.lambda_slot == 0.0
 assert cfg.model.bottleneck_mixer_dim == 512
@@ -90,8 +90,8 @@ Inspect for collisions before launch:
 ```bash
 tmux list-sessions 2>/dev/null || true
 pgrep -af "python.*train.py" || true
-test ! -e /workspace/ckpt/inv019_bottleneck_shape
-test ! -e logs/inv019_controller.log
+test ! -e /workspace/ckpt/inv019_bottleneck_shape_covvar
+test ! -e logs/inv019_covvar_controller.log
 ```
 
 ## 3. Launch the controller
@@ -105,7 +105,13 @@ cd /workspace/hierarchal-jepa-flow-world-model
 export HF_HOME=/workspace/hf_cache
 export INV019_EXPECTED_SHA="$(git rev-parse HEAD)"
 mkdir -p logs
-tmux new-session -d -s inv019_bottleneck_shape "cd /workspace/hierarchal-jepa-flow-world-model && set -o pipefail && export HF_HOME=/workspace/hf_cache && export INV019_EXPECTED_SHA='$INV019_EXPECTED_SHA' && bash KANBAN/PHASE_1/investigation_019/RUN_SWEEP.sh 2>&1 | tee logs/inv019_controller.log"
+tmux new-session -d -s inv019_bottleneck_shape_covvar "cd /workspace/hierarchal-jepa-flow-world-model && set -o pipefail && export HF_HOME=/workspace/hf_cache && export INV019_EXPECTED_SHA='$INV019_EXPECTED_SHA' && bash KANBAN/PHASE_1/investigation_019/RUN_SWEEP.sh 2>&1 | tee logs/inv019_covvar_controller.log"
+```
+
+To launch only the corrected DINOv3 lane after stopping the mistaken no-geometry lane:
+
+```bash
+tmux new-session -d -s inv019_bottleneck_shape_covvar "cd /workspace/hierarchal-jepa-flow-world-model && set -o pipefail && export HF_HOME=/workspace/hf_cache && export INV019_EXPECTED_SHA='$INV019_EXPECTED_SHA' && export INV019_ONLY_ENCODER=dinov3 && bash KANBAN/PHASE_1/investigation_019/RUN_SWEEP.sh 2>&1 | tee logs/inv019_covvar_controller.log"
 ```
 
 ## 4. Immediate verification
@@ -116,33 +122,33 @@ Do not call the launch successful from tmux existence alone.
 tmux list-sessions
 pgrep -af "python.*train.py"
 nvidia-smi
-tail -n 160 logs/inv019_controller.log
-for f in logs/inv019_vjepa2_*.log; do echo "===== $f"; tail -n 60 "$f"; done
+tail -n 160 logs/inv019_covvar_controller.log
+for f in logs/inv019_covvar_*.log; do echo "===== $f"; tail -n 60 "$f"; done
 ```
 
 Required evidence:
 
-- tmux `inv019_bottleneck_shape` exists;
-- exactly four V-JEPA2 `train.py` processes exist;
+- tmux `inv019_bottleneck_shape_covvar` exists;
+- exactly four `train.py` processes for the selected encoder exist;
 - GPUs 0–3 each hold one process;
-- each log prints its exact shape, resolved V-JEPA2 revision, raw/unwhitened recipe, and W&B URL;
-- W&B names exactly match:
-  - `Investigation 19 · Bottleneck capacity · V-JEPA2 16 slots, slot width 128, memory 512`
-  - `Investigation 19 · Bottleneck capacity · V-JEPA2 16 slots, slot width 512, memory 512`
-  - `Investigation 19 · Bottleneck capacity · V-JEPA2 64 slots, slot width 128, memory 512`
-  - `Investigation 19 · Bottleneck capacity · V-JEPA2 64 slots, slot width 512, memory 512`
+- each log prints its exact shape, resolved encoder revision, raw/unwhitened recipe, and W&B URL;
+- for the corrected DINO-only launch, W&B names exactly match:
+  - `Investigation 19 · Bottleneck capacity · Covariance + variance · DINOv3 16 slots, slot width 128, memory 512`
+  - `Investigation 19 · Bottleneck capacity · Covariance + variance · DINOv3 16 slots, slot width 512, memory 512`
+  - `Investigation 19 · Bottleneck capacity · Covariance + variance · DINOv3 64 slots, slot width 128, memory 512`
+  - `Investigation 19 · Bottleneck capacity · Covariance + variance · DINOv3 64 slots, slot width 512, memory 512`
 - checkpoint and provenance roots are unique per arm;
 - the first training row has `present_recon_only=1`, `prediction_active=0`, `whiten_active=0`,
   `L_flow=0`, `L_recon_pred=0`, and `grad_skipped=0`.
 
-The controller log must show `LANE_START encoder=vjepa2_vitl16`. DINOv3 and SigLIP 2 are queued,
-not concurrent with V-JEPA2.
+The corrected DINO-only controller log must show
+`encoder_selection=dinov3` and `LANE_START encoder=dinov3_vitb16`.
 
 ## 5. Bounded monitoring
 
 ```bash
-tmux capture-pane -p -t inv019_bottleneck_shape -S -200
-tail -n 120 logs/inv019_controller.log
+tmux capture-pane -p -t inv019_bottleneck_shape_covvar -S -200
+tail -n 120 logs/inv019_covvar_controller.log
 pgrep -af "python.*train.py" || true
 nvidia-smi
 ```
@@ -161,6 +167,7 @@ SWEEP_DONE
 
 Each successful arm must print `ARM_DONE` only after exit 0, its
 `phase1_step15000.pt`, provenance sidecar, and checkpoint checksum exist.
+An encoder-only recovery launch prints only that encoder's start/done markers.
 
 ## 6. Recovery boundaries
 
@@ -187,5 +194,5 @@ After connecting:
 
 ```bash
 cd /workspace/hierarchal-jepa-flow-world-model
-tmux attach -t inv019_bottleneck_shape
+tmux attach -t inv019_bottleneck_shape_covvar
 ```

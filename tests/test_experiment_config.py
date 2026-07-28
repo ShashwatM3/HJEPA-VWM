@@ -284,8 +284,8 @@ def test_shipped_yaml_is_the_only_complete_runnable_recipe() -> None:
     assert experiment.config.model.decoder_blocks == 4
     assert experiment.config.train.max_steps == 15000
     assert experiment.config.train.horizon_k == 12
-    assert experiment.config.train.lambda_var == 0.0
-    assert experiment.config.train.lambda_cov == 0.0
+    assert experiment.config.train.lambda_var == 0.5
+    assert experiment.config.train.lambda_cov == 0.01
     assert experiment.config.train.lambda_sigreg == 0.0
     assert experiment.config.train.lambda_slot == 0.0
     assert experiment.config.train.lambda_recon == 1.0

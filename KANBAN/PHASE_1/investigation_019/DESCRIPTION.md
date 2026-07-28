@@ -1,9 +1,11 @@
-# Investigation 019 — Three-encoder reconstruction-only bottleneck shape sweep
+# Investigation 019 — Three-encoder covariance-plus-variance bottleneck shape sweep
 
 ## Status
 
-OPEN — launch-ready. The V-JEPA2 lane runs first, followed by DINOv3 and then SigLIP 2.
-Within each lane, four joint shape arms run concurrently on GPUs 0–3.
+IN PROGRESS — the original V-JEPA2 lane completed with covariance and variance mistakenly disabled,
+so it is retained only as no-geometry evidence and is not comparable to the corrected sweep. The
+four incorrect DINOv3 runs were stopped and deleted from W&B. Corrected DINOv3 arms run with
+covariance plus variance as the next active lane on GPUs 0–3.
 
 ## Question
 
@@ -17,17 +19,19 @@ The tested encoders are:
 2. DINOv3 ViT-B/16 (`dinov3_vitb16`);
 3. SigLIP 2 ViT-B/16 (`siglip2_vitb16`).
 
-This is a present-only, absolute cosine, raw-feature reconstruction experiment. The active
-scientific objective is reconstruction alone:
+This is a present-only, absolute cosine, raw-feature reconstruction experiment with the established
+anti-collapse geometry bundle:
 
 ```text
 lambda_recon = 1
-lambda_var = lambda_cov = lambda_sigreg = lambda_slot = 0
+lambda_var = 0.5
+lambda_cov = 0.01
+lambda_sigreg = lambda_slot = 0
 whiten_features = false
 present_recon_only = true
 ```
 
-Geometry losses remain logged as diagnostics but supply no gradient.
+Variance and covariance supply gradients; SIGReg and slot loss remain diagnostic-only.
 
 ## Axis decision
 
@@ -71,15 +75,16 @@ interaction. `D_c=128/512` and `M=512` are divisible by the configured eight att
 - Raw cosine reconstruction magnitudes are encoder-specific because the encoders expose different
   features and token semantics. Select a shape within each encoder lane; never rank encoders by
   their raw losses.
-- This experiment selects the best shape under reconstruction-only pressure. It does not claim
-  that reconstruction alone supplies the final geometry objective needed by prediction.
+- This experiment selects the best shape under reconstruction plus the established
+  covariance/variance geometry pressure. It does not claim that present-only training establishes
+  temporal prediction quality.
 
 ## Locked recipe
 
 Full EGO4D, seed 42, batch 64, 15,000 steps, three latent blocks, decoder `512×4`, absolute cosine
 target, 2,000-step reconstruction warmup, bf16/SDPA, fixed encoder revisions, no feature whitening,
-no residual target, no prediction, and no geometry regularizer. Only encoder identity, `N_c`, and
-`D_c` differ; `M=512` is fixed.
+no residual target, no prediction, `lambda_var=0.5`, and `lambda_cov=0.01`. SIGReg and slot loss
+remain off. Only encoder identity, `N_c`, and `D_c` differ; `M=512` is fixed.
 
 Execution and recovery are specified in [`GUIDE.md`](GUIDE.md). The design and decision rule are
 specified in [`SWEEP_PLAN_bottleneck_shape.md`](SWEEP_PLAN_bottleneck_shape.md).
