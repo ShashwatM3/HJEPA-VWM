@@ -286,7 +286,7 @@ def test_shipped_yaml_is_the_only_complete_runnable_recipe() -> None:
     assert experiment.config.train.horizon_k == 12
     assert experiment.config.train.lambda_var == 0.0
     assert experiment.config.train.lambda_cov == 0.0
-    assert experiment.config.train.lambda_sigreg == 10.0
+    assert experiment.config.train.lambda_sigreg == 0.0
     assert experiment.config.train.lambda_slot == 0.0
     assert experiment.config.train.lambda_recon == 1.0
     assert experiment.config.train.present_recon_only is True

@@ -385,3 +385,12 @@ Local scientific
 decoder-`512×4`, reconstruction-only recipe, selects V-JEPA2, and replaces covariance plus
 variance with `lambda_sigreg=10` alone. No W&B entry exists until launch; the W&B ID remains the
 required join key once created.
+
+## Registered sweep (2026-07-28)
+
+[Investigation 019](investigation_019/) supersedes the inactive Investigation-017 queue with a
+four-cell-per-encoder, raw reconstruction-only bottleneck design. It holds the settled internal
+width at `M=512` and runs the complete `N_c={16,64}` by `D_c={128,512}` factorial independently
+for V-JEPA2, DINOv3, and SigLIP 2. All auxiliary geometry weights and feature whitening are off.
+The encoder lanes execute in that order; four cells run concurrently on GPUs 0–3 within a lane.
+No W&B entry exists until launch.

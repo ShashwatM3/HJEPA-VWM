@@ -76,7 +76,7 @@ train:
   var_floor_std_target: 1.0  # Positive target standard deviation; reasonable range: 0.5-2.0.
   lambda_cov: 0.0  # Non-negative loss weight; recently tested: 0.0, 0.01.
   lambda_slot: 0.0  # Supported value: 0.0; nonzero previously Goodharted slot rank and requires re-investigation.
-  lambda_sigreg: 10.0  # Non-negative loss weight; previously explored range: 0.0-10.0.
+  lambda_sigreg: 0.0  # Zero for Investigation 19's reconstruction-only bottleneck sweep.
   sigreg_warmup_steps: 2000  # Non-negative integer; typical range: 0-5000.
 
   # CATEGORY: Reconstruction objectives
