@@ -1,185 +1,337 @@
-# NEW_POD — Canonical five-step RunPod bootstrap
+# NEW_POD.md - Fresh RunPod setup commands
 
-> **Purpose:** Prepare a newly deployed RunPod pod so the exact experiment `GUIDE.md` can take over.
+> **Purpose.** Copy-paste checklist for a brand-new RunPod pod attached to the
+> existing `/workspace` network volume. This is the short operational guide for
+> the repeated "fresh pod" problems: missing pip packages (`transformers`),
+> missing `tmux`, missing W&B login, and missing Hugging Face cache env vars.
 >
-> **Boundary:** New-pod setup is only the five steps in this file. Dataset checks, repository tests,
-> whitening/statistics work, Stage 0, `tmux` launch commands, training, and monitoring belong to the
-> specific run's `GUIDE.md`.
-
-Run these commands on the pod as `root`, after the `hjepa-runpod` SSH alias works. A human may run
-them in one SSH shell. An authorized coding agent may run the same commands through the alias.
-
-Use these fixed values:
-
-| Item | Value |
-|---|---|
-| SSH alias | `hjepa-runpod` |
-| Repository URL | `https://github.com/ShashwatM3/HJEPA-VWM.git` |
-| Repository path | `/workspace/hierarchal-jepa-flow-world-model` |
-| Working branch | `phase1-v0.2-frozen-encoder` |
-| Hugging Face cache | `/workspace/hf_cache` |
-| Checkpoint root | `/workspace/checkpoints` |
+> **Important:** RunPod pods are Linux. Use `apt-get` on the pod, not Homebrew.
+> `brew` is only for your Mac laptop if you are installing local tools there.
 
 ---
 
-## 1. Install system packages
+## 0. SSH Into The Pod
 
-**Pod shell — run this one command:**
+Use the exact SSH command shown in the RunPod **Connect** tab. Example shape:
+
+```bash
+ssh root@<POD_IP> -p <PORT> -i ~/.ssh/id_ed25519
+```
+
+If SSH asks for a password, check that your RunPod account has your public key
+and that your laptop key permissions are correct:
+
+```bash
+chmod 700 ~/.ssh
+chmod 600 ~/.ssh/id_ed25519
+```
+
+### Mac-only tools, if missing
+
+Run these on your **Mac laptop**, not on the pod:
+
+```bash
+# If Homebrew itself is missing, install it from https://brew.sh first.
+brew install git
+brew install openssh
+```
+
+Most fresh-pod setup happens after SSH, inside Linux, with `apt-get` and `pip`.
+
+---
+
+## 1. Install System Packages
+
+Run this on the pod every time the image is fresh. This fixes the recurring
+`tmux: command not found` issue, installs the ffmpeg executable used by the EGO4D
+chunker, and ensures basic tooling is available.
 
 ```bash
 apt-get update -qq
-```
-
-**Pod shell — run this one command:**
-
-```bash
 apt-get install -y git tmux curl ca-certificates ffmpeg
 ```
 
-This is the step that makes `command -v tmux` return a path such as `/usr/bin/tmux`.
+Optional quality-of-life tools:
+
+```bash
+apt-get install -y htop nano
+```
 
 ---
 
-## 2. Create cache and checkpoint paths
+## 2. Set Persistent Cache Paths
 
-**Pod shell — run this one command:**
+Keep Hugging Face downloads on the persistent `/workspace` volume so the V-JEPA
+2 checkpoint does not redownload unnecessarily.
 
 ```bash
 mkdir -p /workspace/hf_cache /workspace/checkpoints
-```
-
-**Pod shell — run this one command:**
-
-```bash
 export HF_HOME=/workspace/hf_cache
 ```
 
-The `export` applies to the current shell. Each run-specific `GUIDE.md` must export `HF_HOME` again
-before model downloads, statistics jobs, Stage 0, or training.
+For the current shell, the `export` is enough. If you want it to persist across
+new SSH sessions on this pod:
+
+```bash
+grep -q "HF_HOME=/workspace/hf_cache" ~/.bashrc || echo 'export HF_HOME=/workspace/hf_cache' >> ~/.bashrc
+```
 
 ---
 
-## 3. Clone the repository and select the working branch
+## 3. Get The Code
 
-This is the canonical path when the repository does not exist on the new pod.
+The expected repo path on the network volume is:
 
-If `/workspace/hierarchal-jepa-flow-world-model` already exists, do not clone over it. An agent must
-inspect its branch, commit, and worktree first; a human should stop and ask the agent to reconcile it.
+```bash
+/workspace/hierarchal-jepa-flow-world-model
+```
 
-**Pod shell — run this one command:**
+If the repo already exists:
+
+```bash
+cd /workspace/hierarchal-jepa-flow-world-model
+git fetch origin
+git checkout phase1-v0.2-frozen-encoder
+git pull origin phase1-v0.2-frozen-encoder
+```
+
+If the repo does not exist yet:
 
 ```bash
 cd /workspace
-```
-
-**Pod shell — run this one command:**
-
-```bash
 git clone https://github.com/ShashwatM3/HJEPA-VWM.git hierarchal-jepa-flow-world-model
-```
-
-**Pod shell — run this one command:**
-
-```bash
 cd /workspace/hierarchal-jepa-flow-world-model
-```
-
-**Pod shell — run this one command:**
-
-```bash
 git checkout phase1-v0.2-frozen-encoder
 ```
 
-The run-specific guide or agent must still verify the exact intended commit before training. Never
-use `git reset --hard`, `git clean`, or force-push as a bootstrap shortcut.
+GitHub HTTPS authentication uses a **personal access token** as the password.
+Your normal GitHub password will not work if prompted.
+
+Verify the code version:
+
+```bash
+git status
+git log --oneline -5
+```
 
 ---
 
-## 4. Install the repository's Python requirements
+## 4. Install Python Packages
 
-The dependency import check is not part of the canonical bootstrap. The run-specific guide owns any
-imports, tests, smoke checks, and scientific preflights it requires.
+This fixes the recurring:
 
-**Pod shell — run this one command:**
+```text
+ModuleNotFoundError: No module named 'transformers'
+```
+
+Run:
 
 ```bash
 cd /workspace/hierarchal-jepa-flow-world-model
-```
-
-**Pod shell — run this one command:**
-
-```bash
 python3 -m pip install --upgrade pip
-```
-
-**Pod shell — run this one command:**
-
-```bash
 python3 -m pip install -r requirements.txt
 ```
 
+Quick dependency check:
+
+```bash
+python3 - <<'PY'
+import torch, transformers, decord, wandb
+from transformers import DINOv3ViTModel, Siglip2VisionModel, VJEPA2Model
+print("torch:", torch.__version__)
+print("transformers:", transformers.__version__)
+assert transformers.__version__ == "4.57.6"
+print("planned encoder architectures OK")
+print("decord OK")
+print("wandb OK")
+PY
+```
+
+`transformers==4.57.6` is intentional. Do not upgrade one adapter lane independently: a
+dependency change invalidates every earlier real-adapter result.
+
 ---
 
-## 5. Authenticate W&B
+## 5. Log Into W&B
 
-### Human-interactive path
-
-Run this inside the pod shell:
+Run once per fresh pod image:
 
 ```bash
 wandb login
 ```
 
-When W&B waits for input, paste the API key directly into that terminal and press Return. Do not
-paste the key into an agent chat, committed file, command argument, or command transcript.
+Paste your W&B API key when prompted.
 
-If you are not already inside the pod shell, run this one command in Mac Terminal instead:
+If you are only testing and do not want W&B uploads:
 
 ```bash
-ssh -t hjepa-runpod 'wandb login'
+export WANDB_MODE=offline
 ```
 
-Then paste the API key directly into the visible W&B prompt.
+---
 
-### Coding-agent path
+## 6. Verify Data Is Present
 
-A coding agent may invoke `wandb login`, but it must not request or paste an API key received through
-chat. If no W&B credential is already configured, the agent must pause and give the human the exact
-Mac Terminal command above. Resume the agent after the human confirms that login succeeded.
+The project expects:
 
-For fully unattended bootstrap, configure a RunPod Secret before deployment and map it to the pod's
-`WANDB_API_KEY` environment variable. W&B checks `WANDB_API_KEY` before falling back to its settings,
-`.netrc`, or an interactive prompt. The agent may verify this authentication without printing the
-key.
+```text
+/workspace/data/ssv2/train
+/workspace/data/ssv2/validation
+/workspace/data/ssv2_tiny/train
+/workspace/data/ssv2_tiny/validation
+```
 
-Official references:
+Count the clips:
 
-- [W&B `wandb login` authentication order](https://docs.wandb.ai/models/ref/cli/wandb-login)
-- [W&B `WANDB_API_KEY` environment variable](https://docs.wandb.ai/models/track/environment-variables)
-- [RunPod Secrets](https://docs.runpod.io/pods/templates/secrets)
+```bash
+python3 - <<'PY'
+from pathlib import Path
+from config import DataConfig
+
+d = DataConfig()
+print("data_root:", d.data_root)
+for name, root in [("ssv2", d.full_root), ("ssv2_tiny", d.tiny_root)]:
+    for split in ["train", "validation"]:
+        p = Path(root) / split
+        n = len(list(p.glob("*.webm"))) if p.exists() else "MISSING DIR"
+        print(f"{name}/{split}: {n} ({p})")
+PY
+```
+
+Expected approximate counts from the current volume:
+
+```text
+ssv2/train: 168913
+ssv2/validation: 24777
+ssv2_tiny/train: 4002
+ssv2_tiny/validation: 348
+```
+
+Verify the actual dataloader:
+
+```bash
+python3 -c "from data import smoke_test_dataloader; smoke_test_dataloader()"
+```
+
+For the full dataset dataloader:
+
+```bash
+python3 - <<'PY'
+import torch
+from config import Config
+from data import build_dataloader
+
+cfg = Config()
+cfg.data.dataset = "ssv2"
+loader = build_dataloader(cfg, "train", batch_size=2)
+expected = (cfg.model.t_ctx, 3, cfg.model.h, cfg.model.w)
+for i, (ctx, tgt) in enumerate(loader):
+    print(ctx.shape, tgt.shape, float(ctx.min()), float(ctx.max()))
+    assert ctx.shape[1:] == expected and tgt.shape[1:] == expected
+    assert torch.isfinite(ctx).all() and torch.isfinite(tgt).all()
+    if i == 1:
+        break
+print("ssv2 full dataloader OK")
+PY
+```
 
 ---
 
-## Bootstrap complete — switch to the exact run guide
+## 7. Stage 0 Preflight
 
-After W&B authentication succeeds, stop using this file. Read and execute the exact `GUIDE.md` in
-the current KANBAN investigation/run folder.
+Always run this before a training job:
 
-That run guide owns all subsequent repository verification, data checks, required artifacts,
-statistics, tests, Stage 0, `tmux` naming, W&B naming, training launch, early tripwires, and monitoring.
+```bash
+cd /workspace/hierarchal-jepa-flow-world-model
+export HF_HOME=/workspace/hf_cache
+python3 encoders.py --smoke --encoder vjepa2_vitl16 --batch-size 1 \
+  --hf-cache-dir /workspace/hf_cache
+python3 train.py --stage0-only
+```
 
-Saying “bootstrap/setup the new pod” authorizes only steps 1–5 above. It does not authorize starting
-a paid training process. Launch authority must name the run guide and explicitly say to start it.
+The encoder smoke must report requested/resolved revision
+`b3c1679b7c34d3255ef3547f27c7b226aefab26f`, output shape `[1,1024,1024]`, finite values,
+325,971,328 parameters, and zero trainable parameters. Peak CUDA memory is reported on a
+GPU. DINOv3 and SigLIP2 aliases intentionally fail until their separate adapter lanes pin
+tested immutable revisions.
+
+If this fails with `No module named 'transformers'`, repeat section 4.
 
 ---
 
-## Minimal troubleshooting
+## 8. Start A Long Run In tmux
 
-| Symptom | Correct response |
+Use `tmux` so the run survives SSH disconnects.
+
+```bash
+tmux new -s hjepa
+```
+
+Inside tmux:
+
+```bash
+cd /workspace/hierarchal-jepa-flow-world-model
+export HF_HOME=/workspace/hf_cache
+python3 train.py --data ssv2 --steps 5000 --log-every 50 --diag-every 250 --lambda-slot 0.25 --lambda-cov 0.0027
+```
+
+Detach without killing the run:
+
+```text
+Ctrl-b, then d
+```
+
+Reattach later:
+
+```bash
+tmux attach -t hjepa
+```
+
+If you need a full 15k-step run instead of the 5k diagnostic:
+
+```bash
+python3 train.py --data ssv2 --steps 15000 --log-every 50 --diag-every 500 --lambda-slot 0.25 --lambda-cov 0.0027
+```
+
+---
+
+## 9. Metrics To Watch
+
+For the current slot-collapse fix, watch these together:
+
+```text
+L_flow
+L_var
+L_cov
+L_slot
+c_slot_diversity_rank
+c_attn_entropy_min
+c_effective_rank
+coarse_vs_copy_ratio
+grad_norm
+grad_skipped
+```
+
+Interpretation:
+
+- `c_slot_diversity_rank` should rise from the bad Run-A value (~1.6/32).
+- `c_attn_entropy_min` should fall below near-uniform (~0.96-0.99).
+- `c_effective_rank` should rise above the collapsed range (~5-9/256).
+- `coarse_vs_copy_ratio` must not regress badly; this is the anti-Goodhart guard.
+- `grad_skipped` should stay 0.
+
+---
+
+## 10. Common Fresh-Pod Failures
+
+| Symptom | Fix |
 |---|---|
-| `tmux` is not found | Repeat step 1. |
-| Repository destination already exists | Do not clone over it; inspect and reconcile it. |
-| GitHub asks for credentials | Stop for approved GitHub authentication; never paste a token into agent chat. |
-| Python reports a missing package | Repeat step 4 using the checked-out branch's `requirements.txt`. |
-| W&B waits for a key | Complete step 5 directly in a human-controlled terminal. |
-| Dataset, artifact, Stage 0, or training check fails | Follow the exact run `GUIDE.md`; it owns those checks. |
+| `ModuleNotFoundError: No module named 'transformers'` | `python3 -m pip install -r requirements.txt` |
+| `tmux: command not found` | `apt-get update -qq && apt-get install -y tmux` |
+| `FileNotFoundError: ... 'ffmpeg'` from `chunk_ego4d.py` | `apt-get update -qq && apt-get install -y ffmpeg` |
+| V-JEPA checkpoint redownloads every pod | `export HF_HOME=/workspace/hf_cache` |
+| Encoder smoke says an alias is reserved/not implemented | The checkout predates the pinned adapter lanes; sync the expected commit and never bypass it with `main` |
+| W&B asks for auth / no metrics online | `wandb login` |
+| GitHub asks for password | Use a GitHub personal access token as HTTPS password |
+| Data count is 0 / missing dir | Wrong volume attached, or `/workspace/data` layout missing |
+| SSH dies and run stops | Launch inside `tmux` |

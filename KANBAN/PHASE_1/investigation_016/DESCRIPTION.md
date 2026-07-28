@@ -1,10 +1,11 @@
-# Investigation 016 — EGO4D transfer of run 057 (whitened AE + cov/var)
+# Investigation 016 — EGO4D transfer and encoder-substrate studies
 
 ## Status
 
-OPEN
+CLOSED — the original transfer question and its descendant substrate controls are recorded through
+local scientific run 071. Remaining latent-shape work belongs to investigation 017.
 
-## Question
+## Original question
 
 Does the settled inv015 present-only recipe from run 057
 (`ae_latent_stack_whiten_abs_recon_cov_var`, W&B `cdvp6hou`) — absolute whitened
@@ -14,6 +15,14 @@ SIGReg — transfer cleanly onto the EGO4D sibling corpus?
 Single intended delta vs the SSv2 control: `--data ego4d` (plus the matching EGO4D
 whitening stats file). Architecture, loss weights, seed, steps, and decoder capacity
 stay byte-identical.
+
+## Scope evolution
+
+The original transfer failed, then exposed measurement, bottleneck-capacity, whitening,
+late-projection, and encoder-substrate questions. Those descendant studies remain here to preserve
+their causal chronology. They are not additional deltas in one experiment. The final branch
+contains raw V-JEPA2, SigLIP 2, and DINOv3 controls under the common present-reconstruction
+pipeline; none of the DINO runs activates future prediction.
 
 ## Context
 
@@ -97,25 +106,29 @@ Those changes miss the preregistered material-effect thresholds, so M=512 is the
 width. Full paired evidence:
 [`run_065.../OBSERVATIONS.md`](run_065_unwhitened_internal_memory_m1024/OBSERVATIONS.md).
 
-## Encoder-substrate comparison at unwhitened M=512
+## Raw geometry and encoder controls
 
-[`run_066_siglip2_unwhitened_internal_memory_m512/`](run_066_siglip2_unwhitened_internal_memory_m512/)
-(PLANNED) takes the selected M=512 arm and swaps **only** the frozen encoder from V-JEPA 2 ViT-L/16
-(`vjepa2_vitl16`) to the standard SigLIP 2 ViT-B/16 (`siglip2_vitb16`
-@ `3f9f96cb90da5dbc758b01813f2f6f1aee24c1ab`). It keeps the unwhitened, present-only, absolute
-cosine recipe with `lambda_recon=1`, `M=512`, `N_c=32`, the 512-by-4 decoder, and every
-variance/covariance/SIGReg/slot weight at zero. The single intended delta versus
-[`run_064`](run_064_unwhitened_internal_memory_m512/) (W&B `4biwq87o`) is the encoder alias +
-revision, so this is the first same-commit V-JEPA-vs-SigLIP control at this operating point. Because
-the two encoders emit different `D_e`/`N_e`/layout feature spaces, raw cross-encoder cosine values
-are not directly comparable; the defensible comparison is within-run diagnostics. This run is a
-low-architectural-significance diagnostic to measure encoder-substrate effect, documented for
-provenance. It does not displace the width conclusion above.
+Runs 66–71 close the immediate substrate branch around the selected `M=512`, `N_c=32`,
+`D_c=256` architecture:
 
-## DINOv3 Run 67–69 sequence
+- [Run 66](run_066_unwhitened_internal_memory_m512_cov_var/) restored covariance plus variance on
+  raw V-JEPA2 features and remained healthy until its intentional step-10,950 stop.
+- [Run 67](run_067_unwhitened_siglip2_m512_cov_var/) transferred that geometry recipe to SigLIP 2
+  and remained stable until its intentional step-11,000 stop.
+- [Run 68](run_068_unwhitened_siglip2_m512_no_geometry_regularizers/) removed both geometry terms;
+  W&B ended externally at step 14,350 after stable low-rank, code-dependent training.
+- [Run 69](run_069_unwhitened_dinov3_m512_no_geometry_regularizers/) proved the pinned DINOv3
+  adapter and completed all 15,000 present-reconstruction steps. It was also low-rank but
+  code-dependent.
+- [Run 70](run_070_whitened_dinov3_m512_cov_var/) completed the DINOv3 center with fixed feature
+  whitening plus covariance and variance. It passes the recorded-batch geometry thresholds and
+  learned a positive exact-chunk reconstruction gap.
+- [Run 71](run_071_unwhitened_dinov3_m512_cov_var/) completed the exact raw/unwhitened DINOv3
+  `32×256` geometry-active center. It is decodable and rank-rich but fails the recorded-batch
+  spread/alignment thresholds.
 
-- [`run_067_dinov3_unwhitened_internal_memory_m512/`](run_067_dinov3_unwhitened_internal_memory_m512/) completed 15,000 steps as W&B `it7sq8nz`; exact final snapshot and checkpoint identity are recorded, while preregistered late-window medians remain pending.
-- [`run_068_dinov3_whitened_internal_memory_m512_cov_var/`](run_068_dinov3_whitened_internal_memory_m512_cov_var/) was launched. Preliminary qualitative reporting says whitening remained active, reconstruction worsened to approximately `0.3`, effective rank improved, and cross-video cosine decreased. Exact identity, completion, and metrics remain pending.
-- [`run_069_dinov3_unwhitened_internal_memory_m512_cov_var/`](run_069_dinov3_unwhitened_internal_memory_m512_cov_var/) completed successfully as W&B `fiactcw6`, with final checkpoint SHA-256 `fbd4bda4c75780c06b35c837a1291218c4525c1549baf978ef3561eaf81e7cb8`. Its reconstruction is consistent with whitening contributing to Run 68 degradation, qualified by the absence of exact verified Run 68 metrics.
-
-The broader sequence is confounded by the combination of whitening and late-projection architecture changes; only the matched Run 68/69 comparison is intended to isolate whitening.
+Raw losses are encoder-specific and do not rank V-JEPA2, SigLIP 2, and DINOv3 quality. These runs
+establish operational present-reconstruction substrates. The external slot/width question now
+moves to [investigation 017](../investigation_017/), where covariance and variance are enabled
+throughout all three encoder lanes. Run 71 supplies DINO's exact scientific center configuration;
+the eight other DINO shapes remain untried.

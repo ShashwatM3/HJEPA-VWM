@@ -6,6 +6,10 @@
 
 **Decision:** use this as the DINO arm of the first encoder experiment.
 
+**Validated implementation (2026-07-20):** private adapter pinned to
+`5931719e67bbdb9737e363e781fb0c67687896bc`; authenticated CUDA and a complete 15,000-step EGO4D
+training run confirmed the `(B,2048,768)` dense-token contract.
+
 ## Executive decision
 
 DINOv3 ViT-B/16 is the best quality/weight trade-off for this repository. It is the

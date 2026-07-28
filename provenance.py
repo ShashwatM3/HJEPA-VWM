@@ -580,6 +580,8 @@ def build_run_provenance(
     common_config.pop("encoder", None)
     common_config.pop("hf_cache_dir", None)
     common_config.pop("checkpoint_dir", None)
+    common_config.pop("experiment_config_path", None)
+    common_config.pop("experiment_config_sha256", None)
     common_config.get("train", {}).pop("whiten_stats_path", None)
     encoder_runtime_contract = {
         "input_frames": encoder_spec.input_frames,

@@ -26,4 +26,15 @@ The first pair is intentionally shape-matched: both frame encoders produce an
 present-only reconstruction is a substrate test; a later full-prediction control is needed
 to evaluate the loss of V-JEPA2's tubelet-level temporal modeling.
 
-Implementation status (updated 2026-07-26): the encoder-independent data/model/training, determinism/checkpoint, whitening/rank/drift, artifact, and preflight stages are complete. `encoders.py` provides pinned real V-JEPA2, SigLIP 2, and DINOv3 ViT-B/16 adapters on `transformers==4.57.6`. DINOv3 defaults to validated immutable revision `5931719e67bbdb9737e363e781fb0c67687896bc`; an explicit immutable revision may still override it. Real-model validation is manual smoke evidence, not CI coverage. CUDA/data/stats/resource and paid-run evidence remain separate RunPod gates in `GUIDE_encoders.md`.
+Implementation status (2026-07-21): the encoder-independent data/model/training,
+determinism/checkpoint, whitening/rank/drift, artifact, and preflight stages are complete.
+`encoders.py` provides pinned real V-JEPA2, SigLIP 2, and DINOv3 adapters on
+`transformers==4.57.6`. DINOv3 is pinned at
+`5931719e67bbdb9737e363e781fb0c67687896bc`; its authenticated CUDA path and complete
+EGO4D training path have both passed. Dataset identities include container frame counts,
+exact resume consumes the saved sampler position, resource reports include CUDA-event
+examples/frames/tokens rates, and frame encoders receive pre-concatenation frame rank/norm
+diagnostics. Any new checkpoint, preprocessing, or dependency revision must repeat the relevant
+real-adapter gates in `GUIDE_encoders.md`.
+The DINO weights remain gated, so each new runtime still needs authorized Hugging Face access
+even though the source revision is pinned.

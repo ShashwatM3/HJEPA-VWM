@@ -168,3 +168,87 @@ projection/mixer width, or whitening as bottlenecks; it specifically says that a
 query slots is not the sensible next capacity lever. Proceed to the colleague-directed
 no-whitening EGO4D reconstruction arm and, separately, a channel-width/`D_c` experiment with a
 healthy-geometry gate. Alternate encoders remain an orthogonal substrate experiment.
+
+---
+
+## 2026-07-17 independent live-W&B re-audit — initialization and loss-scaling correction
+
+This dated addendum preserves the original read above and records two control limitations found by
+reconciling the downloaded W&B artifacts with an exact replay of the production constructor. The
+full audit is stored at the human-requested path in investigation 015:
+[`run_055.../ANALYSIS.md`](../../investigation_015/run_055_ae_latent_stack_whiten_abs_recon/ANALYSIS.md#2026-07-17-cross-investigation-addendum--live-wb-audit-of-the-ego4d-bottleneck-slot-capacity-sweep).
+
+### What the live evidence confirms
+
+- The API histories contain exactly 300 training rows and 30 diagnostic rows per arm.
+- Provenance differs in only six leaves: `N_c`, its derived initialization/common hashes,
+  checkpoint directory, and display name. Code, data/order, encoder features, whitening payload,
+  schedule, and seed are genuinely controlled.
+- All three downloaded whitening files are byte-identical.
+- All output logs contain 300 metric records and no fatal error, warning, OOM, skipped update, or
+  AGC activation.
+- The 32-slot arm exactly reproduces run 060 across all 46 scientific history columns at all 300
+  logged steps. This validates same-shape determinism and the 32-slot control.
+- The late 32-to-128 training-median gain is real within this trajectory: `0.01404935`
+  (`2.07513837%`), with the 128-slot arm lower on 259 of 260 post-warmup matched batches.
+
+### Correction 1 — same seed did not produce identical shared weights
+
+The description “byte-identical controls except `N_c` and its derived initialization identity” is
+correct for source/config/data but too strong for parameter values. `Bottleneck.__init__` creates
+the `N_c x 256` orthogonal query matrix before the latent blocks, flow, and decoder. Its
+shape-dependent RNG consumption shifts later initializations.
+
+An exact replay of commit-equivalent production code and the sweep config found:
+
+| Module | State tensors | Identical | Shape changed | Same shape, different values |
+|---|---:|---:|---:|---:|
+| B | 93 | 65 | 1 | 27 |
+| F_c | 70 | 28 | 2 | 40 |
+| D | 59 | 29 | 0 | 30 |
+
+`F_c` is inactive, but the differing B latent-block and D attention parameters are active. The
+sentence above saying the 64-slot collapse is “not merely an initialization artifact” is therefore
+superseded: its late emergence rules out only a step-zero metric illusion, not an initialization-
+selected training basin. With one seed per shape, slot-count and initialization effects cannot be
+separated.
+
+### Correction 2 — fixed `lambda_cov` is not fixed effective geometry pressure
+
+`L_cov` pools `B*N_c` slot rows over feature channels. Learned orthogonal slot identities make it
+easier to satisfy as slots are added. At step zero, before reconstruction is active:
+
+| `N_c` | Raw `L_cov` | Weighted covariance | Total objective |
+|---:|---:|---:|---:|
+| 32 | `6.72580338` | `0.06725803` | `0.56725800` |
+| 64 | `2.93429971` | `0.02934300` | `0.52934301` |
+| 128 | `0.99159271` | `0.00991593` | `0.50991595` |
+
+Pooled rank is similarly mechanical at initialization: approximately 31, 63, and 127 while
+example std is approximately zero and example cosine is one. The higher late pooled rank at 128
+cannot be interpreted as content capacity without the flattened example metrics and shuffled-code
+test.
+
+### Fixed-batch baseline correction
+
+The untrained fixed-batch losses are `1.01626515`, `1.01043403`, and `1.00827813`; the final values
+are `0.67091203`, `0.67033505`, and `0.66532779`. The 128-slot arm finishes `0.00558424` below 32,
+but starts `0.00798702` below it and learns `0.00240278` less improvement relative to its own
+initial scaffold. This does not erase the paired training-distribution gain; it means the fixed-
+batch endpoint is not an independent capacity win.
+
+### Revised causal wording
+
+The decision remains **do not run 256**, but the generalization is narrower:
+
+> In this one-seed, absolute-whitened, covariance-regularized implementation, increasing `N_c`
+> produces a small, coherent training-loss improvement without healthy recorded-batch specificity.
+> The realized larger-slot arms fail the registered joint criterion, so more query slots are not
+> the leading next lever. The experiment does not isolate activation capacity from initialization
+> coupling or `N_c`-dependent geometry-loss scaling, and it does not rule out channel width,
+> `D_c`, whitening, or decoder capacity.
+
+The cheapest decisive next measurement is source-diverse checkpoint re-evaluation with verified
+cross-source code derangement. After that, test the 64-slot anomaly across additional seeds or
+module-local initialization streams before calling it structural. Keep the queued no-whitening
+32-slot arm and a separate mixer/`D_c` experiment as the actual reconstruction-floor probes.

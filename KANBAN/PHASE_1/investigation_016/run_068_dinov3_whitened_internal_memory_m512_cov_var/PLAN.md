@@ -1,8 +1,8 @@
 # Plan — Run 68, DINOv3 whitened internal-memory M=512 covariance plus variance
 
-## Execution state
-
-The run was launched. Exact completion and artifact identities remain pending; the pre-launch plan below is retained as the intended recipe.
+> **Local-label/status correction (2026-07-27):** this plan produced the experiment recorded
+> canonically as local [Run 070](../run_070_whitened_dinov3_m512_cov_var/), W&B `qqozribu`.
+> The plan remains an audit trail, not a current launch instruction.
 
 ## Scope
 
@@ -17,11 +17,8 @@ encoder-bound whitening path. No model or training-code edit is part of this exp
 
 ## Pre-launch work
 
-1. Verify a clean branch `codex/task3-dino-run066` (or an equivalent branch) whose `HEAD`
-   descends from base commit `083cf8a6e87168702efe46ac6bfe485756dcb439`, with every committed
-   change since that base restricted to the Run 067/068 KANBAN documentation paths; abort
-   validation on any code, configuration, or training-script drift, then pass the repository test
-   suite.
+1. Verify clean branch `codex/task3-dino-run066` at commit
+   `083cf8a6e87168702efe46ac6bfe485756dcb439` and pass the repository test suite.
 2. Prove the real pinned DINOv3 adapter on CUDA and revalidate full EGO4D completeness.
 3. Resource-preflight the exact trainable recipe at physical batch 64, first without a whitening
    artifact, to settle frame microbatch 32 or the documented lower ladder.
@@ -53,10 +50,8 @@ statistics are fit; physical batch 64 is locked.
 
 ## Abort gates
 
-Do not launch if the worktree is dirty, the base commit is not an ancestor of `HEAD`, any
-committed change since the base falls outside the Run 067/068 KANBAN documentation paths, any
-code/configuration/training-script drift appears, tests fail, the DINO adapter identity is wrong,
-EGO4D completeness fails, physical batch 64 lacks headroom, stats metadata mismatches,
+Do not launch if the worktree is dirty, source SHA is wrong, tests fail, the DINO adapter identity
+is wrong, EGO4D completeness fails, physical batch 64 lacks headroom, stats metadata mismatches,
 whitening-active preflight or Stage 0 fails, exact provenance differs unexpectedly, W&B strict
 initialization fails, or any command attempts to resume the unwhitened checkpoint.
 

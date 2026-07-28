@@ -32,6 +32,25 @@ def test_cli_sets_bottleneck_internal_width_before_stage0(
     assert captured["cfg"].model.bottleneck_mixer_dim == 512
 
 
+def test_cli_sets_external_latent_shape_before_stage0(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Expose both external bottleneck axes through the public CLI."""
+    train = importlib.import_module("train")
+    captured = {}
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["train.py", "--stage0-only", "--n-c", "16", "--d-c", "512"],
+    )
+    monkeypatch.setattr(train, "run_stage0", lambda cfg: captured.setdefault("cfg", cfg))
+
+    train.main()
+
+    assert captured["cfg"].model.n_c == 16
+    assert captured["cfg"].model.d_c == 512
+
+
 @pytest.mark.parametrize("width", [0, 510])
 def test_finalize_rejects_invalid_bottleneck_internal_width(width: int) -> None:
     """Reject widths that cannot form the configured attention heads.
@@ -48,6 +67,75 @@ def test_finalize_rejects_invalid_bottleneck_internal_width(width: int) -> None:
 
     with pytest.raises(ValueError, match="bottleneck_mixer_dim"):
         train.finalize_training_config(cfg)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "match"),
+    [("n_c", 0, "n_c"), ("d_c", 0, "d_c"), ("d_c", 250, "f_c_heads")],
+)
+def test_finalize_rejects_invalid_external_latent_shape(
+    field: str, value: int, match: str
+) -> None:
+    """Reject empty shapes and widths incompatible with coarse-flow attention."""
+    config = importlib.import_module("config")
+    train = importlib.import_module("train")
+    cfg = config.Config()
+    setattr(cfg.model, field, value)
+
+    with pytest.raises(ValueError, match=match):
+        train.finalize_training_config(cfg)
+
+
+@pytest.mark.parametrize(
+    ("n_c", "d_c"),
+    [
+        (16, 128),
+        (16, 256),
+        (16, 512),
+        (32, 128),
+        (32, 256),
+        (32, 512),
+        (64, 128),
+        (64, 256),
+        (64, 512),
+    ],
+)
+def test_phase1_modules_support_external_latent_shape_grid(n_c: int, d_c: int) -> None:
+    """Exercise B, F_c, and D across every Investigation-17 sweep shape."""
+    torch = pytest.importorskip("torch")
+    config = importlib.import_module("config")
+    models = importlib.import_module("models")
+    cfg = config.Config()
+    cfg.model.t_ctx = 4
+    cfg.model.h = 32
+    cfg.model.w = 32
+    cfg.model.d_e = 16
+    cfg.model.n_c = n_c
+    cfg.model.d_c = d_c
+    cfg.model.bottleneck_mixer_dim = 32
+    cfg.model.bottleneck_cross_attn_heads = 8
+    cfg.model.bottleneck_latent_blocks = 1
+    cfg.model.f_c_blocks = 1
+    cfg.model.f_c_heads = 8
+    cfg.model.decoder_dim = 32
+    cfg.model.decoder_blocks = 1
+    cfg.model.decoder_heads = 8
+
+    _, bottleneck, _, coarse_flow, decoder = models.build_phase1_modules(
+        cfg, load_encoder=False
+    )
+    detailed = torch.randn(1, cfg.model.n_ctx, cfg.model.d_e)
+    abstract = bottleneck(detailed)
+    predicted = coarse_flow(
+        torch.randn_like(abstract),
+        torch.tensor([0.5]),
+        abstract,
+        condition_drop=torch.zeros(1, dtype=torch.bool),
+    )
+    reconstructed = decoder(abstract)
+
+    assert abstract.shape == predicted.shape == (1, n_c, d_c)
+    assert reconstructed.shape == (1, cfg.model.n_ctx, cfg.model.d_e)
 
 
 def test_config_exposes_locked_phase1_constants(monkeypatch):

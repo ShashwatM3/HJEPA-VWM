@@ -103,6 +103,70 @@ values are not directly comparable, and this combined pair cannot separately att
 removal or late projection. Full table:
 [`run_065.../OBSERVATIONS.md`](run_065_unwhitened_internal_memory_m1024/OBSERVATIONS.md).
 
-## 2026-07-27 — DINOv3 whitening ablation completed
+## 2026-07-21 — W&B reconciliation through the DINOv3 substrate run
 
-Run 67 is complete with exact final snapshot evidence but pending late-window extraction. Run 68 retains only preliminary qualitative evidence: whitening active, reconstruction approximately `0.3`, effective rank improved, and cross-video cosine decreased. Matched unwhitened Run 69 completed successfully as W&B `fiactcw6`; its final `L_recon=0.11770` and `L_recon_present=0.13343` are consistent with whitening contributing to the Run 68 reconstruction degradation. This remains qualified because Run 68 exact metrics are not verified in the repository.
+The live project contains 70 W&B entries. Scientific runs 66 and 67 were intentionally stopped
+while healthy. Run 68 (`j7a3tzj5`) is no longer running: W&B state is `crashed` after external
+termination at step 14,350, with no preceding optimizer instability. Its late six-diagnostic
+medians were correct/shuffled reconstruction `0.2101/0.2895`, gap `0.0795`, std `0.255`, cosine
+`0.912`, and effective rank `20.08`—stable, code-dependent, and geometrically contracted.
+
+The previously unindexed DINOv3 run 69 (`it7sq8nz`) finished all 15,000 steps on pinned revision
+`5931719e67bbdb9737e363e781fb0c67687896bc`. Late medians were correct/shuffled reconstruction
+`0.1148/0.1808`, gap `0.0661`, std `0.3329`, cosine `0.8699`, effective rank `14.60`, and centered
+slot rank `10.51`, with zero skipped/nonfinite/warned updates. Its verdict is **LOW-RANK DECODABLE;
+GLOBAL COLLAPSE INDETERMINATE** because the diagnostic batch is single-source. Full evidence:
+[`run_069.../ANALYSIS.md`](run_069_unwhitened_dinov3_m512_no_geometry_regularizers/ANALYSIS.md).
+
+Together, the raw no-geometry V-JEPA2, SigLIP 2, and DINOv3 results show that the revised
+late-projection bottleneck can carry exact-chunk information, but reconstruction alone does not
+hold healthy external geometry. Runs 66/67 show covariance plus variance materially opens the
+code, although the equilibrium remains encoder-dependent. This motivates the three-lane shape
+sweep in [investigation 017](../investigation_017/).
+
+## 2026-07-26 — DINOv3 geometry arms completed; investigation closed
+
+The live W&B project now contains 75 entries. DINO smoke `lwx0mu34` finished its 100-step
+operational gate, followed by two full 15,000-step present-only runs on clean commit `083cf8a`:
+
+- local [Run 70](run_070_whitened_dinov3_m512_cov_var/), W&B `qqozribu`, uses the fixed DINO
+  whitening payload with `lambda_var=0.5` and `lambda_cov=0.01`;
+- local [Run 71](run_071_unwhitened_dinov3_m512_cov_var/), W&B `fiactcw6`, keeps the same
+  geometry terms but reconstructs raw/unwhitened DINO features.
+
+Both runs finished with zero skipped, nonfinite, or instability-warning updates and recorded final
+checkpoint hashes. Both are strictly present-only (`prediction_active=0`, `L_flow=0`,
+`L_recon_pred=0`), so they are not DINO prediction, full-mode memory, or future-target evidence.
+
+Late six-diagnostic medians:
+
+| Metric | Run 70 whitened | Run 71 unwhitened |
+|---|---:|---:|
+| correct-code reconstruction | 0.34871 | 0.13382 |
+| rolled-code reconstruction | 0.45704 | 0.17961 |
+| exact-chunk gap | 0.10831 | 0.04584 |
+| `c_std_mean` | 0.80948 | 0.62217 |
+| within-source pair cosine | 0.49264 | 0.68489 |
+| effective rank | 67.61 | 69.00 |
+| centered slot rank | 21.25 | 29.03 |
+| dead-dimension fraction | 0 | 0 |
+
+Run 70 receives **STRONG PRESENT REPRESENTATION ON THE RECORDED WITHIN-SOURCE BATCH; GLOBAL
+CROSS-SOURCE SPECIFICITY UNMEASURED**: reconstruction improved, rank exceeded 60, std reached the
+healthy band, pair cosine fell just below 0.5, and the exact-chunk gap was positive. Run 71
+receives **COLLAPSED REP ON THE RECORDED WITHIN-SOURCE BATCH; GLOBAL COLLAPSE INDETERMINATE**:
+rank and slot diversity remained high, but std stayed below 0.8 and pair cosine remained well
+above 0.5.
+
+The raw reconstruction magnitudes are not a whitening-quality score because the two runs decode
+different target distributions. Their geometry and dependence read is still informative: under
+this coefficient bundle, whitening changes the DINO equilibrium materially. The fixed batch
+contains only one EGO4D source UID, so neither result establishes global video specificity.
+
+The ordinary W&B `model` block still serializes `d_e=1024` and V-JEPA compatibility fields.
+Resolved provenance is authoritative: both runs used DINOv3 feature width 768, the pinned
+revision `5931719e67bbdb9737e363e781fb0c67687896bc`, and feature fingerprint
+`963cf988fb16b1e3971f952ade8afe90b29cef7dfd7103e4f312dada5c0eb415`.
+
+This closes investigation 016. Run 71 supplies the exact raw/unwhitened DINO `32×256` scientific
+configuration for investigation 017; the remaining shape contrasts stay open there.

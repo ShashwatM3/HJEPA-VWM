@@ -291,3 +291,566 @@ neither passes nor fails the Phase 1 copy and batch-mean gates.
    probe as the monitor that tells us whether the geometry terms preserved or destroyed
    the content routing. The open question is only the combination, since the geometry
    terms alone are known to produce high ranks.
+
+---
+
+# 2026-07-17 cross-investigation addendum — live W&B audit of the EGO4D bottleneck slot-capacity sweep
+
+> This appendix is intentionally preserved in the path requested by the human. It does **not**
+> reinterpret run 055 as part of the slot sweep. Run 055 is the SSv2, 32-slot, zero-geometry,
+> absolute-whitened control analyzed above. The actual `N_c=32/64/128` sweep is the later
+> investigation 016 folder
+> [`bottleneck_slot_capacity_sweep`](../../investigation_016/bottleneck_slot_capacity_sweep/),
+> and its canonical analysis remains
+> [`ANALYSIS.md`](../../investigation_016/bottleneck_slot_capacity_sweep/ANALYSIS.md).
+> This appendix gives the requested independent, deeper audit and records two corrections found
+> only after inspecting the live histories, artifacts, and initialization code together.
+
+## Executive verdict
+
+The sweep is operationally valid and the within-seed training-loss ordering is real, but it is
+**not a clean, initialization-isolated proof that slot capacity caused the improvement**.
+
+The narrow empirical result is:
+
+- late random-training-batch median reconstruction improves monotonically from `0.67703196` at
+  32 slots, to `0.67396140` at 64, to `0.66298261` at 128;
+- the 32-to-128 difference is `0.01404935`, or `2.07513837%`, below the registered `0.02` or
+  `3.0%` materiality gate;
+- after reconstruction warmup, the 128-slot arm is lower than the 32-slot arm on `259` of `260`
+  matched logged training batches, so the late scalar ordering is not a dashboard-sampling
+  accident;
+- fixed-batch example specificity is **not** monotonic: late `std/cosine` is
+  `0.80585822/0.47349986`, `0.32573912/0.91421551`, and
+  `0.64887702/0.67727712` for 32, 64, and 128 slots;
+- all fixed-batch examples are adjacent chunks from one source UID, so those values describe
+  within-source exact-chunk specificity, not global cross-source collapse;
+- the 64- and 128-slot arms fail the registered representation-health guard, so a 256-slot run is
+  not warranted.
+
+The deeper causal qualification is:
+
+1. Changing `N_c` changes the number of abstract activations, but leaves the early
+   1,024-to-256 per-token projection untouched. The experiment is a slot-memory test, not a
+   general bottleneck-capacity test.
+2. The covariance loss pools `B*N_c` slot rows. Its scale and initial geometry therefore change
+   mechanically with `N_c`; at step zero `L_cov` is `6.72580338`, `2.93429971`, and
+   `0.99159271`.
+3. The production constructor uses one RNG stream for the bottleneck, flow, and decoder. The
+   `N_c`-dependent orthogonal query initialization consumes a different amount of RNG before
+   later modules are built. An exact local replay of the sweep code found `27` same-shaped
+   bottleneck tensors and `30` of the decoder's `59` state tensors initialized to different
+   values between the 32- and larger-slot arms.
+4. There is only one seed per slot count. The 64-slot geometry anomaly can therefore be a
+   slot-count/objective interaction, an initialization-basin effect, or both.
+
+The defensible conclusion is consequently narrower than “capacity does not matter”: **under this
+one-seed, fully whitened, covariance-regularized recipe, adding query slots gives a small training
+reconstruction gain without producing a healthier recorded-batch content code. More slots are
+not the leading next lever.** This does not rule out `D_c`, mixer/input-projection width,
+whitening strength, or decoder form.
+
+## 1. Prior stated before reading the sweep
+
+The capacity hypothesis made three linked predictions:
+
+1. If the 32-slot tensor is the binding information bottleneck, doubling and quadrupling `N_c`
+   should reduce the honest reconstruction residual monotonically and materially.
+2. The lower loss should coexist with healthy example-level spread and specificity. A larger
+   code that merely stores more slot identity or template structure is not support.
+3. If the real floor is the 1,024-to-256 channel squeeze, whitening, decoder form, target
+   structure, or optimization, `N_c=32/64/128` should produce only a small or non-monotonic
+   change.
+
+The comparison would be considered broken if the runs differed in source code, data order,
+encoder features, whitening payload, schedule, or mode. A separate limitation, discovered during
+the audit, is that “same seed” did not imply equal shared parameter values across shapes.
+
+## 2. W&B access and evidence surfaces
+
+### Connector status
+
+No callable W&B MCP tool, resource, or resource template is registered in this Codex session.
+The connector therefore could not be validated as an MCP endpoint. The authenticated local W&B
+Python API **does** work through the credentials in the local netrc, and every live result below
+was fetched from `smahalanobis-uc-davis/hjepa-vwm` with a 120-second API timeout.
+
+The required W&B project probe reported:
+
+- step history available;
+- `47` sampled scientific metric keys;
+- provenance, whitening, history, and events artifacts on all three newest runs;
+- no accessible Weave trace surface (`weave_trace_count=null`);
+- no W&B sweep-controller object on any arm (`sweep_id=null`).
+
+These are three sequential grouped runs, not a W&B Sweep agent:
+
+| `N_c` | W&B ID | State | Last history step | Display name |
+|---:|---|---|---:|---|
+| 32 | `x03xlpyl` | finished | 14,950 | `Investigation 16 · Bottleneck capacity · EGO4D 32 slots` |
+| 64 | `evyokqrm` | finished | 14,950 | `Investigation 16 · Bottleneck capacity · EGO4D 64 slots` |
+| 128 | `7pmvxrxi` | finished | 14,950 | `Investigation 16 · Bottleneck capacity · EGO4D 128 slots` |
+
+All belong to `inv016_bottleneck_capacity_vjepa2_whitened_recon1`.
+
+### Surfaces actually inspected
+
+For every arm, this audit inspected:
+
+- resolved run config and summary;
+- all `300` history rows at 50-step cadence;
+- all `30` diagnostic checkpoints at 500-step cadence;
+- `output.log` in full (`300` metric records per run);
+- system telemetry;
+- the downloaded provenance JSON;
+- the downloaded whitening tensor payload;
+- the downloaded history parquet;
+- the downloaded system-events parquet;
+- logged and consumed artifact inventories;
+- final checkpoint path and SHA-256 recorded in the summary.
+
+No fatal error, traceback, OOM, or warning appears in any output log. W&B contains checkpoint
+paths and hashes, but **no model-checkpoint artifact**; re-evaluating the final models requires the
+remote checkpoint volume or another copy outside W&B.
+
+## 3. What `N_c` changes—and what it cannot change
+
+The active present-only path is:
+
+```text
+EGO4D clip
+  -> frozen V-JEPA2: e, shape (B, 1024, 1024)
+  -> fixed full ZCA whitener
+  -> Bottleneck.in_proj, independently per token: 1024 -> 256
+  -> shared spatial ConvNeXt mixing + three latent blocks
+  -> c, shape (B, N_c, 256)
+  -> fixed-position decoder, width 512, four blocks
+  -> per-token cosine reconstruction of whitened e
+```
+
+`F_c`, future features, flow matching, copy tests, and batch-mean prediction tests are inactive.
+This is a feature autoencoder experiment, not a forecasting experiment.
+
+The latent tensor changes as intended:
+
+| `N_c` | Latent scalars/example | Detailed scalars/example | Scalar compression |
+|---:|---:|---:|---:|
+| 32 | 8,192 | 1,048,576 | 128:1 |
+| 64 | 16,384 | 1,048,576 | 64:1 |
+| 128 | 32,768 | 1,048,576 | 32:1 |
+
+But the active trainable parameter count barely changes:
+
+| `N_c` | B parameters | D parameters | Active B+D parameters |
+|---:|---:|---:|---:|
+| 32 | 4,837,123 | 14,318,080 | 19,155,203 |
+| 64 | 4,845,315 | 14,318,080 | 19,163,395 |
+| 128 | 4,861,699 | 14,318,080 | 19,179,779 |
+
+The 32-to-128 active-parameter increase is only `24,576`, or `0.12829935%`. The meaningful
+intervention is more activation memory and more attention positions, not a larger learned channel
+map. In particular, the first 1,024-to-256 projection still discards a 768-dimensional per-token
+linear complement before slot aggregation. More slots cannot directly restore information lost
+there.
+
+This matters because the downloaded whitening artifact is not mild normalization. Its raw
+1,024-D channel covariance has effective rank `230.479449608`; after `eps=0.0001` ZCA, the
+effective rank is `1022.99999174` and the trace is `1022.88633834`. The top 256 whitened
+directions hold only `0.250269680348` of the second-order energy. The channel-only angular oracle
+is therefore roughly `0.499730392341` loss before the additional 1,024-token-to-`N_c` compression
+and decoder constraints. This is why the earlier architecture audit ranked whitening plus the
+early channel squeeze above slot count as the likely floor mechanism.
+
+## 4. Identity and provenance—what is genuinely controlled
+
+The downloaded provenance artifacts differ in only six leaf values:
+
+- `N_c` in common and resolved model config;
+- `trainable_init_hash`;
+- the derived common-identity hash;
+- checkpoint directory;
+- tracking display name.
+
+Everything that should be common is common:
+
+| Surface | Shared value |
+|---|---|
+| Git | clean `820a5b560b8668fa12452e35b1e91b170a2a91a3` |
+| Dataset | EGO4D fingerprint `df36af5da6e73595473024a8e79da7f1412bd94a0b838cb0bee759b303eb6b1c` |
+| Train order | `7af099758cd119123fda6ac10b63abaafd1027b4c8e0c1a00d3fb3f0f80ada5c` |
+| Validation batch | `bb4ee6e7aaf42d2215024c22c72b13d27ac0d43e8a4e89c79ee6b18cf56ed839` |
+| Encoder features | `372adef61c7d90a08665faf65991c1fef1f13768cdd9a6850b23393c705e1155` |
+| Whitening payload | `fd00b842eebeaa2f5a83a47b82275b39182a58c91131793fd48e3502fe73d0b6` |
+| Seed | 42 |
+| Mode | present-only, absolute target, whitening on |
+| Losses | recon 1.0, variance 0.5, covariance 0.01, SIGReg/slot/predicted recon off |
+
+The three downloaded whitening files are byte-identical: each is `4,207,255` bytes with local
+SHA-256 `96ff86baf26354db81419faaa8bef29b22bbf4b9089055be139fc1ba6b5c0492`.
+The payload contains 12,800 training clips and 13,107,200 token rows; all tensor values are finite.
+
+Thus there is no config leakage, dataset drift, encoder drift, whitening drift, or schedule drift.
+The unresolved control is the parameter initialization induced by changing tensor shape.
+
+## 5. Interpret the metrics before reading their values
+
+### Reconstruction
+
+- Training `L_recon` is per-token `1-cosine` on the current deterministic random training batch.
+  Because data order and transform identities are shared, same-step differences are paired-batch
+  comparisons.
+- `L_recon_present` is the same metric on one fixed 16-example validation batch.
+- `L_recon_shuffled_c` rolls codes by one element. Here that swaps adjacent chunks from the same
+  long EGO4D source, not unrelated source videos.
+- `L_recon_video_gap = shuffled - correct` is therefore an exact-chunk/within-source gap.
+
+### Geometry
+
+- `c_std_mean` and `c_cross_video_cosine` flatten every example's complete `N_c*D_c` code, so
+  they are the most direct recorded-batch example-specificity measures.
+- `c_effective_rank` pools `B*N_c` slot rows over 256 feature channels. Fixed slot identities and
+  more pooled rows can raise it without proving example content.
+- centered slot rank measures within-example slot diversity. Its maximum changes with `N_c`:
+  31, 63, and 127 centered directions.
+- `L_cov` uses the same `B*N_c` pooling as effective rank. A fixed coefficient is not an
+  invariant pressure across slot counts.
+- `L_var` compares matching flattened coordinates across the current training batch. Tiny train
+  `L_var` and weak fixed-batch std can coexist through train/validation and source-composition
+  differences.
+
+### Stability
+
+`grad_norm` is after AGC and before the global 0.5 clip. It is a combined-objective norm, not a
+per-loss gradient attribution. Neither AGC activity nor clean gradients proves that the code is
+informative.
+
+## 6. Reading Cycle B, one run at a time
+
+### 32 slots — `x03xlpyl`
+
+1. **Alive and correctly wired:** pass. `300` training rows, no skipped updates or warnings, no
+   diagnostic NaNs, whitening/present-only flags correct, prediction losses zero.
+2. **Alive and example-specific:** marginal pass on this one-source batch. Late std is
+   `0.80585822`, cosine `0.47349986`, dead fraction zero.
+3. **Rich:** conditional pass. Late pooled rank is `85.05537033`; centered slot rank is
+   `30.81357294/31`. Rank is interpreted with the slot-identity caveat.
+4. **Reconstruction:** pass in isolation. Late train median `0.67703196`; late fixed median
+   `0.67116472`; final fixed value `0.67091203`.
+5. **Correct-code dependence:** weak. Final rolled-code loss `0.69735569`, gap `0.02644366`, exact
+   share `7.65699171%`.
+6. **Verdict:** stable, marginally healthy recorded-batch geometry, weak exact-chunk conditioning,
+   no prediction evidence.
+
+### 64 slots — `evyokqrm`
+
+1. **Alive and correctly wired:** pass. Same operational validity; late median grad norm
+   `0.09111974`.
+2. **Alive and example-specific:** fail on the recorded batch. Late std `0.32573912`, cosine
+   `0.91421551`, dead fraction zero.
+3. **Rich:** pooled metrics do not rescue it. Late rank `83.12630844`; centered slot rank
+   `61.97086895/63`.
+4. **Reconstruction:** pass in isolation, but the gain is tiny. Late train median `0.67396140`;
+   late fixed median `0.67072162`; final fixed `0.67033505`.
+5. **Correct-code dependence:** weak. Final gap `0.02765644`, exact share `8.13187861%`.
+6. **Verdict:** a valid run in a source-chunk-invariant fixed-batch basin. It is not a healthy
+   capacity win, and the one-source manifest prevents a global-collapse label.
+
+The trajectory is the largest surprise. At step 2,000 it temporarily reaches std `0.68589735`
+and cosine `0.51970375`; by step 3,500 it is at `0.16407548/0.97720748`, and it finishes near the
+same weak-specificity regime. This proves the failure is an evolved equilibrium rather than a
+step-zero metric illusion. It does **not** prove initialization was irrelevant; different initial
+weights can select a later basin.
+
+### 128 slots — `7pmvxrxi`
+
+1. **Alive and correctly wired:** pass. No skips, warnings, diagnostic NaNs, or AGC activations;
+   late median grad norm `0.10019990`.
+2. **Alive and example-specific:** fail on the recorded batch. Late std `0.64887702`, cosine
+   `0.67727712`, dead fraction zero.
+3. **Rich:** pooled rank is high but ambiguous. Late rank `188.84199524`; centered slot rank
+   `115.88776183/127`.
+4. **Reconstruction:** the best scalar arm. Late train median `0.66298261`; late fixed median
+   `0.66570026`; final fixed `0.66532779`.
+5. **Correct-code dependence:** still weak, though best of the three. Final gap `0.03431261`, exact
+   share `10.00512361%`.
+6. **Verdict:** modest scalar improvement with weak recorded-batch specificity; not a healthy
+   capacity win and not forecasting evidence.
+
+Normalized centered slot rank adds useful context: the late value is `0.99398622` of its maximum
+at 32 slots, `0.98366459` at 64, and only `0.91250206` at 128. The absolute centered rank rises,
+but the fraction of available centered slot directions actually used falls in the largest arm.
+
+## 7. Reconstruction analysis
+
+### Full 300-row training histories
+
+The registered late window is steps 12,000 through 14,950, containing 60 logged batches per arm:
+
+| `N_c` | Late median | Late mean | Population SD | Late slope per 1,000 steps |
+|---:|---:|---:|---:|---:|
+| 32 | `0.67703196` | `0.67702819` | `0.00342801` | `-0.00000786` |
+| 64 | `0.67396140` | `0.67391246` | `0.00334774` | `-0.00010244` |
+| 128 | `0.66298261` | `0.66297507` | `0.00305811` | `-0.00042873` |
+
+All arms are effectively plateauing. The paired same-batch late differences are:
+
+| Contrast | Median arm-minus-reference | Mean | Arm better fraction |
+|---|---:|---:|---:|
+| 64 - 32 | `-0.00310391` | `-0.00311573` | `1.00000000` |
+| 128 - 32 | `-0.01410100` | `-0.01405312` | `1.00000000` |
+| 128 - 64 | `-0.01105312` | `-0.01093739` | `1.00000000` |
+
+Within this deterministic trajectory, the ordering is robust to batch noise. It is still one
+realized initialization per shape, and a 60-row time series is not a confidence interval over
+seeds or model initializations.
+
+The result lands exactly in the preregistered borderline region: the 32-to-128 late median gain is
+`0.01404935` (`2.07513837%`), short of both support thresholds. It is too coherent to call zero,
+but too small and geometrically unhealthy to call the bottleneck-floor hypothesis confirmed.
+
+### Fixed-batch baseline adjustment
+
+The endpoint fixed-batch comparison is weaker than it first looks because the untrained arms did
+not begin at the same loss:
+
+| `N_c` | Initial | Final | Improvement from own initialization |
+|---:|---:|---:|---:|
+| 32 | `1.01626515` | `0.67091203` | `0.34535313` |
+| 64 | `1.01043403` | `0.67033505` | `0.34009898` |
+| 128 | `1.00827813` | `0.66532779` | `0.34295034` |
+
+The 128-slot endpoint is `0.00558424` below the 32-slot endpoint, but it already starts
+`0.00798702` lower. Relative to its own untrained scaffold, it learns `0.00240278` **less** fixed-
+batch improvement than the 32-slot arm. The full paired training history still supports a real
+training-distribution gain, but the fixed-batch endpoint does not independently demonstrate
+greater learned capacity.
+
+### Conditioning decomposition
+
+| `N_c` | Learned correct-code improvement | Improvement surviving rolled code | Exact-chunk advantage | Exact share |
+|---:|---:|---:|---:|---:|
+| 32 | `0.34535313` | `0.31890947` | `0.02644366` | `7.65699171%` |
+| 64 | `0.34009898` | `0.31244254` | `0.02765644` | `8.13187861%` |
+| 128 | `0.34295034` | `0.30863774` | `0.03431261` | `10.00512361%` |
+
+There is a small, monotonic increase in exact-chunk dependence, but roughly nine tenths of the
+128-slot improvement still survives a wrong adjacent-chunk code. Since all chunks share one
+source, the remaining channel can contain source, wearer, scene, position-template, or globally
+shared information. The current metric cannot decompose those components.
+
+## 8. Why rank and covariance improve so easily with more slots
+
+At initialization, the bottleneck ignores its input and emits normalized learned orthogonal slot
+identities for every example. The step-zero metrics expose this directly:
+
+| `N_c` | Example std | Example cosine | Pooled effective rank | Centered slot rank |
+|---:|---:|---:|---:|---:|
+| 32 | `0.00000203` | `1.00000000` | `30.99746323` | `30.99739504` |
+| 64 | `0.00000169` | `0.99999994` | `62.95524597` | `62.95516014` |
+| 128 | `0.00000153` | `1.00000000` | `126.80850220` | `126.80836010` |
+
+The examples are identical while pooled rank nearly equals `N_c-1`. That is slot identity, not
+content.
+
+The active step-zero objective also changes materially:
+
+| `N_c` | Weighted variance | Raw `L_cov` | Weighted covariance | Total loss |
+|---:|---:|---:|---:|---:|
+| 32 | `0.50000000` | `6.72580338` | `0.06725803` | `0.56725800` |
+| 64 | `0.50000000` | `2.93429971` | `0.02934300` | `0.52934301` |
+| 128 | `0.50000000` | `0.99159271` | `0.00991593` | `0.50991595` |
+
+Reconstruction has zero weight at that step. Thus the first update does not place the three arms
+under equal geometry pressure even though `lambda_cov=0.01` is numerically fixed. More orthogonal
+slots and more pooled rows make covariance easier to satisfy.
+
+The same effect remains late. Median raw `L_cov` after step 12,000 is `0.2817093134`,
+`0.1313608885`, and `0.0823624134`; the corresponding weighted contributions are
+`0.0028170931`, `0.0013136089`, and `0.0008236241`. Reconstruction contributes more than `99.5%`
+of the final scalar objective in every arm, but the earlier geometry trajectory has already shaped
+the basin.
+
+This explains why 128 slots can report pooled rank near 189 without passing example specificity:
+the objective and metric both reward a distribution of slot rows, while the content question is
+whether different examples carry different useful codes.
+
+## 9. Initialization coupling—dated correction to the original sweep read
+
+The canonical sweep analysis calls the arms byte-identical controls apart from `N_c` and says the
+64-slot collapse is “not merely an initialization artifact.” The first clause is correct for
+code, data, config, and seed but not for shared parameter values; the second is not established.
+
+The production construction order is:
+
+```text
+seed one trainable RNG stream
+  -> Bottleneck input/mixer/position parameters
+  -> orthogonal query tensor with shape (N_c, 256)
+  -> Bottleneck latent blocks
+  -> EMA deepcopy
+  -> CoarseFlow
+  -> Decoder
+```
+
+Because orthogonal initialization consumes shape-dependent random numbers, later weights shift.
+Replaying the exact sweep config and seed on the unchanged production code gives:
+
+| Module | State tensors | Identical | Shape changed | Same shape, different values |
+|---|---:|---:|---:|---:|
+| B | 93 | 65 | 1 | 27 |
+| F_c | 70 | 28 | 2 | 40 |
+| D | 59 | 29 | 0 | 30 |
+
+`F_c` is inactive here, but B's latent-block projections and D's attention projections are active.
+The W&B provenance independently records different trainable-init hashes:
+
+- 32: `e468284ed15fdc4ea0cb26043997660ebe65e7ff0b6e0a49903d3519ec6d6c82`;
+- 64: `6e332ddb78eb7a6ea5f6056f1926abd9d899d7de2a5274d43df533a52922f573`;
+- 128: `ac8fc707179ccacc4596289358b3d7a65c82f25dab3d44bf157388879d6b86ba`.
+
+Different hashes are unavoidable when shapes differ; the replay establishes the stronger point
+that many shape-matched values differ too. Consequently:
+
+- the observed arm includes both the `N_c` intervention and a deterministic re-draw of many
+  shared active weights;
+- one seed per shape cannot estimate initialization variance;
+- the 64-slot non-monotonic anomaly cannot be confidently assigned to “64” as a structural
+  property;
+- the decision not to spend on 256 still holds, because the realized larger arms miss the
+  preregistered win condition, but the sweep should not be cited as a universal `N_c` law.
+
+## 10. A strong positive control: exact rerun reproducibility
+
+The 32-slot arm is an exact science-metric repeat of investigation 016 run 060 (`2423b84g`). The
+two W&B history parquets each contain `300` rows and `48` columns. Excluding only `_timestamp` and
+`_runtime`, all `46` scientific columns are exactly equal at every logged step—no differing
+column and no differing value.
+
+Their provenance differs in tracking/checkpoint paths, the recorded source commit, the explicit
+encoder-revision field, and whitening path, but the resolved feature and whitening payloads are
+the same. This exact trajectory reproduction establishes:
+
+1. current same-shape initialization, data order, sample-scoped augmentation, encoder, whitening,
+   and training are deterministic across executions;
+2. the 32-slot result is not a transient W&B/dashboard artifact;
+3. the cross-shape differences arise from the shape-dependent computation/initialization, not
+   nondeterministic data loading.
+
+It is a reproducibility check, not an independent statistical seed.
+
+## 11. Operational and system read
+
+All arms are clean:
+
+| `N_c` | Max pre-global-clip grad | Rows above 0.5 | Skips | Warnings | B/D AGC rows |
+|---:|---:|---:|---:|---:|---:|
+| 32 | `5.02441216` | 33/300 | 0 | 0 | 0/0 |
+| 64 | `4.07689619` | 35/300 | 0 | 0 | 0/0 |
+| 128 | `5.69471502` | 35/300 | 0 | 0 | 0/0 |
+
+System telemetry shows finite A100 execution and no corrected or uncorrected GPU memory errors.
+Maximum allocated GPU memory rises modestly from `12.73220301` GB to `12.82985165` GB to
+`13.81688934` GB. Median GPU utilization is `97`, `96`, and `100` percent. The sequential wall
+times decrease with larger arms because utilization/data-pipeline conditions differ; that should
+not be interpreted as larger attention being intrinsically cheaper.
+
+The resource evidence rules out OOM, thermal failure, numerical failure, AGC saturation, or a
+stalled decoder as explanations for the scientific result.
+
+## 12. Reconciliation with the research progression
+
+The sweep makes sense only as the latest link in the prior chain:
+
+1. Early Phase 1 runs established the pipeline and exposed low-rank/static-latent failure.
+2. Strong variance and slot losses showed that spread or slot distinction can be Goodharted
+   without useful prediction.
+3. EMA, AGC, and gradient guards fixed stability but did not make `F_c` beat copy.
+4. Reconstruction anchors made the latent decodable; learned output queries and absolute targets
+   exposed template shortcuts.
+5. Investigation 007's first `N_c` wave died synchronously at step 200 with the entire pod, so it
+   supplied no mature capacity evidence.
+6. Investigation 011 showed covariance can raise pooled rank dramatically, while prediction still
+   fails and rank need not equal content.
+7. Runs 052/053 separated low reconstruction from honesty: absolute reconstruction can be
+   template-dominated; a residual target restores code dependence without holding geometry.
+8. Investigation 014 showed the frozen V-JEPA feature substrate itself has ample rank.
+9. Runs 054-057 combined latent-stack processing, full whitening, and covariance/variance. They
+   achieved honest or high-rank SSv2 present representations, but at a whitened reconstruction
+   cost and with no forecast evidence.
+10. EGO4D run 058 appeared globally collapsed, then the source-manifest audit corrected that claim:
+    its fixed batch is one long source recording.
+11. Run 060 showed a 20x reconstruction weight does not materially clear the floor and is now
+    exactly reproduced by the 32-slot control.
+12. This sweep is therefore the first mature same-runtime test of the slot-count axis. It finds a
+    small scalar response, not a healthy capacity solution.
+
+The current research state is not “the model needs more slots” and not “capacity is irrelevant.”
+It is: **the present autoencoder is stable and can hold geometric rank, but content measurement is
+source-confounded, full whitening makes the target nearly isotropic before a severe channel
+squeeze, and geometry metrics/losses are partly slot-structural.** Prediction remains untested in
+this branch and historically has not beaten the copy gate.
+
+## 13. Surprise, mechanism, and hypothesis accounting
+
+### Largest surprise: the 64-slot basin
+
+The expected alternatives were monotonic improvement or saturation. Instead, 64 slots has the
+worst example specificity by a large margin while reconstructing almost identically to 32. The
+most plausible connected mechanism is not a magical “bad” slot count. It is the interaction of:
+
+- fixed orthogonal slot identities;
+- shape-dependent shared initialization;
+- `B*N_c`-pooled covariance pressure whose effective scale changes with `N_c`;
+- an absolute whitened target that still rewards shared/source/template structure;
+- a decoder that can map distinct constant slots plus fixed positions into a position field;
+- one single-source diagnostic batch.
+
+That mechanism predicts exactly the observed dissociation: high absolute slot rank, small
+reconstruction changes, and poor example-level cosine/std.
+
+### Hypothesis scorecard
+
+| Claim | Status | Reason |
+|---|---|---|
+| More slots lower training reconstruction monotonically | Supported for this seed | all late paired batches preserve the ordering |
+| The effect is materially large | Not supported | `0.01404935` / `2.07513837%` misses both gates |
+| More slots produce a healthier content code | Not supported on recorded batch | 64 collapses; 128 does not recover 32-slot specificity |
+| Pooled rank proves greater content capacity | Rejected | rank is already `N_c-1` at zero example spread |
+| The sweep isolates only activation capacity | Rejected | covariance scaling and shared initialization also change |
+| 64 is intrinsically pathological | Unresolved | one seed plus initialization coupling |
+| A 256-slot continuation is justified | Rejected | the conditional geometry guard fails |
+| `D_c`/mixer/whitening are ruled out | Rejected | those axes were fixed and the first channel squeeze remains |
+
+## 14. Final conclusion and next discriminating probe
+
+Do not launch the 256-slot arm. The result does not meet the preregistered capacity-support rule,
+and the lower scalar is paired with weaker recorded-batch content geometry. Carry 32 slots as the
+operational control, not because it has been proven globally optimal, but because no larger arm
+earned its additional complexity under the joint criterion.
+
+The first falsifiable probe should require **no retraining** if the checkpoints still exist:
+
+> Re-evaluate all three checkpoints on one deterministic validation clip per distinct EGO4D source
+> UID, with a verified cross-source code derangement. Change only the validation manifest/pairing.
+
+Prediction and decision rule:
+
+- If the current anomaly is chiefly adjacent-chunk/source confounding, cross-source cosine and
+  shuffled-code gaps will become healthy, and the 64-slot arm may no longer be the worst.
+- If the codes are globally shared/template-dominated, 64 will remain highly parallel and the
+  correct-versus-cross-source gap will remain small.
+- If 128 genuinely routes more content, its cross-source gap should exceed 32 while its
+  source-diverse std/cosine remain healthy; a lower raw reconstruction number alone does not count.
+
+After that measurement repair, two different questions should be kept separate:
+
+1. **Robustness of the slot result:** rerun the 64-slot arm across additional seeds or isolate
+   module-local initialization streams. This decides whether its basin is structural or
+   initialization-specific.
+2. **Cause of the reconstruction floor:** run the already queued 32-slot no-whitening arm, then a
+   separate mixer-width/`D_c` experiment if the cached-feature oracle implicates the early channel
+   squeeze. Do not call another `N_c` ladder a general bottleneck-capacity sweep.
+
+No present-only checkpoint should enter prediction until source-diverse reconstruction dependence
+is demonstrated. A later prediction run must still beat both copy and batch-mean baselines; none of
+the three runs analyzed here supplies that evidence.

@@ -1,12 +1,11 @@
 # Encoder Pluggability and the First Paired Experiment
 
-> Status: implementation and pre-join design, audited against the repository on 2026-07-14.
-> The common raw-data/model/training, determinism/checkpoint, whitening/probe/artifact,
-> provenance/preflight stack and pinned V-JEPA2/SigLIP2 adapters are implemented. SigLIP
-> passed a real Mac/MPS smoke. CUDA/real-dataset evidence remains RunPod-only. DINO is the
-> only deliberately unresolved alias until its gated lane is implemented and validated.
-> The current operational state and copy/paste RunPod hand-off live at the very top of
-> [`GUIDE_encoders.md`](GUIDE_encoders.md).
+> Current status, 2026-07-21: this is the preserved pre-join design record. The common stack and
+> pinned V-JEPA2, SigLIP 2, and DINOv3 adapters are now implemented; DINOv3 revision
+> `5931719e67bbdb9737e363e781fb0c67687896bc` passed authenticated CUDA and a complete EGO4D run.
+> Future-tense implementation/access steps below explain the original gates and should not be
+> mistaken for the current repository state. Current experiment commands live in the active
+> KANBAN `GUIDE.md`.
 
 ## Do these human-only steps first
 

@@ -208,7 +208,7 @@ def test_finalize_rejects_residual_target_without_recon_anchor():
     cfg.train.lambda_recon = 0.0
     cfg.train.lambda_recon_pred = 0.0
 
-    with pytest.raises(ValueError, match="recon-residual-target"):
+    with pytest.raises(ValueError, match="train.recon_residual_target"):
         train.finalize_training_config(cfg)
 
 

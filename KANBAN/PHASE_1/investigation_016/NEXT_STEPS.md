@@ -1,5 +1,22 @@
 # Next Steps — investigation_016
 
+## Current disposition (2026-07-26)
+
+Investigation 016 is closed. The numbered and dated sections below are preserved decision history,
+not a simultaneous active queue.
+
+1. Continue the external `N_c×D_c` question only in
+   [investigation 017](../investigation_017/). Reuse the exact tried `32×256` scientific
+   configurations `guiduvjp`, `ufbeokj2`, and `fiactcw6`; do not pay for duplicate centers.
+2. Keep source-unique fixed validation and cross-source code derangement as an explicit
+   measurement prerequisite before making any global EGO4D collapse/preservation claim.
+3. Do not treat the old run-059 SigLIP proposal or the residual-target arm below as current launch
+   instructions. They remain unlaunched historical proposals unless a new investigation
+   re-registers them.
+4. Do not infer DINO prediction readiness from runs 069–071. All are present-only.
+
+## Historical queue and decisions
+
 1. ~~Launch and analyze the exact EGO4D twin of run 057.~~ Completed as run 058 (`mvbx96nv`);
    verdict **Collapsed rep / template shortcut**.
 2. ~~Launch and analyze
@@ -77,9 +94,10 @@ Ordered action from this result:
 5. restore geometry pressure in a dedicated arm if the goal is a healthy representation rather
    than reconstruction-only low-rank compression.
 
-## 2026-07-26 — active DINOv3 sequence
+## 2026-07-21 — current handoff
 
-1. Extract Run 67's preregistered late-window medians without changing its completed identity.
-2. Verify Run 68's exact W&B/checkpoint/completion evidence before promoting the qualitative report.
-3. Preserve completed Run 69 W&B `fiactcw6`, its verified final checkpoint checksum, and uploaded checkpoint/preflight directories.
-4. Keep the Run 68/69 whitening interpretation qualified until exact Run 68 metrics are verified; Run 69 reconstruction is consistent with, but does not precisely quantify, a whitening contribution.
+Runs 66–69 completed the immediate raw-geometry and encoder-substrate controls. Keep `M=512`, the
+late projection, three latent blocks, raw features, and the pinned encoder adapters. The next paid
+question is no longer another internal-width or no-geometry arm: execute
+[investigation 017](../investigation_017/), which sweeps `N_c × D_c` independently for V-JEPA2,
+SigLIP 2, and DINOv3 with covariance plus variance enabled throughout.

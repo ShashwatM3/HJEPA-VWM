@@ -1,5 +1,9 @@
 # Next steps — Run 67, DINOv3 unwhitened internal-memory M=512
 
+> **Local-label correction (2026-07-27):** current follow-up belongs to canonical local
+> [Run 069](../run_069_unwhitened_dinov3_m512_no_geometry_regularizers/) for W&B `it7sq8nz`.
+> The list below is preserved source-branch history.
+
 1. Keep this completed arm immutable; its W&B run, committed provenance artifact, and persistent-
    volume final checkpoint are valid.
 2. Pull the preregistered steps 12,000–14,500 diagnostic window from W&B and replace only the

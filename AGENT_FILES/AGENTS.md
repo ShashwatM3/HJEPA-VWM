@@ -94,9 +94,8 @@ The briefs capture **a point-in-time research narrative**. Successful research a
 - **Not a creativity ban** — propose new mechanisms, loss terms, or diagnostics when evidence
   (KANBAN, W&B, code gaps) supports them. Escalate only for locked invariants in §15.
 
-When a brief recommendation differs from shipped defaults (e.g. brief suggests `--horizon-k 12`
-while `config.py` has `horizon_k=4`), **state both** and default to code unless the human is
-running a deliberate experiment.
+When a brief recommendation differs from the checked-in `configs/train.yaml`, **state both** and
+default to that single YAML unless the human is running a deliberate experiment.
 
 ### 2.1 Human-owned docs (read; do not edit unless the human asks)
 
@@ -207,10 +206,10 @@ treasured-cherry-58
 
 ### Drift to know
 
-- Old docs often mention 30k Phase-1 steps. Current defaults: `stage1_steps=15000`,
+- Old docs often mention 30k Phase-1 steps. Current schedule: `stage1_steps=15000`,
   `warmup_steps=1500`, `grad_clip=0.5`, `grad_skip_threshold=150.0` (`config.py`).
-- `latest_brief.md` may list experiment CLI overrides (`--horizon-k 12`, `--lambda-var 0.5`)
-  that differ from shipped defaults (`horizon_k=4`, `lambda_var=0.1`).
+- `latest_brief.md` may list historical experiment CLI overrides (`--horizon-k 12`,
+  `--lambda-var 0.5`) that now live only in the checked-in YAML.
 - `FineFlow` / Phase 2 is not implemented unless the human explicitly requests it.
 
 ## 3. Repository map
@@ -219,9 +218,10 @@ Root implementation files:
 
 | Path | Role |
 |---|---|
-| `config.py` | Dataclass configuration, path contract, dimensions, optimizer/loss knobs. |
+| `config.py` | Typed dataclass defaults plus strict YAML experiment loading. |
+| `configs/train.yaml` | The only editable Phase-1 experiment recipe; always read by `train.py`. |
 | `data.py` | Deterministic clip-per-file loader. Produces typed raw `[0,1]` context-only or context/target `ClipBatch` values from SSv2 `.webm` or EGO4D `.mp4`. |
-| `encoders.py` | Only encoder seam: immutable specs/fingerprints, normalization/precision/frame microbatching, private registry with a public alias view, pinned V-JEPA2, SigLIP2, and DINO adapters, real smoke CLI. |
+| `encoders.py` | Only encoder seam: immutable specs/fingerprints, normalization/precision/frame microbatching, private registry, pinned V-JEPA2, SigLIP2, and DINOv3 adapters, real smoke CLI. |
 | `make_subset.py` | Builds `ssv2_tiny` as symlinks plus `manifest.json`. |
 | `select_ego4d_uids.py` | Selects scenario-diverse EGO4D source-video UIDs, train/validation split, and download batches from `ego4d.json`. |
 | `chunk_ego4d.py` | Chunks downloaded EGO4D 540ss videos into 4-second, 12 FPS, 256px-shorter-side H.264 `.mp4` clips under `data/ego4d`. |
@@ -230,7 +230,7 @@ Root implementation files:
 | `losses.py` | Pure tensor losses and detach helper. No parameters. |
 | `diagnostics.py` | Collapse metrics, baseline comparisons, AGC, weight-decay grouping. |
 | `provenance.py` | Frame-count-bound dataset/run identities, EncoderSpec serialization, atomic writes, strict whitening and feature-cache envelopes. |
-| `train.py` | Stage-0/1, CLI, optimizer/EMA, exact sampler/RNG atomic resume, parity/CUDA-event resource preflights, and strict/optional W&B policy. |
+| `train.py` | Stage-0/1, five-axis scientific CLI, operator overrides, optimizer/EMA, exact sampler/RNG atomic resume, parity/CUDA-event resource preflights, and strict/optional W&B policy. |
 | `parse_logs.py` | Parses `step=N {dict}` console logs into JSON. |
 | `run_history.py` | W&B Public API export/report helper for logged metrics. |
 | `evaluate_checkpoint_diagnostics.py` | Offline checkpoint evaluator for paired encoder/online-bottleneck cross-video cosine on the corrected fixed source-diverse batch; no optimizer or training state mutation. |
@@ -252,7 +252,7 @@ Agent and architecture docs:
 | `AGENT_FILES/GUIDE_AUTONOMOUS_REMOTE_RUN.md` | Autonomous, observable end-to-end execution from a raw SSH command and run guide. |
 | `AGENT_FILES/SETUPS/VOLUME_LAYOUT.md` | RunPod `/workspace` data/checkpoint/cache layout. |
 | `.agents/skills/run-remote-experiment/SKILL.md` | Repository skill for SSH/RunPod/tmux experiment execution; shared with Claude Code through `.claude/skills`. |
-| `AGENT_FILES/KNOWLEDGE/encoders/README.md` | Encoder research/status index and RunPod guide. Common pluggability plus pinned V-JEPA, SigLIP, and DINO adapters are shipped; paid-run evidence remains separately gated. |
+| `AGENT_FILES/KNOWLEDGE/encoders/README.md` | Encoder research/status index and RunPod guide. Common pluggability plus V-JEPA/SigLIP adapters are shipped; DINO and the real join remain gated. |
 | `GUIDES/latest_brief.md` | Architecture narrative (v0.3) — **historical intent, not ground truth**. |
 | `GUIDES/PROBLEMS_METRICS_AND_EXPERIMENTS.md` | Metric glossary + experiment problem history. |
 | `GUIDES/CODEBASE_STRUCTURE.md` | File map: training code, MLOps, docs, KANBAN. |
@@ -386,10 +386,11 @@ The private registry currently has:
 - `siglip2_vitb16`: implemented at Hub commit
   `3f9f96cb90da5dbc758b01813f2f6f1aee24c1ab`, vision-only retained patch tower
   `85,843,200` parameters, layout `8x16x16`, `D_e=768`;
-- `dinov3_vitb16`: implemented frame-based DINOv3 ViT-B/16 adapter with layout
-  `8x16x16`, `D_e=768`, pinned by default to Hub commit
-  `5931719e67bbdb9737e363e781fb0c67687896bc`. Callers may override it with an explicit
-  immutable revision; it never falls back to `main`.
+- `dinov3_vitb16`: implemented at Hub commit
+  `5931719e67bbdb9737e363e781fb0c67687896bc`, framewise tower `85,660,416`
+  parameters, layout `8x16x16`, `D_e=768`; the adapter asserts four register tokens,
+  strips the CLS/register prefix, and never falls back to `main`.
+  An explicit 40-character revision remains available as an override.
 
 `transformers==4.57.6` is the shared dependency pin. Its installed source exposes the
 planned V-JEPA2, DINOv3 ViT, and SigLIP2 vision architectures. Any later dependency change
@@ -420,13 +421,15 @@ Pipeline:
 5. `to_kv`: linear `M -> M` produces the memory tokens without an early
    projection to `D_c`.
 6. A Perceiver-style latent processor of `bottleneck_latent_blocks=3`
-   `BottleneckLatentBlock`s refines the `N_c=32` learned `M`-wide query slots. Each
+   `BottleneckLatentBlock`s refines the `N_c` learned `M`-wide query slots (`32` by
+   default, sweepable with `--n-c`). Each
    block runs three zero-init residual updates on the slot stream:
    sharpened-cosine cross-attention read from the `N_e` memory tokens
    (`SharpCrossAttention`, zero-init `o_proj`), slot self-attention for slot
    competition (zero-init `out_proj`), and a per-slot MLP (zero-init last
    layer).
-7. After all input-dependent reads/refinement, `abstract_proj` maps `M -> D_c`;
+7. After all input-dependent reads/refinement, `abstract_proj` maps `M -> D_c`
+   (`256` by default, sweepable with `--d-c`);
    it is a parameter-free identity when `M == D_c` and an orthogonally initialized
    linear layer otherwise.
 8. Final `LayerNorm(D_c)` produces the external `(B,N_c,D_c)` code consumed by
@@ -923,11 +926,18 @@ Future Phase-2/3 diagnostics, not implemented yet:
 - decoder dependency test with shuffled `e_hat`.
 - full `eval.py`.
 
-## 12. Configuration defaults and CLI overrides
+## 12. Single YAML configuration and compact CLI
 
-`config.py` is the source of current implemented defaults.
+`config.py` supplies typed fallback defaults. `configs/train.yaml` is the only editable experiment
+recipe and `train.py` reads it on every invocation; there is no `--config` selector. Resolution is
+dataclass defaults → the single YAML → five scientific CLI overrides → operator overrides.
+Duplicate/unknown keys, legacy or audit-owned fields, and scalar types are validated before model
+construction. Every YAML leaf documents its choices or reasonable range inline. The YAML path and
+content hash are audit-recorded but excluded from scientific parity, which binds the fully resolved
+scientific values.
 
-Trainable model defaults (legacy V-JEPA geometry fields remain only for historical readers/tests):
+Dataclass fallback model defaults (the YAML is the active recipe; legacy V-JEPA geometry remains
+only for historical readers/tests):
 
 | Field | Default |
 |---|---|
@@ -940,11 +950,12 @@ Trainable model defaults (legacy V-JEPA geometry fields remain only for historic
 | bottleneck blocks / heads | `2` ConvNeXt blocks, `8` cross-attn heads |
 | `bottleneck_mixer_dim` | `256` complete internal memory/slot width; final projection to `d_c` |
 | `bottleneck_latent_blocks` | `3` Perceiver-style latent blocks |
-| `f_c_blocks`, `f_c_dim`, `f_c_heads` | `6`, `256`, `8` |
+| `f_c_blocks`, `f_c_heads` | `6`, `8`; legacy unused `f_c_dim=256` is rejected in YAML |
 | `condition_dropout` | `0.10` |
 | reconstruction decoder dim / blocks / heads | `256`, `2`, `8` |
 
-Encoder defaults (`EncoderConfig`; all exposed by `train.py`):
+Encoder defaults (`EncoderConfig`; all editable in YAML, with only `alias` retained as a scientific
+CLI override):
 
 | Field | Default |
 |---|---|
@@ -954,7 +965,7 @@ Encoder defaults (`EncoderConfig`; all exposed by `train.py`):
 | `attention_implementation` | `sdpa` |
 | `hf_cache_dir` | `/workspace/hf_cache` |
 
-Training defaults:
+Dataclass fallback training defaults (not the active YAML values):
 
 | Field | Default |
 |---|---|
@@ -989,10 +1000,13 @@ Data/path defaults:
 | `hf_cache_dir` | `/workspace/hf_cache` |
 | `seed` | `42` |
 
-Current `train.py` CLI additionally exposes encoder alias/revision/precision/frame
-microbatch/attention/cache, physical batch, resource/no-step provenance preflight,
-provenance comparison, strict W&B identity, and explicit resume migration policy. Read
-`parse_args()` before adding or changing an experiment knob.
+The only scientific CLI overrides are `--data`, `--encoder`, `--n-c`, `--d-c`, and
+`--bottleneck-mixer-dim`. They are the repeatedly varied axes from the recent dataset/encoder/
+latent-shape investigations. Losses, whitening, reconstruction modes, decoder shape, schedules,
+optimizer settings, and cadence live in YAML so their coupled recipe is reviewed as one unit.
+Resume, preflight, provenance, W&B identity, and checkpoint-path flags remain operator controls.
+`d_c` must be positive and divisible by `f_c_heads`; checkpoints are shape-incompatible across
+either external axis. See `TRAIN_PY_HYPERPARAMETERS.md` before adding or changing a knob.
 
 ## 13. Stage and phase status
 

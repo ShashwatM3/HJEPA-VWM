@@ -2,7 +2,10 @@
 
 <!-- AUTO-GENERATED-WANDB-KANBAN -->
 
-Phase 1 currently covers coarse dynamics only: frozen V-JEPA 2 encoder, trainable bottleneck `B`, EMA bottleneck `B_EMA`, coarse flow `F_c`, optional feature reconstruction decoder `D`, and diagnostic/regularization knobs used to understand collapse, rank, temporal dynamics, reconstruction honesty, and prediction baselines.
+Phase 1 currently covers coarse dynamics only: a pinned frozen encoder (V-JEPA2, SigLIP 2, or
+DINOv3), trainable bottleneck `B`, EMA bottleneck `B_EMA`, coarse flow `F_c`, optional feature
+reconstruction decoder `D`, and diagnostic/regularization knobs used to understand collapse, rank,
+temporal dynamics, reconstruction honesty, and prediction baselines.
 
 ## Historical W&B Snapshot (verified 2026-07-02)
 
@@ -36,7 +39,7 @@ use the dated updates below—especially the 2026-07-16 reconciliation—for cur
 | [investigation_014](investigation_014/) | OPEN | none | Offline rank probe shows frozen V-JEPA `e` is already anisotropic: pooled-token entropy rank is 192.7/1024, with within-video rank around 75.7 and a long low-energy tail. This reframes `e -> c` as selective compression/denoising rather than simple full-rank preservation. |
 | [investigation_015](investigation_015/) | OPEN | 054 (planned) | Run-053 AE-only recipe on the Perceiver latent-stack bottleneck with fixed offline feature whitening (the inv014-motivated hypothesis). Single combined run; per-change attribution framework in the investigation README. Launch guide includes the one-time `whiten_stats.py` prerequisite. |
 
-## Complete W&B Run Index
+## Historical W&B Run Index (entries 001–052)
 
 | # | Run | ID | Created | State | Investigation | Mode | Verdict |
 |---:|---|---|---|---|---|---|---|
@@ -120,9 +123,9 @@ Newer investigation index (append to the table above):
 | [investigation_013](investigation_013/) | CLOSED | 053 | The residual reconstruction target (reconstruct e - mean) fixes the template shortcut (video gap +0.433, ~77% video-conditioned) but geometry still collapses (rank 10.5). H1 solved, H2 confirmed: an explicit anti-collapse force is required. |
 | [investigation_014](investigation_014/) | OPEN | none | Offline rank probe: frozen V-JEPA `e` has pooled entropy rank ~193/1024 with a long low-energy tail (rank@90% 333, rank@99% 785). Reframes e->c as selective denoising and motivates whitening. |
 | [investigation_015](investigation_015/) | OPEN | 054, 055 | Whitening + Perceiver latent-stack bottleneck on the residual recipe: strongest honesty yet (run 054, ~92% video-conditioned, shuffled-c pinned 0.975) at a much better geometry equilibrium (rank 21.9 vs 053's 10.5), but geometry still contracts — "neither delta sufficient." Run 055 (absolute-target ablation of 054) shows whitening alone reaches ~86% honesty with identical geometry, so the residual target buys ~6 points of honesty for zero geometric cost — it stays in the recipe. Bottleneck-only whitening-vs-architecture control still open. |
-| [investigation_016](investigation_016/) | OPEN | 058, 060-065, 067, 069 complete; 059 planned; 068 launched | The clean-commit EGO4D `N_c=32/64/128` sweep completed. Late training reconstruction improves only `0.67703 -> 0.67396 -> 0.66298`, while recorded-batch geometry is healthy only at 32 (`std/cos=0.806/0.473`) and fails at 64/128. More query slots are not a healthy capacity win; skip 256 and move to no-whitening plus channel-width/`D_c` work. |
+| [investigation_016](investigation_016/) | OPEN | 058, 060-063; 059 planned | The clean-commit EGO4D `N_c=32/64/128` sweep completed. Late training reconstruction improves only `0.67703 -> 0.67396 -> 0.66298`, while recorded-batch geometry is healthy only at 32 (`std/cos=0.806/0.473`) and fails at 64/128. More query slots are not a healthy capacity win; skip 256 and move to no-whitening plus channel-width/`D_c` work. |
 
-Newer run index rows (append to the Complete W&B Run Index above):
+Newer run index rows (append to the historical W&B snapshot above):
 
 | # | Run | ID | State | Investigation | Mode | Verdict |
 |---:|---|---|---|---|---|---|
@@ -131,7 +134,7 @@ Newer run index rows (append to the Complete W&B Run Index above):
 | 55 | [`ae_latent_stack_whiten_abs_recon`](investigation_015/run_055_ae_latent_stack_whiten_abs_recon/) | `nzz64pl6` | finished | investigation_015 | present-only | Low-rank decodable |
 | 56 | [`ae_latent_stack_whiten_abs_recon_geom`](investigation_015/run_056_ae_latent_stack_whiten_abs_recon_geom/) | `tl5dh73c` | finished | investigation_015 | present-only | Strong present representation |
 | 57 | [`ae_latent_stack_whiten_abs_recon_cov_var`](investigation_015/run_057_ae_latent_stack_whiten_abs_recon_cov_var/) | `cdvp6hou` | finished | investigation_015 | present-only | Strong present representation |
-| 58 | [`ae_latent_stack_whiten_abs_recon_cov_var_ego4d`](investigation_016/run_058_ae_latent_stack_whiten_abs_recon_cov_var_ego4d/) | `mvbx96nv` | finished | investigation_016 | present-only | Collapsed rep / template shortcut |
+| 58 | [`ae_latent_stack_whiten_abs_recon_cov_var_ego4d`](investigation_016/run_058_ae_latent_stack_whiten_abs_recon_cov_var_ego4d/) | `mvbx96nv` | finished | investigation_016 | present-only | Historical label: collapsed/template; later single-source correction makes global collapse indeterminate |
 | 60 | [`Investigation 16 · Whitened latent stack EGO4D · Reconstruction weight 1.00`](investigation_016/run_060_ae_latent_stack_whiten_abs_recon_cov_var_ego4d_recon1/) | `2423b84g` | finished | investigation_016 | present-only | Healthy recorded-batch geometry; weak/source-confounded conditioning |
 | 61 | [`Bottleneck capacity · EGO4D 32 slots`](investigation_016/bottleneck_slot_capacity_sweep/) | `x03xlpyl` | finished | investigation_016 | present-only | Strong recorded-batch representation; sweep control |
 | 62 | [`Bottleneck capacity · EGO4D 64 slots`](investigation_016/bottleneck_slot_capacity_sweep/) | `evyokqrm` | finished | investigation_016 | present-only | Recorded-batch collapsed / source-chunk invariant |
@@ -212,6 +215,173 @@ Newest run index rows:
 |---:|---|---|---|---|---|---|
 | 64 | [`Investigation 16 · Internal memory width · EGO4D M=512`](investigation_016/run_064_unwhitened_internal_memory_m512/) | `4biwq87o` | finished | investigation_016 | present-only | Low-rank decodable; global collapse indeterminate; selected width |
 | 65 | [`Investigation 16 · Internal memory width · EGO4D M=1024`](investigation_016/run_065_unwhitened_internal_memory_m1024/) | `8gr3je5b` | finished | investigation_016 | present-only | Low-rank decodable; global collapse indeterminate; not cost-justified |
-| 67 | [`Investigation 16 · Encoder substrate · DINOv3 unwhitened memory M=512`](investigation_016/run_067_dinov3_unwhitened_internal_memory_m512/) | `it7sq8nz` | finished | investigation_016 | present-only | Low-rank decodable; global collapse indeterminate; late window pending |
-| 68 | [`Investigation 16 · Encoder substrate · DINOv3 whitened memory M=512 covariance plus variance`](investigation_016/run_068_dinov3_whitened_internal_memory_m512_cov_var/) | pending | launched | investigation_016 | present-only | Preliminary geometry improvement and reconstruction regression; exact results pending |
-| 69 | [`Investigation 16 · Encoder substrate · DINOv3 unwhitened memory M=512 covariance plus variance`](investigation_016/run_069_dinov3_unwhitened_internal_memory_m512_cov_var/) | `fiactcw6` | finished | investigation_016 | present-only | Completed; unwhitened reconstruction consistent with whitening contributing to Run 68 degradation; qualified by missing exact Run 68 metrics |
+
+## Update (2026-07-21) — raw encoder controls reconciled; investigation 017 expanded
+
+- Live W&B has **70 entries**. Runs 66 (`guiduvjp`) and 67 (`ufbeokj2`) were intentionally stopped
+  while healthy; Run 68 (`j7a3tzj5`) ended externally at step 14,350 after stable training; Run 69
+  (`it7sq8nz`) completed all 15,000 steps.
+- Run 66 shows covariance plus variance can keep the raw V-JEPA2 `M=512` code substantially open.
+  Run 67 shows the same terms also open SigLIP 2 relative to its no-geometry successor, although its
+  partial endpoint remains less spread and more aligned than V-JEPA2.
+- Raw SigLIP 2 Run 68 and DINOv3 Run 69 both learn positive correct-versus-shuffled reconstruction
+  gaps without geometry pressure, but both contract to low-rank, highly aligned codes. This
+  validates the revised bottleneck's input dependence and re-establishes the need for explicit
+  geometry pressure.
+- DINOv3 is now a pinned implemented encoder at revision
+  `5931719e67bbdb9737e363e781fb0c67687896bc`; Run 69 proved its `(B,2048,768)` token contract and
+  complete EGO4D present-reconstruction training path. It did not exercise prediction.
+- [Investigation 017](investigation_017/) is OPEN with three encoder-specific sweep bundles. Each
+  runs the full `N_c={16,32,64}` by `D_c={128,256,512}` grid at fixed `M=512` with variance and
+  covariance enabled: 27 planned runs total, none launched.
+
+Current investigation rows:
+
+| Investigation | Status | Runs | Current conclusion |
+|---|---|---|---|
+| [investigation_016](investigation_016/) | OPEN | 058, 060–069; 059 unlaunched | `M=512` is the practical internal width. Raw no-geometry codes remain low-rank across V-JEPA2, SigLIP 2, and DINOv3; covariance plus variance is the carried geometry bundle. |
+| [investigation_017](investigation_017/) | OPEN | 27 planned | Sweep external slot count and slot width independently within V-JEPA2, SigLIP 2, and DINOv3. Compare raw losses only within encoder; synthesize normalized geometry, dependence, stability, and compute across encoders. |
+
+Newest scientific run rows:
+
+| # | Run | ID | State | Investigation | Mode | Verdict |
+|---:|---|---|---|---|---|---|
+| 66 | [`Investigation 16 · Raw-feature geometry · M=512 covariance plus variance`](investigation_016/run_066_unwhitened_internal_memory_m512_cov_var/) | `guiduvjp` | killed (intentional) | investigation_016 | present-only | Strong present representation; partial endpoint |
+| 67 | [`Investigation 16 · Standard-ViT geometry · SigLIP2-B M=512 covariance plus variance`](investigation_016/run_067_unwhitened_siglip2_m512_cov_var/) | `ufbeokj2` | killed (intentional) | investigation_016 | present-only | Low-rank decodable; partial endpoint |
+| 68 | [`Investigation 16 · Standard-ViT geometry · SigLIP2-B M=512 no covariance plus variance`](investigation_016/run_068_unwhitened_siglip2_m512_no_geometry_regularizers/) | `j7a3tzj5` | crashed (external) | investigation_016 | present-only | Low-rank decodable; global collapse indeterminate |
+| 69 | [`Investigation 16 · Encoder substrate · DINOv3 unwhitened memory M=512`](investigation_016/run_069_unwhitened_dinov3_m512_no_geometry_regularizers/) | `it7sq8nz` | finished | investigation_016 | present-only | Low-rank decodable; global collapse indeterminate |
+
+## Canonical live reconciliation (2026-07-26)
+
+This section is the current source of truth. All earlier tables and dated updates above are
+preserved snapshots and may contain states that were true only when written.
+
+- Historical source-branch folders named
+  `run_067_dinov3_unwhitened_internal_memory_m512` and
+  `run_068_dinov3_whitened_internal_memory_m512_cov_var` preserve pre-reconciliation labels.
+  Their canonical local records are Run 069 (`it7sq8nz`) and Run 070 (`qqozribu`),
+  respectively; do not count the historical folders as additional scientific runs.
+- Live project: `smahalanobis-uc-davis/hjepa-vwm`.
+- W&B inventory: **75 entries** — 34 finished, 29 crashed, 11 killed, 1 failed, and **0 running**.
+- Documentation snapshot: the 75-entry reconciliation was published in Git history through merge
+  commit `b73bfa918c77da2574bf152f99935010c878b963`. Investigation 018 and local scientific run 072
+  are newer pre-launch registrations and do not yet have a W&B entry. Individual W&B runs retain
+  their own clean runtime commits.
+- Investigation 016 is closed after recording the two completed DINO geometry arms.
+- Investigation 017 remains open but has **no active queue**. Its only unique V-JEPA2 arm,
+  `ihiuptdp` (`16×512`), is crashed at step 7,100; the remaining arms are unlaunched.
+- No W&B entry in this project demonstrates DINOv3 full-prediction execution. Runs 069–071 and
+  the DINO smoke are present-only: `prediction_active=0`, `L_flow=0`, and `L_recon_pred=0`.
+
+### Canonical interpretation boundaries
+
+For EGO4D runs in this ledger, the fixed diagnostic batch contains 16 adjacent chunks from one
+source UID. Consequently, `c_cross_video_cosine` is a within-source cross-chunk statistic and the
+rolled-code gap proves exact-chunk dependence only. A historical phrase such as “global template
+collapse,” “cross-video separation,” or “video-conditioned share” is not a cross-source result
+unless a later record explicitly supplies source-diverse evidence.
+
+For DINOv3 and SigLIP 2, the normal W&B `model` block retains legacy V-JEPA compatibility fields.
+The runtime authority is `resolved_provenance.encoder_spec`: DINOv3 resolves to 768 channels and an
+`8×16×16` frame lattice even though `model.d_e=1024` remains serialized.
+
+### Current investigation index
+
+| Investigation | Current status | Current conclusion |
+|---|---|---|
+| [investigation_016](investigation_016/) | CLOSED | The EGO4D transfer, bottleneck, and three-encoder substrate arc is recorded through local scientific runs 071. DINO is validated only for present reconstruction. |
+| [investigation_017](investigation_017/) | OPEN — no active runs | Three within-encoder `N_c×D_c` sweeps remain incomplete. Exact `32×256` recipe evidence now exists for all three encoder lanes; `ihiuptdp` is an invalid partial V-JEPA2 arm, not an active process. |
+| [investigation_018](investigation_018/) | OPEN — run 072 registered | Test pure SIGReg on the current raw V-JEPA2 `M=512`, `32×256` present-reconstruction recipe with variance and covariance disabled. |
+
+### Complete current W&B inventory
+
+“W&B ordinal” is creation order and includes smokes, duplicates, and interrupted launches. “Local
+label” is the scientific-folder sequence. They diverge after entry 057; the W&B ID is the
+authoritative join key.
+
+| W&B ordinal | W&B ID | State | Last logged step | Local label / role |
+|---:|---|---|---:|---|
+| 001 | `x4pwz33d` | finished | 50 | local 001, investigation 002 launch smoke |
+| 002 | `fz7ztfc8` | finished | 150 | local 002, investigation 002 throughput before frame fix |
+| 003 | `0mgmqxxi` | finished | 199 | local 003, investigation 002 dense logging before frame fix |
+| 004 | `gj8ypv0d` | finished | 150 | local 004, investigation 002 throughput after frame fix |
+| 005 | `1chv2608` | failed | 10,950 | local 005, investigation 001 long baseline |
+| 006 | `wv69n7n5` | finished | 450 | local 006, investigation 003 collapse probe |
+| 007 | `rpxyg9qt` | crashed | 4,450 | local 007, investigation 003 full-data baseline |
+| 008 | `dhp1i3fk` | killed | 4,300 | local 008, investigation 003 strong slot loss |
+| 009 | `m30jxiye` | killed | -1 | local 009, investigation 003 empty launch |
+| 010 | `27i1r9qi` | crashed | 2,550 | local 010, investigation 003 mild slot loss |
+| 011 | `q40nq0l3` | killed | 3,900 | local 011, investigation 003 centered slot loss |
+| 012 | `ejror834` | killed | 5,650 | local 012, investigation 003 centered-slot repeat |
+| 013 | `4lo4j7qb` | killed | 6,900 | local 013, investigation 003 strong variance |
+| 014 | `8bkeeuio` | crashed | 3,900 | local 014, investigation 003 strong-variance repeat |
+| 015 | `jhodg49x` | crashed | 13,850 | local 015, investigation 005 pre-AGC acceptance |
+| 016 | `0n5mx3qf` | finished | 14,950 | local 016, investigation 005 checkpoint resume |
+| 017 | `0xv4upvb` | killed | 11,350 | local 017, investigation 005 adaptive clipping |
+| 018 | `yd5958s6` | killed | 14,400 | local 018, investigation 006 present reconstruction |
+| 019 | `3syv6wp2` | finished | 14,950 | local 019, investigation 006 predicted reconstruction |
+| 020 | `5x7aoxnn` | crashed | 9,050 | local 020, investigation 007 reconstruction weight 0.20 |
+| 021 | `591mt31k` | crashed | 9,100 | local 021, investigation 007 wide/deep decoder |
+| 022 | `708jrel8` | crashed | 8,850 | local 022, investigation 007 wide decoder |
+| 023 | `a2trqp9c` | crashed | 9,200 | local 023, investigation 007 reconstruction weight 0.10 |
+| 024 | `rju7xsh2` | crashed | 9,250 | local 024, investigation 007 reconstruction weight 0.50 |
+| 025 | `2xsd5jwr` | crashed | 200 | local 025, investigation 007 256-slot smoke |
+| 026 | `7u5zkw6t` | crashed | 200 | local 026, investigation 007 64-slot smoke |
+| 027 | `bbrrydax` | crashed | 200 | local 027, investigation 007 64-slot wide-decoder smoke |
+| 028 | `ryuh8cpr` | crashed | 200 | local 028, investigation 007 128-slot smoke |
+| 029 | `tw685b5g` | crashed | 200 | local 029, investigation 007 reconstruction-weight smoke |
+| 030 | `9jxc8i1q` | crashed | 13,050 | local 030, investigation 008 SIGReg 3.0 |
+| 031 | `jk8kj7h7` | crashed | 13,100 | local 031, investigation 008 SIGReg 1.0 |
+| 032 | `x7z6e0ah` | crashed | 13,150 | local 032, investigation 008 SIGReg 0.3 |
+| 033 | `fbqgix1x` | crashed | 13,150 | local 033, investigation 008 SIGReg 10.0 |
+| 034 | `xz3nabr9` | crashed | 14,050 | local 034, investigation 009 no-reconstruction control |
+| 035 | `jsh6uo7p` | crashed | 14,050 | local 035, investigation 009 residual prediction |
+| 036 | `b4lf89if` | killed | 250 | local 036, investigation 010 launch check |
+| 037 | `2vbo6pbm` | finished | 14,950 | local 037, investigation 010 full clean run |
+| 038 | `1u69hpfm` | finished | 14,950 | local 038, investigation 011 cosine reconstruction |
+| 039 | `kttd1fib` | finished | 14,950 | local 039, investigation 011 present-only control |
+| 040 | `io74f32b` | finished | 14,950 | local 040, investigation 011 fixed-position decoder |
+| 041 | `hcr2qx19` | crashed | 14,400 | local 041, investigation 011 fixed-position present reconstruction |
+| 042 | `fq0crddc` | finished | 14,950 | local 042, investigation 011 present geometry |
+| 043 | `4f2p1e7b` | finished | 14,950 | local 043, investigation 011 present geometry |
+| 044 | `5xockdbh` | finished | 14,950 | local 044, investigation 011 present geometry |
+| 045 | `76d6o8d2` | finished | 14,950 | local 045, investigation 011 present geometry |
+| 046 | `9ap28tbw` | finished | 14,950 | local 046, investigation 011 present geometry |
+| 047 | `az60m6mx` | crashed | 14,150 | local 047, investigation 011 present geometry |
+| 048 | `bg7ennr5` | crashed | 14,000 | local 048, investigation 011 present geometry |
+| 049 | `bttexglp` | crashed | 14,350 | local 049, investigation 011 present geometry |
+| 050 | `h5t89ezx` | crashed | 14,300 | local 050, investigation 011 present geometry |
+| 051 | `mtrviiab` | crashed | 14,250 | local 051, investigation 011 present geometry |
+| 052 | `662hfy3c` | finished | 14,950 | local 052, investigation 012 sharp-slot reconstruction |
+| 053 | `7teohhwc` | crashed | 12,150 | local 053, investigation 013 residual reconstruction |
+| 054 | `lx1b6gw2` | finished | 14,950 | local 054, investigation 015 whitened residual reconstruction |
+| 055 | `nzz64pl6` | finished | 14,950 | local 055, investigation 015 whitened absolute reconstruction |
+| 056 | `tl5dh73c` | finished | 14,950 | local 056, investigation 015 full geometry |
+| 057 | `cdvp6hou` | finished | 14,950 | local 057, investigation 015 covariance plus variance |
+| 058 | `29a2ora7` | finished | 450 | operational EGO4D 500-step smoke; no local scientific label |
+| 059 | `tt4x64hc` | finished | 50 | operational SSv2 100-step regression smoke; no local scientific label |
+| 060 | `mvbx96nv` | finished | 14,950 | local 058, investigation 016 EGO4D transfer |
+| 061 | `2423b84g` | finished | 14,950 | local 060, investigation 016 reconstruction weight 1.0 |
+| 062 | `x03xlpyl` | finished | 14,950 | local 061, investigation 016 32-slot capacity control |
+| 063 | `evyokqrm` | finished | 14,950 | local 062, investigation 016 64-slot capacity arm |
+| 064 | `7pmvxrxi` | finished | 14,950 | local 063, investigation 016 128-slot capacity arm |
+| 065 | `4biwq87o` | finished | 14,950 | local 064, investigation 016 unwhitened memory M=512 |
+| 066 | `8gr3je5b` | finished | 14,950 | local 065, investigation 016 unwhitened memory M=1024 |
+| 067 | `ufbeokj2` | killed | 11,000 | local 067, investigation 016 SigLIP 2 cov+var center |
+| 068 | `guiduvjp` | killed | 10,950 | local 066, investigation 016 V-JEPA2 cov+var center |
+| 069 | `j7a3tzj5` | crashed | 14,350 | local 068, investigation 016 SigLIP 2 no-geometry arm |
+| 070 | `it7sq8nz` | finished | 14,950 | local 069, investigation 016 DINOv3 no-geometry arm |
+| 071 | `kiti1gpc` | killed | 1,000 | investigation 017 duplicate V-JEPA2 center; excluded |
+| 072 | `ihiuptdp` | crashed | 7,100 | [investigation 017 V-JEPA2 `16×512`](investigation_017/vjepa2_latent_shape_sweep/ihiuptdp_vjepa2_n16_d512/); invalid partial arm |
+| 073 | `lwx0mu34` | finished | 90 | operational DINOv3 whitened cov+var smoke |
+| 074 | `qqozribu` | finished | 14,950 | [local 070](investigation_016/run_070_whitened_dinov3_m512_cov_var/), investigation 016 DINOv3 whitened cov+var |
+| 075 | `fiactcw6` | finished | 14,950 | [local 071](investigation_016/run_071_unwhitened_dinov3_m512_cov_var/), DINOv3 unwhitened cov+var / investigation 017 center |
+
+## Registered next experiment (2026-07-27)
+
+Local scientific
+[run 072](investigation_018/run_072_vjepa2_unwhitened_m512_sigreg10_only/) is registered under
+[investigation 018](investigation_018/). It keeps the latest raw/unwhitened `M=512`, `32×256`,
+decoder-`512×4`, reconstruction-only recipe, selects V-JEPA2, and replaces covariance plus
+variance with `lambda_sigreg=10` alone. No W&B entry exists until launch; the W&B ID remains the
+required join key once created.

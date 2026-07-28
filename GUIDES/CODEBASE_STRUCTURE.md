@@ -13,7 +13,9 @@ invariants. Use this file when you need to know *which file to open*, not *how t
 
 ```text
 HJEPA-VWM/
-├── config.py              # All defaults, paths, dimensions
+├── config.py              # Typed defaults + strict YAML experiment loader
+├── configs/
+│   └── train.yaml         # The only editable Phase-1 experiment recipe
 ├── data.py                # Video dataset + dataloader (SSv2 .webm / EGO4D .mp4 chunks)
 ├── encoders.py            # Generic raw-clip frozen-encoder seam + private adapters
 ├── provenance.py          # Dataset/run identity + atomic checkpoint/artifact envelopes
@@ -53,18 +55,18 @@ These flat files are the entire Phase 1 implementation. There is no `src/` packa
 
 | File | Owns | Does not own |
 |---|---|---|
-| `config.py` | `EncoderConfig`, `ModelConfig`, `TrainConfig`, `Config`; path defaults; locked dimensions | CLI parsing (that is `train.py`) |
+| `config.py` | `EncoderConfig`, `ModelConfig`, `TrainConfig`, `Config`; strict YAML loading; path defaults; locked dimensions | CLI parsing (that is `train.py`) |
 | `data.py` | Deterministic raw `[0,1]` `ClipBatch` values, context/future windows, shared transforms, resumable sample order | Encoder normalization or backend selection |
 | `encoders.py` | Raw-clip contract, normalization/precision/frame-microbatching, immutable `EncoderSpec`, private registry/adapters, real smoke CLI | Latent architecture, losses, or training orchestration |
 | `models.py` | `EncoderSpec`-driven `Bottleneck`, `TargetBottleneck`, `CoarseFlow`, `Decoder`, `FeatureMeanTracker`, and `FeatureWhitener`; narrow historical V-JEPA geometry reader | Encoder loading/preprocessing, loss math, optimizer |
 | `losses.py` | `flow_matching_loss`, `variance_floor`, `reconstruction_loss`, `as_target`, … | Any `nn.Parameter` |
 | `diagnostics.py` | `variance_stats`, `coarse_baselines`, `reconstruction_readouts`, AGC/decay grouping | Training loop |
 | `provenance.py` | Dataset/run fingerprints, EncoderSpec serialization, atomic JSON/Torch writes, strict whitening/cache envelopes | Model math or network authentication |
-| `train.py` | `train_step`, diagnostics, EMA, strict resume/checkpoints, parity/resource preflight, CLI, W&B policy | Encoder backend classes or new module architectures |
+| `train.py` | `train_step`, diagnostics, EMA, strict resume/checkpoints, parity/resource preflight, five-axis scientific CLI, W&B policy | Encoder backend classes or new module architectures |
 
 **Typical read order for a change:**
 
-1. `config.py` — is there already a knob?
+1. `configs/train.yaml` and `config.py` — is there already a recipe field?
 2. `encoders.py` — if the change touches frozen features or preprocessing
 3. `train.py` — where is it wired into the step or diagnostics?
 4. `models.py` / `losses.py` / `diagnostics.py` — the actual math
@@ -96,7 +98,8 @@ Key semantics:
   selected adapter's normalization exactly once; no common caller imports processor rules.
 - Present-only mode decodes context frames only. Full mode decodes context and target
   together so one deterministic crop/jitter is shared by both windows.
-- Datasets: `--data ssv2 | ssv2_tiny | ego4d | ego4d_tiny`. EGO4D chunks are pre-encoded to
+- Datasets: YAML `data.dataset`, with the hot override
+  `--data ssv2 | ssv2_tiny | ego4d | ego4d_tiny`. EGO4D chunks are pre-encoded to
   12 fps, so `frame_stride`/`horizon_k` keep the same real-time meaning as on SSv2
   (build procedure: [`AGENT_FILES/KNOWLEDGE/ego4d/GUIDE.md`](../AGENT_FILES/KNOWLEDGE/ego4d/GUIDE.md)).
 
@@ -110,26 +113,23 @@ Override dataset parent locally: `export JEPA_DATA_ROOT=/path/to/data`.
 |---|---|
 | `python encoders.py --smoke --encoder vjepa2_vitl16 --batch-size 1` | Real pinned-adapter shape/revision/freeze/memory report (downloads weights if absent) |
 | `python encoders.py --smoke --encoder siglip2_vitb16 --batch-size 1` | Real pinned SigLIP 2 vision-only patch-tower smoke |
-| `python encoders.py --smoke --encoder dinov3_vitb16 --revision <40-char-sha> --batch-size 1` | Real DINOv3 patch-token smoke; explicit revision required until a default is pinned |
+| `python encoders.py --smoke --encoder dinov3_vitb16 --batch-size 1` | Real pinned DINOv3 patch-token smoke; requires accepted checkpoint access |
 | `python train.py --stage0-only` | Synthetic one-step sanity (encoder load + shapes) |
 | `python train.py --resource-preflight ...` | Exact one-step forward/backward/diagnostic memory and throughput report |
 | `python train.py --preflight-only --provenance-out run.json ...` | Materialize a no-step immutable run identity for paired comparison |
-| `python train.py --data ssv2_tiny --steps 500` | Short smoke run |
-| `python train.py --data ssv2 --steps 15000 --horizon-k 12 --lambda-var 0.5` | Typical full Phase 1 experiment (CLI overrides defaults) |
+| `python train.py` | Run the repository's single `configs/train.yaml` recipe |
+| `python train.py --encoder dinov3_vitb16 --n-c 16 --d-c 512` | Full experiment with only active sweep axes overridden |
 
-Important CLI groups (full list in `train.py` `parse_args()`):
+Configuration interface:
 
-- **Encoder/data:** `--encoder`, immutable revision, precision, frame microbatch,
-  attention implementation, cache, `--data`, `--batch-size`, `--horizon-k`, `--seed`
-- **Schedule:** `--steps`, `--resume`, `--log-every`, `--diag-every`, `--checkpoint-dir`
-- **Losses:** `--lambda-var`, `--lambda-recon`, `--lambda-recon-pred`, `--lambda-sigreg`, …
-- **Modes:** `--present-recon-only`, `--predict-residual`, `--recon-residual-target`,
-  `--recon-loss-mode`, strict encoder-bound `--whiten-features` plus
-  `--whiten-expected-clips`
+- **Single YAML recipe:** `configs/train.yaml`, always loaded; encoder details, batch/schedule,
+  losses, reconstruction/whitening modes, decoder/background architecture, optimizer/AGC,
+  cadence, runtime, and W&B defaults. Every leaf has allowed-value/range guidance inline.
+- **Five scientific CLI overrides:** `--data`, `--encoder`, `--n-c`, `--d-c`,
+  `--bottleneck-mixer-dim`.
 - **Operations:** strict W&B, atomic RNG/sampler resume, explicit optimizer reset/dataset
-  transfer/legacy flags, frame-count-bound provenance comparison, CUDA-event resource
-  preflight with examples/frames/tokens throughput
-- **Optimizer:** `--lr-bottleneck`, `--lr-coarse-flow`, `--no-agc`, `--grad-skip-threshold`
+  transfer/legacy flags, frame-count-bound provenance comparison, CUDA-event resource preflight
+  with examples/frames/tokens throughput
 
 Checkpoints write to `checkpoint_dir` (default `/workspace/checkpoints`). The frozen encoder is
 **never** checkpointed — it reloads from Hugging Face.
@@ -180,6 +180,7 @@ Prefer the **W&B MCP server** in Cursor for interactive metric pulls (see
 | `tests/test_phase1_contract.py` | Config, subset manifest, flat-file deliverables |
 | `tests/test_encoders.py` | Raw-input validation, normalization once, both dense layouts, frame ordering/microbatching, fingerprints, sticky freeze, registry/revision failures, and V-JEPA legacy parity |
 | `tests/test_encoder_run_contract.py` | Paired initialization, deterministic resume/transfer, checkpoint-before-mutation, B>1 honesty, CLI and diagnostic RNG contracts |
+| `tests/test_experiment_config.py` | Strict duplicate/key/type/legacy-field YAML validation, exact five-axis CLI, precedence, cache synchronization, and shipped recipes |
 | `tests/test_provenance.py` | Dataset/runtime/seed identity, narrow transfer, and strict atomic whitening/feature-cache envelope validation |
 | `tests/test_reconstruction_loss.py` | Reconstruction loss modes and detach behaviour |
 | `tests/test_optimizer_and_flow.py` | Optimizer groups and flow loss contracts |

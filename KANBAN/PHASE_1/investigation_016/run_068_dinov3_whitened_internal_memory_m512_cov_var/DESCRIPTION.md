@@ -1,8 +1,13 @@
 # Run 68 — Investigation 16 · Encoder substrate · DINOv3 whitened memory M=512 covariance plus variance
 
+> **Local-label/status correction (2026-07-27):** this experiment is canonical local
+> [Run 070](../run_070_whitened_dinov3_m512_cov_var/), W&B `qqozribu`, and finished all
+> 15,000 updates. The source-branch `PLANNED` record below is retained as history and is not the
+> current run status.
+
 ## Status
 
-LAUNCHED — qualitative observations were supplied after launch, but completion, exact W&B identity, checkpoint hashes, and final metrics are not repository-verified.
+PLANNED — not yet launched. This folder is the pre-launch record (triad + `PLAN.md` + `GUIDE.md`).
 
 ## W&B
 
@@ -44,7 +49,3 @@ every 50; diagnostics every 500; no residual target and no resume. Frame microba
 baseline candidate and must pass whitening-active resource preflight.
 
 Exact gated execution: [`GUIDE.md`](GUIDE.md). Implementation/execution plan: [`PLAN.md`](PLAN.md).
-
-## Preliminary qualitative report
-
-Whitening was reported active. Reconstruction worsened to approximately .3, while effective rank improved and cross-video cosine decreased. These are preliminary qualitative observations, not a final metric readout. Attribution remains confounded across the broader sequence because whitening and the late-projection architecture were both present. Run 69 isolates whitening while preserving the projection placement and lambda_var=0.5 / lambda_cov=0.01.

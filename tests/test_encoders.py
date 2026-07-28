@@ -15,6 +15,7 @@ _REVISION_A = "a" * 40
 _REVISION_B = "b" * 40
 _VJEPA2_REVISION = "b3c1679b7c34d3255ef3547f27c7b226aefab26f"
 _SIGLIP2_REVISION = "3f9f96cb90da5dbc758b01813f2f6f1aee24c1ab"
+_DINOV3_REVISION = "5931719e67bbdb9737e363e781fb0c67687896bc"
 
 
 class _FakeTubeletBackend(nn.Module):
@@ -141,8 +142,6 @@ def test_public_encoder_surface_is_small():
         "FeatureLayout",
         "EncoderSpec",
         "FrozenEncoder",
-        "DINOV3_VITB16_REVISION",
-        "registered_encoder_aliases",
         "build_frozen_encoder",
     ]
 
@@ -278,17 +277,17 @@ def test_eval_and_freeze_are_sticky():
 
 
 def test_dino_registry_has_pinned_default_revision():
-    from encoders import _ADAPTER_REGISTRY, DINOV3_VITB16_REVISION
+    from encoders import _ADAPTER_REGISTRY
 
-    assert DINOV3_VITB16_REVISION == "5931719e67bbdb9737e363e781fb0c67687896bc"
-    assert _ADAPTER_REGISTRY["dinov3_vitb16"].default_revision == DINOV3_VITB16_REVISION
+    assert _ADAPTER_REGISTRY["dinov3_vitb16"].default_revision == _DINOV3_REVISION
 
 
-def test_dino_registry_uses_pinned_default_revision_at_runtime(monkeypatch):
+def test_dino_public_factory_uses_pinned_default_revision(monkeypatch):
+    """Selecting DINO alone must load the reviewed immutable checkpoint."""
     import transformers
 
     from config import EncoderConfig
-    from encoders import DINOV3_VITB16_REVISION, build_frozen_encoder
+    from encoders import build_frozen_encoder
 
     captured = {}
 
@@ -297,7 +296,7 @@ def test_dino_registry_uses_pinned_default_revision_at_runtime(monkeypatch):
             super().__init__()
             self.weight = nn.Parameter(torch.ones(1))
             self.config = SimpleNamespace(
-                _commit_hash=DINOV3_VITB16_REVISION,
+                _commit_hash=_DINOV3_REVISION,
                 num_register_tokens=4,
             )
 
@@ -308,31 +307,19 @@ def test_dino_registry_uses_pinned_default_revision_at_runtime(monkeypatch):
 
     monkeypatch.setattr(transformers.DINOv3ViTModel, "from_pretrained", fake_from_pretrained)
 
-    build_frozen_encoder(EncoderConfig(alias="dinov3_vitb16"))
+    encoder = build_frozen_encoder(
+        EncoderConfig(
+            alias="dinov3_vitb16",
+            revision=None,
+            precision="fp32",
+            hf_cache_dir="/tmp/dino-default-cache",
+        )
+    )
 
-    assert captured["revision"] == DINOV3_VITB16_REVISION
-
-
-def test_training_cli_encoder_choices_match_registered_aliases(monkeypatch):
-    import argparse
-    import sys
-
-    from encoders import registered_encoder_aliases
-    from train import parse_args
-
-    captured = {}
-    original_add_argument = argparse.ArgumentParser.add_argument
-
-    def record_encoder_choices(parser, *names, **kwargs):
-        if "--encoder" in names:
-            captured["choices"] = kwargs.get("choices")
-        return original_add_argument(parser, *names, **kwargs)
-
-    monkeypatch.setattr(argparse.ArgumentParser, "add_argument", record_encoder_choices)
-    monkeypatch.setattr(sys, "argv", ["train.py"])
-    parse_args()
-
-    assert captured["choices"] == registered_encoder_aliases()
+    assert captured["repo_id"] == "facebook/dinov3-vitb16-pretrain-lvd1689m"
+    assert captured["revision"] == _DINOV3_REVISION
+    assert encoder.spec.requested_revision == _DINOV3_REVISION
+    assert encoder.spec.resolved_revision == _DINOV3_REVISION
 
 
 def test_transformers_pin_exposes_both_planned_frame_encoder_architectures():
@@ -361,7 +348,7 @@ def test_dino_registry_loads_explicit_revision_and_strips_special_tokens(monkeyp
 
         def forward(self, *, pixel_values, return_dict):
             assert return_dict is True
-            frame_ids = pixel_values.mean(dim=(1, 2, 3)).view(-1, 1, 1) * 1_000
+            frame_ids = pixel_values[:, 0, 0, 0].view(-1, 1, 1) * 1_000
             specials = torch.full(
                 (pixel_values.shape[0], 5, 768),
                 -999.0,
@@ -412,10 +399,36 @@ def test_dino_registry_loads_explicit_revision_and_strips_special_tokens(monkeyp
     mean = torch.tensor(ENCODER_IMAGE_MEAN).view(1, 1, 3, 1, 1)
     std = torch.tensor(ENCODER_IMAGE_STD).view(1, 1, 3, 1, 1)
     normalized = (raw - mean) / std
-    frame_signal = normalized.mean(dim=(0, 2, 3, 4)) * 1_000
+    frame_signal = normalized[0, :, 0, 0, 0] * 1_000
     assert tokens[0, 0, 0].item() == pytest.approx(frame_signal[0].item())
     assert tokens[0, 255, 0].item() == pytest.approx(frame_signal[0].item() + 255)
     assert tokens[0, 256, 0].item() == pytest.approx(frame_signal[1].item())
+    assert tokens.dtype == torch.float32
+    assert torch.isfinite(tokens).all()
+    assert all(not parameter.requires_grad for parameter in encoder.parameters())
+
+    # The adapter is frame-native: identical images have identical patch blocks,
+    # while a temporal permutation only permutes those complete blocks.
+    repeated = torch.full_like(raw, 0.6)
+    repeated_tokens = encoder(repeated).reshape(1, 8, 256, 768)
+    assert all(
+        torch.equal(repeated_tokens[:, 0], repeated_tokens[:, index]) for index in range(1, 8)
+    )
+
+    permutation = torch.tensor([7, 2, 5, 0, 6, 1, 4, 3])
+    permuted_tokens = encoder(raw[:, permutation]).reshape(1, 8, 256, 768)
+    assert torch.equal(permuted_tokens, tokens.reshape(1, 8, 256, 768)[:, permutation])
+
+    # Chunking flattened frames is an execution detail, not feature semantics.
+    encoder_one = build_frozen_encoder(replace(cfg, frame_microbatch=1))
+    encoder_eight = build_frozen_encoder(replace(cfg, frame_microbatch=8))
+    assert torch.equal(encoder_one(raw), tokens)
+    assert torch.equal(encoder_eight(raw), tokens)
+
+    encoder.train(True)
+    encoder.requires_grad_(True)
+    assert encoder.training is False
+    assert encoder._backend.training is False
     assert all(not parameter.requires_grad for parameter in encoder.parameters())
 
 

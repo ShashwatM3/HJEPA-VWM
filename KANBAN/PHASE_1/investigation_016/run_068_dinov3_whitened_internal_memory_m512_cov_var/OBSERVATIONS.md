@@ -1,25 +1,23 @@
 # Observations — Run 68, DINOv3 whitened internal-memory M=512 covariance plus variance
 
+> **Local-label/status correction (2026-07-27):** exact completed evidence now lives under
+> canonical local [Run 070](../run_070_whitened_dinov3_m512_cov_var/), W&B `qqozribu`.
+> Its W&B-backed analysis supersedes the empty pre-launch placeholder below.
+
 ## Status
 
-LAUNCHED — qualitative observations are available, but repository-visible evidence does not establish completion, an exact W&B ID, checkpoint identity, or final metric values.
+PLANNED — not yet launched. No metrics recorded yet.
 
-## Preliminary qualitative report
+Fill this file after the run completes:
 
-- Whitening was confirmed to remain enabled.
-- Reconstruction loss was reported to worsen to approximately `0.3`.
-- Effective rank of `C` improved.
-- Cross-video cosine decreased.
-- The next controlled test is unwhitened Run 69.
-
-Treat these as preliminary qualitative observations. Do not promote them to exact final values or a completed verdict without W&B/checkpoint evidence. Attribution across the broader experiment sequence is confounded because whitening and the late `M -> D_c` projection were both present. Run 69 isolates whitening by preserving the projection order and the `lambda_var=0.5`, `lambda_cov=0.01` settings while disabling whitening.
-
-## Pending evidence
-
-- W&B ID/URL and terminal state.
+- W&B ID/URL and final state (`finished`).
 - DINOv3 whitening-envelope path, payload fingerprint, and file SHA-256.
-- Final checkpoint path and SHA-256; committed provenance artifact.
-- Exact final and steps 12,000–14,500 late-window metrics.
-- Present-only Reading Cycle B verdict.
+- Final checkpoint path + SHA-256 and committed provenance artifact.
+- Present-only Reading Cycle B table (Q1–Q6).
+- Preregistered late-window medians (steps 12,000–14,500): active `L_recon`, correct-code
+  `L_recon_present`, shuffled-code `L_recon_shuffled_c`, correct-vs-shuffled gap, exact-chunk
+  conditioned share, mean code std, cross-example cosine, effective rank, and slot-diversity rank.
+- Within-run diagnostic comparison against unwhitened DINOv3 Run 67 (`it7sq8nz`).
 
-Do not invent missing values.
+Do not compare whitened and unwhitened raw reconstruction magnitudes as though they share a target
+space. Do not invent metric values; pull them from W&B.

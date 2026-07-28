@@ -1,13 +1,14 @@
 # GUIDE — Run 68, DINOv3 whitened internal-memory M=512 covariance plus variance (EGO4D)
 
+> **Local-label/status correction (2026-07-27):** this historical launch guide corresponds to
+> canonical local [Run 070](../run_070_whitened_dinov3_m512_cov_var/), W&B `qqozribu`.
+> Use that folder for completed evidence; do not relaunch this retained recipe.
+
 This is the exact gated launch guide for the whitened counterpart to completed DINOv3 Run 67
 ([`../run_067_dinov3_unwhitened_internal_memory_m512/`](../run_067_dinov3_unwhitened_internal_memory_m512/),
 W&B [`it7sq8nz`](https://wandb.ai/smahalanobis-uc-davis/hjepa-vwm/runs/it7sq8nz)). Preserve the
 entire Run 67 recipe and change only the registered whitening bundle. Run every section in order;
 stop at the first failed gate. Do not use `--resume`.
-
-Historical note: the commit/path allowlist below records the launch-time gate and intentionally
-does not describe later documentation, registry, CLI, or test maintenance on this branch.
 
 ## 0. Values used by every section
 
@@ -18,7 +19,7 @@ set -euo pipefail
 cd /workspace/hierarchal-jepa-flow-world-model
 
 export DINO_REV=5931719e67bbdb9737e363e781fb0c67687896bc
-export BASE_GIT_SHA=083cf8a6e87168702efe46ac6bfe485756dcb439  # historical launch base
+export EXPECTED_GIT_SHA=083cf8a6e87168702efe46ac6bfe485756dcb439
 export BATCH=64
 export FRAME_MB=32
 export STATS=/workspace/stats/inv016_encoder_substrate/dinov3_vitb16_ego4d_train_seed42.pt
@@ -48,30 +49,7 @@ test -z "$(git status --porcelain=v1)"
 git fetch origin
 git switch codex/task3-dino-run066
 git pull --ff-only
-git merge-base --is-ancestor "$BASE_GIT_SHA" HEAD
-
-python - "$BASE_GIT_SHA" <<'PY'
-import subprocess
-import sys
-
-base = sys.argv[1]
-allowed = {
-    "KANBAN/PHASE_1/investigation_016/run_067_dinov3_unwhitened_internal_memory_m512/",
-    "KANBAN/PHASE_1/investigation_016/run_068_dinov3_whitened_internal_memory_m512_cov_var/",
-}
-changed = subprocess.check_output(
-    ["git", "diff", "--name-only", f"{base}..HEAD"], text=True
-).splitlines()
-disallowed = [
-    path for path in changed
-    if path and not any(path.startswith(prefix) for prefix in allowed)
-]
-if disallowed:
-    raise SystemExit(
-        "STOP: disallowed changes since base commit:\n" + "\n".join(disallowed)
-    )
-print("git ancestry/doc-path contract OK")
-PY
+test "$(git rev-parse HEAD)" = "$EXPECTED_GIT_SHA"
 
 source .venv/bin/activate
 python --version
@@ -90,11 +68,8 @@ wandb login --verify
 nvidia-smi
 ```
 
-Verify the worktree is clean, `083cf8a6e87168702efe46ac6bfe485756dcb439` is an ancestor of `HEAD`,
-every committed change since that base is restricted to the Run 067/068 KANBAN documentation
-folders above, and validation aborts on any code/config/training-script drift. Python must come
-from the existing repository `.venv`, all tests/static checks must pass, W&B must verify, and the
-intended GPU must be idle.
+Verify the worktree is clean, HEAD is exactly the expected commit, Python comes from the existing
+repository `.venv`, all tests/static checks pass, W&B verifies, and the intended GPU is idle.
 
 ## 2. Confirm the completed unwhitened DINOv3 baseline
 
@@ -228,11 +203,7 @@ assert spec["feature_dim"] == 768, spec
 assert spec["layout"]["temporal"] == 8, spec
 assert spec["layout"]["height"] == spec["layout"]["width"] == 16, spec
 assert spec["layout"]["order"] == "time_y_x", spec
-assert metadata["preprocessing_version"] == "raw-rgb-resize-crop-jitter-v2", metadata
-assert (
-    spec["preprocess_version"]
-    == "imagenet-256-dinov3-last-hidden-state-strip-cls-registers-v1"
-), spec
+assert "dinov3" in spec["preprocess_version"], spec
 assert metadata["precision"] == "bf16", metadata
 assert spec["attention_implementation"] == "sdpa", spec
 assert metadata["frame_microbatch"] == frame_mb, metadata
@@ -248,7 +219,6 @@ print(json.dumps({
     "payload_fingerprint": envelope["payload_fingerprint"],
     "encoder": spec["family"],
     "revision": spec["resolved_revision"],
-    "preprocessing_version": metadata["preprocessing_version"],
     "preprocess_version": spec["preprocess_version"],
     "dataset": dataset["dataset"],
     "dataset_fingerprint": metadata["dataset_fingerprint"],

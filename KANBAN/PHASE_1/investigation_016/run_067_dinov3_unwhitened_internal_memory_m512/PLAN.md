@@ -1,5 +1,9 @@
 # Plan — Run 67, DINOv3 unwhitened internal-memory M=512
 
+> **Local-label correction (2026-07-27):** this source-branch plan produced W&B `it7sq8nz`,
+> recorded canonically as local
+> [Run 069](../run_069_unwhitened_dinov3_m512_no_geometry_regularizers/).
+
 ## Role
 
 Completed DINOv3 encoder-substrate reproduction of the run-066 unwhitened M=512 recipe: change only
@@ -7,10 +11,10 @@ the frozen encoder to DINOv3 ViT-B/16 while preserving the full EGO4D scientific
 
 ## No code change required
 
-This was a pure configuration run on branch `codex/task3-dino-run066`, launched from base commit
-`083cf8a6e87168702efe46ac6bfe485756dcb439`. Later documentation and registry-maintenance
-changes do not alter the completed run identity. The bottleneck input projection and decoder output projection resolved their dimensions
-from the selected encoder's `EncoderSpec`; no training-code change was required for the experiment.
+This was a pure configuration run on branch `codex/task3-dino-run066`, commit
+`083cf8a6e87168702efe46ac6bfe485756dcb439`. The bottleneck input projection and decoder output
+projection resolved their dimensions from the selected encoder's `EncoderSpec`; no training-code
+change was required for the experiment.
 
 ## Locked config
 

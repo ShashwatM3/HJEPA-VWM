@@ -1,5 +1,9 @@
 # Observations — Run 67, DINOv3 unwhitened internal-memory M=512
 
+> **Local-label correction (2026-07-27):** W&B `it7sq8nz` is canonical local
+> [Run 069](../run_069_unwhitened_dinov3_m512_no_geometry_regularizers/). The canonical analysis
+> supersedes the pending late-window placeholders retained below.
+
 ## Result
 
 Run 67 completed all 15,000 steps. W&B run
@@ -11,9 +15,8 @@ the committed provenance artifact is `it7sq8nz-provenance:v0`, and the verified 
 sha256 f4513c9ce01e18f4db6cc6c3434c5a5f53749019f36992ed332fc14e67dd33db
 ```
 
-The runtime identity stayed correct: launch based on commit
-`083cf8a6e87168702efe46ac6bfe485756dcb439`, full EGO4D, DINOv3 revision
-`5931719e67bbdb9737e363e781fb0c67687896bc`, frame microbatch 32,
+The runtime identity stayed correct: clean commit `083cf8a6e87168702efe46ac6bfe485756dcb439`, full
+EGO4D, DINOv3 revision `5931719e67bbdb9737e363e781fb0c67687896bc`, frame microbatch 32,
 `present_recon_only=1`, `whiten_active=0`, `M=512`, three latent blocks, `N_c=32`, external
 `D_c=256`, 512-by-4 decoder, absolute cosine reconstruction at weight 1, and zero
 variance/covariance/SIGReg/slot weights.
