@@ -29,6 +29,7 @@ HJEPA-VWM/
 ├── train.py               # Training loop, CLI, checkpoints, W&B logging
 ├── parse_logs.py          # Console log → JSON
 ├── run_history.py         # W&B Public API export + reports
+├── evaluate_checkpoint_diagnostics.py # Paired encoder/latent checkpoint cosine evaluator
 ├── drift_probe.py         # Encoder-generic within-video feature-vs-latent drift probe
 ├── rank_probe.py          # Encoder-generic effective-rank probe over the shared cache
 ├── whiten_stats.py        # Encoder/dataset/seed-bound offline whitening statistics
@@ -144,6 +145,7 @@ KANBAN evidence.
 |---|---|
 | `parse_logs.py` | Parses `step=N {dict}` console lines → structured JSON |
 | `run_history.py` | Pulls full metric history from W&B Public API; `--report` for Phase 1 summaries |
+| `evaluate_checkpoint_diagnostics.py` | Restores current Phase-1 checkpoints through the strict loader and reports paired encoder/live-bottleneck cross-video cosine on one corrected fixed source-diverse batch |
 | `drift_probe.py` | Encoder-generic within-video detailed/latent drift; strict versioned feature cache; checkpoint EncoderSpec/whitener reconstruction; JSON/PNG plus optional W&B artifact |
 | `rank_probe.py` | Encoder-generic raw/effective rank over the shared strict probe manifest/cache; frame layouts add pre-concatenation per-frame norms/ranks; identity-bearing JSON/plot plus optional W&B artifact |
 | `whiten_stats.py` | Deterministic context-only stats through the same factory/preprocessing; atomic encoder/dataset-bound envelope consumed strictly by training; inspect and optional W&B artifact modes |
@@ -188,6 +190,7 @@ Prefer the **W&B MCP server** in Cursor for interactive metric pulls (see
 | `tests/test_present_recon_only.py` | Present-only mode gradient routing |
 | `tests/test_sigreg.py` | SIGReg loss and logging RNG isolation |
 | `tests/test_bottleneck_attention.py` | Bottleneck latent-stack identity-at-init + sharp-attention diagnostics |
+| `tests/test_evaluate_checkpoint_diagnostics.py` | Offline evaluator restoration, fixed-batch, one-forward, inference/eval, output, and failure contracts with fake modules |
 | `tests/test_drift_probe.py` | Drift-probe pure helpers: offsets, windows, drift matrices, Spearman, checkpoint-config rebuild |
 | `tests/test_rank_probe.py` | Rank-probe pure helpers: covariance spectrum, entropy-rank formula, energy ranks, report validation |
 | `tests/test_whitening.py` | `FeatureWhitener` round-trip/stats contracts and train-step/checkpoint whitening wiring |

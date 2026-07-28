@@ -233,6 +233,7 @@ Root implementation files:
 | `train.py` | Stage-0/1, five-axis scientific CLI, operator overrides, optimizer/EMA, exact sampler/RNG atomic resume, parity/CUDA-event resource preflights, and strict/optional W&B policy. |
 | `parse_logs.py` | Parses `step=N {dict}` console logs into JSON. |
 | `run_history.py` | W&B Public API export/report helper for logged metrics. |
+| `evaluate_checkpoint_diagnostics.py` | Offline checkpoint evaluator for paired encoder/online-bottleneck cross-video cosine on the corrected fixed source-diverse batch; no optimizer or training state mutation. |
 | `drift_probe.py` | Offline within-video temporal drift probe: frozen-encoder drift vs bottleneck-latent drift over a pinned probe set, evaluated from checkpoints. |
 | `rank_probe.py` | Encoder-generic raw/effective-rank probe over the strict drift manifest/feature cache, including pre-concatenation frame-layout norms/ranks. |
 | `whiten_stats.py` | Deterministic context-only fp64 statistics through the same encoder/data seam; writes a strict encoder/dataset-bound eigensystem envelope. |
@@ -837,17 +838,24 @@ Checkpoints:
 
 ## 11. Diagnostics and what each one proves
 
-Diagnostics are pure functions in `diagnostics.py` and are run on a fixed
-validation batch in `train.run_diagnostics`. The configured and realized validation batch
-must contain at least two videos; otherwise the shuffled-c honesty probe would be an identity
-operation and training fails loudly.
+Diagnostics are pure functions in `diagnostics.py` and are run on a fixed validation batch in
+`train.run_diagnostics`. EGO4D fixed batches scan the deterministic validation order and retain
+only the first chunk from each source-video UID; SSv2 keeps its existing first-N behavior because
+each file is already a distinct source video. If fewer unique sources exist than requested, the
+loader warns and uses all available sources without duplicate refill. The configured and realized
+validation batch must contain at least two distinct source videos; otherwise the shuffled-c
+honesty probe would be an identity operation and training fails loudly.
 
 Representation health:
 
 - `variance_stats(c_t)` logs `c_std_mean`, `c_std_median`,
   `c_dead_dim_frac`.
-- `cross_video_cosine(c_t)` logs mean pairwise cosine between batch examples.
-  High values indicate video-independent collapse.
+- `cross_video_cosine(e_t)` logs `e_cross_video_cosine` before the bottleneck, and
+  `cross_video_cosine(c_t)` preserves the historical `c_cross_video_cosine` key after
+  the bottleneck. Both use the same unique-source fixed diagnostic batch. High values
+  indicate video-independent collapse. Here `e_t` is the `detailed` representation
+  presented to the bottleneck: raw encoder output when whitening is disabled, or the
+  whitened representation when whitening is enabled.
 - `effective_rank(c_t)` pools batch and slots, computes covariance over
   `D_c`, then logs `exp(entropy(normalized_eigenvalues))`.
 - `slot_diversity_rank(c_t)` computes within-video effective rank over the

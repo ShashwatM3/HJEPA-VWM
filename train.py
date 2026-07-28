@@ -28,6 +28,8 @@ except ModuleNotFoundError:  # pragma: no cover
     Tensor = object  # type: ignore[misc,assignment]
     nn = None  # type: ignore[assignment]
 
+from config import Config
+from data import ClipBatch, build_dataloader, build_fixed_diagnostic_batch
 from config import Config, load_experiment_config
 from data import ClipBatch, build_dataloader
 from diagnostics import (
@@ -352,6 +354,16 @@ def _present_forward(
             detailed = whitener.whiten(detailed)
     abstract = bottleneck(detailed)
     return abstract, detailed
+
+
+def _cross_video_representation_metrics(detailed: Tensor, abstract: Tensor) -> dict[str, float]:
+    """Measure source diversity before and after the bottleneck on one batch."""
+    encoder_metrics = cross_video_cosine(detailed)
+    latent_metrics = cross_video_cosine(abstract)
+    return {
+        "e_cross_video_cosine": encoder_metrics["c_cross_video_cosine"],
+        "c_cross_video_cosine": latent_metrics["c_cross_video_cosine"],
+    }
 
 
 def train_step(
@@ -1214,7 +1226,7 @@ def _run_diagnostics_impl(
             )
         metrics: dict[str, float] = {}
         metrics.update(variance_stats(abstract))
-        metrics.update(cross_video_cosine(abstract))
+        metrics.update(_cross_video_representation_metrics(detailed, abstract))
         metrics.update(effective_rank(abstract))
         metrics.update(slot_diversity_rank(abstract))
         metrics.update(gradient_health(nn.ModuleList([bottleneck, coarse_flow, decoder])))
@@ -1271,7 +1283,7 @@ def _run_diagnostics_impl(
     metrics["present_recon_only"] = 0.0
     metrics["prediction_active"] = 1.0
     metrics.update(variance_stats(abstract))
-    metrics.update(cross_video_cosine(abstract))
+    metrics.update(_cross_video_representation_metrics(detailed, abstract))
     metrics.update(effective_rank(abstract))
     metrics.update(slot_diversity_rank(abstract))
     # Issue 7: log effective rank / std for the EMA TARGET c_plus alongside the online
@@ -1642,15 +1654,10 @@ def run_resource_preflight(cfg: Config, output: str | Path) -> dict[str, Any]:
             )
         )
     )
-    validation_batch = next(
-        iter(
-            build_dataloader(
-                cfg,
-                "validation",
-                batch_size=min(16, cfg.train.global_batch),
-                needs_target=not cfg.train.present_recon_only,
-            )
-        )
+    validation_batch = build_fixed_diagnostic_batch(
+        cfg,
+        batch_size=min(16, cfg.train.global_batch),
+        needs_target=not cfg.train.present_recon_only,
     )
     if device.type == "cuda":
         torch.cuda.synchronize(device)
@@ -1808,13 +1815,11 @@ def run_training(
                 "WARN: residual reconstruction target is on but the checkpoint has no "
                 "recon_feature_mean state; the per-position mean re-warms from live batches."
             )
-    val_loader = build_dataloader(
+    val_batch = build_fixed_diagnostic_batch(
         cfg,
-        "validation",
         batch_size=min(16, cfg.train.global_batch),
         needs_target=not cfg.train.present_recon_only,
     )
-    val_batch = next(iter(val_loader))
     checkpoint_dir = Path(cfg.checkpoint_dir)
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     resolved_provenance_path = Path(provenance_out or checkpoint_dir / "run_provenance.json")

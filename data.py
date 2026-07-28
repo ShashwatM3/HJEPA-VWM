@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import hashlib
 import random
+import warnings
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -52,6 +54,79 @@ class ClipBatch:
     context: Tensor
     target: Tensor | None
     sample_ids: tuple[str, ...]
+
+
+def source_video_id(sample_id: str, dataset_name: str) -> str:
+    """Return the source-video identity represented by one dataset sample.
+
+    EGO4D samples are deterministic chunks named `<video_uid>_<index:05d>.mp4`;
+    SSv2 files are already one sample per source video.
+
+    Args:
+        sample_id: Dataset-relative path such as `validation/<clip name>`.
+        dataset_name: Configured dataset alias.
+    Returns:
+        Stable source-video identity for diagnostic diversity checks.
+    """
+    if dataset_name in {"ssv2", "ssv2_tiny"}:
+        return sample_id
+    if dataset_name not in {"ego4d", "ego4d_tiny"}:
+        raise ValueError(f"Unsupported dataset: {dataset_name}")
+    path = Path(sample_id)
+    source_uid, separator, chunk_index = path.stem.rpartition("_")
+    if (
+        path.suffix != ".mp4"
+        or not separator
+        or not source_uid
+        or len(chunk_index) < 5
+        or not chunk_index.isdecimal()
+    ):
+        raise ValueError(
+            "EGO4D sample IDs must end in '<video_uid>_<index:05d>.mp4'; " f"got {sample_id!r}."
+        )
+    return source_uid
+
+
+def select_unique_source_indices(
+    sample_ids: Sequence[str],
+    dataset_name: str,
+    requested_size: int,
+) -> list[int]:
+    """Select the first deterministic sample from each distinct source video.
+
+    Args:
+        sample_ids: Samples in the existing deterministic validation order.
+        dataset_name: Configured dataset alias.
+        requested_size: Maximum number of distinct source videos to select.
+    Returns:
+        Dataset indices in their original order, with unique source identities.
+    """
+    if requested_size <= 0:
+        raise ValueError("requested_size must be positive.")
+    selected: list[int] = []
+    seen: set[str] = set()
+    for index, sample_id in enumerate(sample_ids):
+        source_id = source_video_id(sample_id, dataset_name)
+        if source_id in seen:
+            continue
+        seen.add(source_id)
+        selected.append(index)
+        if len(selected) == requested_size:
+            break
+    if len(selected) < requested_size:
+        warnings.warn(
+            "Fixed diagnostics requested "
+            f"{requested_size} distinct source videos but only found {len(selected)}; "
+            "using every available unique source without duplicate refill.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+    if len(selected) < 2:
+        raise RuntimeError(
+            "Fixed diagnostics require at least two distinct source videos; "
+            f"found {len(selected)}."
+        )
+    return selected
 
 
 def _require_torch() -> None:
@@ -215,6 +290,10 @@ class SSV2Dataset(Dataset):
         """Return the number of videos available in this split."""
         return len(self.paths)
 
+    def sample_id_at(self, index: int) -> str:
+        """Return one dataset-relative sample ID without decoding its video."""
+        return str(self.paths[index].relative_to(self.root))
+
     def _rng_for(self, sample_id: str) -> random.Random:
         """Return the identity/epoch-scoped transform RNG for one clip."""
         identity = f"{self.cfg.seed}:{self.epoch}:{sample_id}:{TRANSFORM_VERSION}".encode()
@@ -276,7 +355,7 @@ class SSV2Dataset(Dataset):
         frames rather than the entire clip.
         """
         path = self.paths[index]
-        sample_id = str(path.relative_to(self.root))
+        sample_id = self.sample_id_at(index)
         rng = self._rng_for(sample_id)
         reader = _open_video_reader(path)
         if self.needs_target:
@@ -379,6 +458,48 @@ def build_dataloader(
         worker_init_fn=_worker_init,
         generator=generator,
     )
+
+
+def build_fixed_diagnostic_batch(
+    cfg: Config,
+    batch_size: int,
+    *,
+    needs_target: bool,
+) -> ClipBatch:
+    """Build the deterministic source-diverse validation batch used by diagnostics.
+
+    Args:
+        cfg: Global config selecting the dataset and worker settings.
+        batch_size: Requested number of distinct source videos.
+        needs_target: Whether to decode the future window.
+    Returns:
+        One fixed validation batch with at most one clip per source video.
+    """
+    _require_torch()
+    if batch_size <= 0:
+        raise ValueError("batch_size must be positive.")
+    dataset = SSV2Dataset(
+        cfg.data.dataset_root(),
+        "validation",
+        cfg,
+        needs_target=needs_target,
+        epoch=0,
+    )
+    sample_ids = [dataset.sample_id_at(index) for index in range(len(dataset))]
+    selected = select_unique_source_indices(sample_ids, cfg.data.dataset, batch_size)
+    generator = torch.Generator().manual_seed(cfg.seed + 10_000)
+    loader = DataLoader(
+        dataset,
+        batch_size=batch_size,
+        sampler=selected,
+        num_workers=cfg.data.num_workers,
+        pin_memory=cfg.data.pin_memory,
+        drop_last=False,
+        collate_fn=_collate_clip_samples,
+        worker_init_fn=_worker_init,
+        generator=generator,
+    )
+    return next(iter(loader))
 
 
 def smoke_test_dataloader() -> None:
