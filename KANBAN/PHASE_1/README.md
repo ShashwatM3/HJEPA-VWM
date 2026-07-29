@@ -427,18 +427,20 @@ This is the current source of truth after the preserved 2026-07-26 reconciliatio
 
 Current research frontier: the bottleneck can carry strong present representations under some
 geometry recipes, and the repaired Run 069 probe shows that one DINO bottleneck removes much of
-the raw encoder's shared cross-source direction. No full-prediction run has passed both Phase-1
-forecasting gates, no DINO full-prediction run exists, and Investigation 017's non-center
-latent-shape sweep remains incomplete.
+the raw encoder's shared cross-source direction. No full-prediction run has yet passed both Phase-1
+forecasting gates. Investigation 020 is now the first live DINOv3 full-prediction pair, while
+Investigation 017's non-center latent-shape sweep remains incomplete.
 
 ## Registered follow-up (2026-07-28) — Investigation 020
 
 [Investigation 020](investigation_020/) registers the paired transfer from the selected
 Investigation-019 DINOv3 `64×512`, `M=512` bottleneck into the current full-prediction architecture.
-Both arms will warm-start the exact same DINOv3 online bottleneck and matched decoder checkpoint, keep
-the bottleneck trainable, reinitialize the EMA target from the loaded online bottleneck, and start
-fresh flow, optimizer, schedule, sampler, RNG, checkpoint, and W&B state. Covariance plus variance
-is fixed in both arms; the only scientific difference is residual versus full-latent temporal
-prediction. The initialization-only warm start, concurrent temporal-target CLI, and narrow parity
-guard are implemented and locally tested; the pair is ready for its exact-commit pod gates and
-launch. No W&B entry exists yet.
+Both arms warm-started the exact same DINOv3 online bottleneck and matched decoder checkpoint, kept
+the bottleneck trainable, reinitialized the EMA target from the loaded online bottleneck, and
+started fresh flow, optimizer, schedule, sampler, RNG, checkpoint, and W&B state. Covariance plus
+variance is fixed in both arms; the only scientific difference is residual versus full-latent
+temporal prediction. The initialization-only warm start, concurrent temporal-target CLI, and
+narrow parity guard are implemented and tested. Both exact-source resource gates passed, and the
+pair is running from clean commit `7649f8efde1b104dd81cfbd110af18d499f67304`: residual
+[`3y2hxj5t`](https://wandb.ai/smahalanobis-uc-davis/hjepa-vwm/runs/3y2hxj5t) and full latent
+[`8r6akjsx`](https://wandb.ai/smahalanobis-uc-davis/hjepa-vwm/runs/8r6akjsx).

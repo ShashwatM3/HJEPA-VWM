@@ -48,7 +48,31 @@ future SIGReg investigation must be a controlled probe after the temporal target
   Gaussian regularization under stationary additive-noise transitions and Gaussian latent
   assumptions. Those guarantees do not automatically transfer to this code.
 
-## Run evidence
+## Launch record
 
-No Investigation-020 run has launched. Append W&B IDs, terminal states, step-specific metrics, and
-Reading-Cycle-A verdicts here after both arms complete. Do not replace the registered prior above.
+Both arms launched from clean commit `7649f8efde1b104dd81cfbd110af18d499f67304` with source
+checkpoint SHA-256
+`931c27b47df3331a1968b7d33afc74556e5779c02a1997989bf27324cf9270b1`.
+
+| Arm | W&B | Step-0 `L_flow` | Step-0 update |
+|---|---|---:|---|
+| residual | [`3y2hxj5t`](https://wandb.ai/smahalanobis-uc-davis/hjepa-vwm/runs/3y2hxj5t) | 2.202297 | finite, `prediction_active=1`, `grad_skipped=0` |
+| full latent | [`8r6akjsx`](https://wandb.ai/smahalanobis-uc-davis/hjepa-vwm/runs/8r6akjsx) | 3.027744 | finite, `prediction_active=1`, `grad_skipped=0` |
+
+The persisted run provenance proves:
+
+- residual `predict_residual=true`; full latent `predict_residual=false`;
+- identical dataset fingerprint
+  `df36af5da6e73595473024a8e79da7f1412bd94a0b838cb0bee759b303eb6b1c`;
+- identical post-transfer trainable-init hash
+  `a50f618198ab12c561cc06a1764b8414edefffac427c0344ff2362d88e07a9db`;
+- transferred online `B` and `D`, fresh exact-copy `B_EMA`, and fresh `F_c`, optimizer, schedule,
+  step, sampler, RNG, W&B ID, and output state.
+
+At the first post-launch audit both 808 MiB step-2,500 checkpoints existed, both A100s were at 100%
+utilization with approximately 23.9 GiB allocated, and both arms had progressed past step 2,850
+without skipped gradients, nonfinite metrics, or instability warnings.
+
+This early evidence establishes a valid live pair only. Append terminal states, final-six
+diagnostic medians, and Reading-Cycle-A verdicts after both arms complete. Do not compare absolute
+`L_flow` across the two target parameterizations.

@@ -2,14 +2,20 @@
 
 ## Status
 
-OPEN — implementation complete; ready for paired launch.
+RUNNING — paired arms launched and verified on two A100s.
 
 The Investigation-019 source decision is complete. The initialization-only warm start,
-parallel temporal-target selector, provenance parity guard, and targeted tests are implemented.
-Launch still requires one clean published commit plus the source/resource gates in `GUIDE.md`.
+temporal-target selector, provenance parity guard, targeted tests, exact source gate, and both
+one-step resource preflights passed. The full runs launched from clean git commit
+`7649f8efde1b104dd81cfbd110af18d499f67304`.
 
-No W&B run exists yet. Do not assign W&B IDs or claim that either arm has started until the live
-run URLs are recorded in the corresponding run `DESCRIPTION.md`.
+Live W&B runs:
+
+- residual target: [`3y2hxj5t`](https://wandb.ai/smahalanobis-uc-davis/hjepa-vwm/runs/3y2hxj5t);
+- full-latent target: [`8r6akjsx`](https://wandb.ai/smahalanobis-uc-davis/hjepa-vwm/runs/8r6akjsx).
+
+Both arms produced finite step-0 updates, reached the first step-2,500 checkpoint, and remained
+live past step 2,850 at the first post-launch audit. This is launch evidence, not a result verdict.
 
 ## Question
 

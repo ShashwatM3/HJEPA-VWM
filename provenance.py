@@ -674,9 +674,10 @@ def compare_run_provenance(left: dict[str, Any], right: dict[str, Any]) -> None:
 def compare_temporal_target_provenance(left: dict[str, Any], right: dict[str, Any]) -> None:
     """Require a paired run to differ only in residual versus full-latent prediction.
 
-    Tracking identity and resource measurements are operational outputs rather than
-    scientific controls. Every resolved identity—including encoder, dataset, warm-start
-    checkpoint, step-0 trainable bytes, schedules, and seed streams—must otherwise match.
+    Tracking identity, per-arm checkpoint directories, and resource measurements are
+    operational outputs rather than scientific controls. Every resolved identity—including
+    encoder, dataset, warm-start checkpoint, step-0 trainable bytes, schedules, and seed
+    streams—must otherwise match.
 
     Args:
         left: First resolved run/resource provenance envelope.
@@ -705,6 +706,7 @@ def compare_temporal_target_provenance(left: dict[str, Any], right: dict[str, An
         comparable.pop("common_identity", None)
         comparable.pop("tracking_identity", None)
         comparable.pop("resource_preflight", None)
+        comparable["resolved_config"].pop("checkpoint_dir", None)
         comparable["resolved_config"]["train"].pop("predict_residual", None)
         comparable["common"]["config"]["train"].pop("predict_residual", None)
         return comparable

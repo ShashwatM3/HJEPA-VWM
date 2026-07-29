@@ -124,6 +124,11 @@ These are the only pre-launch GPU jobs. They exercise the exact warm start, full
 branch, backward pass, optimizer step, and memory boundary. Running them concurrently avoids a
 serial two-arm delay.
 
+The full EGO4D identity opens every clip to bind its frame count. The implementation performs those
+metadata reads with 16 bounded workers while preserving sorted canonical output. Expect several
+minutes with empty logs and idle GPUs before model allocation; active CPU/I/O is normal and is not
+a reason to terminate the gate.
+
 ```bash
 mkdir -p logs/inv020_preflight
 CUDA_VISIBLE_DEVICES=0 PYTHONUNBUFFERED=1 python3 train.py \
@@ -184,6 +189,9 @@ pgrep -af "python.*train.py"
 nvidia-smi
 tail -n 120 logs/inv020_residual.log
 tail -n 120 logs/inv020_full_latent.log
+python3 train.py --compare-temporal-target-provenance \
+  "$INV020_OUTPUT/residual/run_provenance.json" \
+  "$INV020_OUTPUT/full_latent/run_provenance.json"
 ```
 
 Require both processes, one occupied GPU each, fresh W&B IDs/URLs, the same source checkpoint

@@ -2,9 +2,9 @@
 
 ## Status
 
-READY — DINOv3 source selected; warm-start and temporal-target implementation complete.
+RUNNING — launched from clean commit `7649f8efde1b104dd81cfbd110af18d499f67304`.
 
-W&B ID: pending.
+W&B: [`3y2hxj5t`](https://wandb.ai/smahalanobis-uc-davis/hjepa-vwm/runs/3y2hxj5t).
 
 ## Hypothesis
 

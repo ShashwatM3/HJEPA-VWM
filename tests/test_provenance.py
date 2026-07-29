@@ -443,6 +443,7 @@ def test_temporal_target_provenance_allows_only_predict_residual():
             "warm_start": {"checkpoint_sha256": "a" * 64},
         },
         "resolved_config": {
+            "checkpoint_dir": "/workspace/ckpt/full",
             "train": {"predict_residual": False, "lambda_cov": 0.01},
         },
         "encoder_spec": {"feature_fingerprint": "e" * 64},
@@ -455,6 +456,7 @@ def test_temporal_target_provenance_allows_only_predict_residual():
     residual["common_identity"] = "residual"
     residual["common"]["config"]["train"]["predict_residual"] = True
     residual["resolved_config"]["train"]["predict_residual"] = True
+    residual["resolved_config"]["checkpoint_dir"] = "/workspace/ckpt/residual"
     residual["tracking_identity"]["name"] = "residual"
     residual["resource_preflight"]["metrics"]["L_flow"] = 2.0
 
