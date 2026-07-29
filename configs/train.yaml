@@ -1,6 +1,6 @@
 # HJEPA-VWM Phase-1 experiment configuration.
 # This is the only experiment YAML. train.py reads it on every invocation.
-# Resolution order: config.py fallback defaults -> this file -> five hot scientific CLI overrides.
+# Resolution order: config.py fallback defaults -> this file -> six hot scientific CLI overrides.
 
 # CATEGORY: Reproducibility and outputs
 seed: 42  # Integer in [0, 4294967295]; keep fixed across comparison arms.
@@ -86,7 +86,7 @@ train:
   recon_warmup_steps: 2000  # Non-negative integer; typical range: 0-5000.
   recon_residual_target: false  # Boolean (true or false): true reconstructs e minus its position mean.
   recon_mean_momentum: 0.99  # Float strictly between 0 and 1; typical range: 0.9-0.9999.
-  present_recon_only: true  # Boolean (true or false): true trains only present reconstruction.
+  present_recon_only: false  # Boolean (true or false): true trains only present reconstruction.
   predict_residual: false  # Boolean (true or false): true predicts temporal latent delta.
 
   # CATEGORY: Offline feature whitening
@@ -115,6 +115,7 @@ runtime:
   # CATEGORY: Runtime controls
   mode: train  # One of: train, stage0, preflight, resource_preflight.
   resume: null  # null for fresh training, or a compatible checkpoint path.
+  warm_start_from: null  # null, or a current present-only checkpoint supplying only B and D.
   provenance_out: null  # null for the mode default, or a writable JSON output path.
   compare_provenance: null  # null, or exactly [left.json, right.json] to compare and exit.
   require_wandb: false  # Boolean (true or false): true makes W&B failures fatal.

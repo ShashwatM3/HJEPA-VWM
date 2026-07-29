@@ -28,10 +28,8 @@ except ModuleNotFoundError:  # pragma: no cover
     Tensor = object  # type: ignore[misc,assignment]
     nn = None  # type: ignore[assignment]
 
-from config import Config
-from data import ClipBatch, build_dataloader, build_fixed_diagnostic_batch
 from config import Config, load_experiment_config
-from data import ClipBatch, build_dataloader
+from data import ClipBatch, build_dataloader, build_fixed_diagnostic_batch
 from diagnostics import (
     _no_drop,
     apply_trainable_agc,
@@ -730,6 +728,34 @@ def save_checkpoint(
     atomic_torch_save(payload, path)
 
 
+def _require_state_compatible(
+    label: str,
+    module: nn.Module,
+    saved: dict[str, Tensor],
+) -> None:
+    """Reject incompatible module state before mutating any live parameter.
+
+    Args:
+        label: Human-readable checkpoint component name.
+        module: Live destination module.
+        saved: Named tensor state read from the checkpoint.
+    Returns:
+        None. Key or shape differences raise before any load operation.
+    """
+    current = module.state_dict()
+    if set(saved) != set(current):
+        raise RuntimeError(f"Checkpoint {label} state keys do not match this architecture.")
+    bad_shapes = {
+        name: (tuple(saved[name].shape), tuple(current[name].shape))
+        for name in current
+        if saved[name].shape != current[name].shape
+    }
+    if bad_shapes:
+        raise RuntimeError(
+            f"Checkpoint {label} tensor shapes do not match this architecture: {bad_shapes}."
+        )
+
+
 def load_checkpoint(
     path: str | Path,
     modules: tuple[nn.Module, nn.Module, nn.Module, nn.Module, nn.Module],
@@ -859,38 +885,11 @@ def load_checkpoint(
                 "for an exact dataloader resume."
             )
 
-    def require_state_compatible(
-        label: str,
-        module: nn.Module,
-        saved: dict[str, Tensor],
-    ) -> None:
-        """Reject incompatible module state before mutating any live parameter.
-
-        Args:
-            label: Human-readable checkpoint component name.
-            module: Live destination module.
-            saved: Named tensor state read from the checkpoint.
-        Returns:
-            None. Key or shape differences raise before any load operation.
-        """
-        current = module.state_dict()
-        if set(saved) != set(current):
-            raise RuntimeError(f"Checkpoint {label} state keys do not match this architecture.")
-        bad_shapes = {
-            name: (tuple(saved[name].shape), tuple(current[name].shape))
-            for name in current
-            if saved[name].shape != current[name].shape
-        }
-        if bad_shapes:
-            raise RuntimeError(
-                f"Checkpoint {label} tensor shapes do not match this architecture: {bad_shapes}."
-            )
-
     # Every compatibility check above happens before the first parameter mutation.
     _, bottleneck, target_bottleneck, coarse_flow, decoder = modules
-    require_state_compatible("bottleneck", bottleneck, ckpt["bottleneck"])
-    require_state_compatible("target_bottleneck", target_bottleneck, ckpt["target_bottleneck"])
-    require_state_compatible("coarse_flow", coarse_flow, ckpt["coarse_flow"])
+    _require_state_compatible("bottleneck", bottleneck, ckpt["bottleneck"])
+    _require_state_compatible("target_bottleneck", target_bottleneck, ckpt["target_bottleneck"])
+    _require_state_compatible("coarse_flow", coarse_flow, ckpt["coarse_flow"])
     if "decoder" in ckpt:
         decoder_state = ckpt["decoder"]
         if "queries" in decoder_state or "fixed_pos" not in decoder_state:
@@ -899,7 +898,7 @@ def load_checkpoint(
                 "Start a fresh run, or load a checkpoint without decoder state, when using "
                 "the fixed-position decoder architecture."
             )
-        require_state_compatible("decoder", decoder, decoder_state)
+        _require_state_compatible("decoder", decoder, decoder_state)
     if optimizer is not None and "optimizer" in ckpt and not reset_optimizer:
         saved_optimizer = ckpt["optimizer"]
         current_optimizer = optimizer.state_dict()
@@ -936,13 +935,13 @@ def load_checkpoint(
                     )
     if mean_tracker is not None and "recon_feature_mean" in ckpt:
         saved_mean = ckpt["recon_feature_mean"]
-        require_state_compatible("recon_feature_mean", mean_tracker, saved_mean)
+        _require_state_compatible("recon_feature_mean", mean_tracker, saved_mean)
         expected_identity = ckpt.get("recon_feature_mean_identity")
         if expected_identity is not None and state_dict_hash(saved_mean) != expected_identity:
             raise RuntimeError("Checkpoint recon_feature_mean identity is invalid.")
     if whitener is not None and "feature_whitener" in ckpt:
         saved_whitener = ckpt["feature_whitener"]
-        require_state_compatible("feature_whitener", whitener, saved_whitener)
+        _require_state_compatible("feature_whitener", whitener, saved_whitener)
         expected_identity = ckpt.get("feature_whitener_identity")
         if expected_identity is not None and state_dict_hash(saved_whitener) != expected_identity:
             raise RuntimeError("Checkpoint feature_whitener identity is invalid.")
@@ -981,6 +980,162 @@ def load_checkpoint(
         if validated_sampler_state is not None:
             sampler_state_out.update(validated_sampler_state)
     return int(ckpt.get("next_step", ckpt.get("global_step", 0)))
+
+
+_WARM_START_MODEL_FIELDS = (
+    "n_c",
+    "d_c",
+    "bottleneck_mixer_dim",
+    "bottleneck_convnext_blocks",
+    "bottleneck_cross_attn_heads",
+    "bottleneck_latent_blocks",
+    "decoder_dim",
+    "decoder_blocks",
+    "decoder_heads",
+)
+_WARM_START_TRAIN_FIELDS = (
+    "whiten_features",
+    "recon_residual_target",
+    "recon_loss_mode",
+)
+
+
+def load_warm_start_checkpoint(
+    path: str | Path,
+    modules: tuple[nn.Module, nn.Module, nn.Module, nn.Module, nn.Module],
+    cfg: Config,
+    *,
+    expected_encoder_spec: EncoderSpec,
+    expected_dataset_identity: dict[str, Any],
+    whitener: nn.Module | None = None,
+) -> dict[str, Any]:
+    """Transfer only online B and matched D into a fresh full-prediction run.
+
+    This is initialization, not continuation: the source EMA, flow, optimizer,
+    global step, sampler, RNG, and W&B identity are deliberately ignored. Every
+    source identity and tensor shape is validated before B or D is mutated.
+
+    Args:
+        path: Current-schema present-only Phase-1 checkpoint.
+        modules: Fresh live ``(E,B,B_EMA,F_c,D)`` module bundle.
+        cfg: Finalized destination training configuration.
+        expected_encoder_spec: Exact destination encoder identity.
+        expected_dataset_identity: Exact destination dataset identity.
+        whitener: Optional fixed destination whitener for feature-space parity.
+    Returns:
+        Credential-free warm-start provenance and transfer policy.
+    """
+    from provenance import (
+        encoder_spec_from_dict,
+        sha256_file,
+        state_dict_hash,
+    )
+
+    source_path = Path(path)
+    checkpoint = torch.load(source_path, map_location="cpu", weights_only=False)
+    if checkpoint.get("schema") != "hjepa-phase1-checkpoint-v2":
+        raise ValueError("Warm start requires a current hjepa-phase1-checkpoint-v2 source.")
+
+    serialized_spec = checkpoint.get("encoder_spec")
+    if not isinstance(serialized_spec, dict):
+        raise ValueError("Warm-start checkpoint is missing its encoder identity.")
+    saved_spec = encoder_spec_from_dict(serialized_spec)
+    if saved_spec.fingerprint != expected_encoder_spec.fingerprint:
+        raise ValueError("Warm-start encoder fingerprint does not match the selected encoder.")
+    if checkpoint.get("feature_fingerprint") != expected_encoder_spec.fingerprint:
+        raise ValueError("Warm-start feature fingerprint is missing or inconsistent.")
+
+    saved_dataset = checkpoint.get("dataset_identity")
+    expected_dataset_fingerprint = expected_dataset_identity.get("fingerprint")
+    if (
+        not isinstance(saved_dataset, dict)
+        or saved_dataset.get("fingerprint") != expected_dataset_fingerprint
+    ):
+        raise ValueError("Warm-start dataset fingerprint does not match this run.")
+
+    saved_config = checkpoint.get("config")
+    if not isinstance(saved_config, dict):
+        raise ValueError("Warm-start checkpoint is missing its resolved config.")
+    saved_model = saved_config.get("model")
+    saved_train = saved_config.get("train")
+    if not isinstance(saved_model, dict) or not isinstance(saved_train, dict):
+        raise ValueError("Warm-start checkpoint config is missing model/train sections.")
+    if saved_train.get("present_recon_only") is not True:
+        raise ValueError("Warm start requires a present-only source checkpoint.")
+    for field in _WARM_START_MODEL_FIELDS:
+        expected = getattr(cfg.model, field)
+        if saved_model.get(field) != expected:
+            raise ValueError(
+                f"Warm-start model.{field} mismatch: "
+                f"source={saved_model.get(field)!r}, destination={expected!r}."
+            )
+    for field in _WARM_START_TRAIN_FIELDS:
+        expected = getattr(cfg.train, field)
+        if saved_train.get(field) != expected:
+            raise ValueError(
+                f"Warm-start train.{field} mismatch: "
+                f"source={saved_train.get(field)!r}, destination={expected!r}."
+            )
+
+    _, bottleneck, target_bottleneck, coarse_flow, decoder = modules
+    bottleneck_state = checkpoint.get("bottleneck")
+    decoder_state = checkpoint.get("decoder")
+    if not isinstance(bottleneck_state, dict) or not isinstance(decoder_state, dict):
+        raise ValueError("Warm-start checkpoint must contain online bottleneck and decoder.")
+    if "queries" in decoder_state or "fixed_pos" not in decoder_state:
+        raise RuntimeError("Warm-start checkpoint uses an incompatible decoder architecture.")
+    _require_state_compatible("bottleneck", bottleneck, bottleneck_state)
+    _require_state_compatible("decoder", decoder, decoder_state)
+
+    if cfg.train.whiten_features:
+        saved_whitener = checkpoint.get("feature_whitener")
+        expected_identity = checkpoint.get("feature_whitener_identity")
+        if whitener is None or not isinstance(saved_whitener, dict):
+            raise ValueError("Whitened warm start requires matching embedded whitener state.")
+        _require_state_compatible("feature_whitener", whitener, saved_whitener)
+        if state_dict_hash(saved_whitener) != expected_identity:
+            raise ValueError("Warm-start feature whitener identity is invalid.")
+        if state_dict_hash(whitener.state_dict()) != expected_identity:
+            raise ValueError("Warm-start source and destination whitening payloads differ.")
+
+    # This is the first live mutation: every identity/key/shape check above has passed.
+    bottleneck.load_state_dict(bottleneck_state)
+    decoder.load_state_dict(decoder_state)
+    target_bottleneck.copy_weights_from(bottleneck)
+
+    bottleneck_hash = state_dict_hash(bottleneck.state_dict())
+    decoder_hash = state_dict_hash(decoder.state_dict())
+    target_hash = state_dict_hash(target_bottleneck.bottleneck.state_dict())
+    if target_hash != bottleneck_hash:
+        raise RuntimeError("Fresh B_EMA did not copy the loaded online bottleneck exactly.")
+    return {
+        "schema": "hjepa-warm-start-v1",
+        "source_path": str(source_path),
+        "checkpoint_sha256": sha256_file(source_path),
+        "source_next_step": int(checkpoint.get("next_step", checkpoint.get("global_step", 0))),
+        "source_wandb_run_id": checkpoint.get("wandb_run_id"),
+        "feature_fingerprint": expected_encoder_spec.fingerprint,
+        "dataset_fingerprint": expected_dataset_fingerprint,
+        "source_trainable_init_hash": checkpoint.get("trainable_init_hash"),
+        "transferred_components": ["bottleneck", "decoder"],
+        "fresh_components": [
+            "coarse_flow",
+            "optimizer",
+            "lr_schedule",
+            "global_step",
+            "sampler",
+            "rng",
+            "wandb_run",
+            "checkpoints",
+        ],
+        "target_bottleneck_policy": "fresh_exact_copy_of_loaded_online_bottleneck",
+        "component_state_hashes": {
+            "bottleneck": bottleneck_hash,
+            "target_bottleneck": target_hash,
+            "decoder": decoder_hash,
+            "fresh_coarse_flow": state_dict_hash(coarse_flow.state_dict()),
+        },
+    }
 
 
 def _build_and_init(cfg: Config, device: torch.device, load_encoder: bool = True):
@@ -1441,6 +1596,7 @@ def _prepare_run(
     cfg: Config,
     device: torch.device,
     resume: str | None = None,
+    warm_start_from: str | None = None,
     tracking_identity: dict[str, Any] | None = None,
 ):
     """Resolve all identities before training state is loaded or mutated.
@@ -1452,6 +1608,7 @@ def _prepare_run(
         cfg: Fully finalized run configuration.
         device: Training device.
         resume: Optional checkpoint path supplying compatible auxiliary state.
+        warm_start_from: Optional present-only checkpoint supplying only B and D.
         tracking_identity: Credential-free W&B identity fields.
     Returns:
         Modules, optimizer, auxiliary state, dataset identity, initialization hash,
@@ -1468,8 +1625,6 @@ def _prepare_run(
     dataset_identity = build_dataset_identity(cfg, require_complete=cfg.data.dataset == "ego4d")
     modules = _build_and_init(cfg, device, load_encoder=True)
     encoder, bottleneck, _, coarse_flow, decoder = modules
-    init_hash = trainable_state_hash((bottleneck, coarse_flow, decoder))
-    optimizer = make_optimizer(bottleneck, coarse_flow, decoder, cfg)
     mean_tracker = _build_mean_tracker(cfg, device, encoder.spec)
     whitener = _build_whitener(
         cfg,
@@ -1478,6 +1633,23 @@ def _prepare_run(
         dataset_identity,
         checkpoint_path=resume,
     )
+    warm_start = None
+    if warm_start_from is not None:
+        warm_start = load_warm_start_checkpoint(
+            warm_start_from,
+            modules,
+            cfg,
+            expected_encoder_spec=encoder.spec,
+            expected_dataset_identity=dataset_identity,
+            whitener=whitener,
+        )
+        print(
+            "Warm-started B and D from "
+            f"{warm_start_from} sha256={warm_start['checkpoint_sha256']}; "
+            "initialized fresh B_EMA=B; F_c/optimizer/step/RNG/sampler/W&B are fresh."
+        )
+    init_hash = trainable_state_hash((bottleneck, coarse_flow, decoder))
+    optimizer = make_optimizer(bottleneck, coarse_flow, decoder, cfg)
     whitening_fingerprint = None
     stats_path = Path(cfg.train.whiten_stats_path)
     if cfg.train.whiten_features and resume:
@@ -1505,6 +1677,7 @@ def _prepare_run(
         trainable_init=init_hash,
         whitening_payload_fingerprint=whitening_fingerprint,
         tracking_identity=tracking_identity,
+        warm_start=warm_start,
     )
     return modules, optimizer, mean_tracker, whitener, dataset_identity, init_hash, provenance
 
@@ -1513,6 +1686,7 @@ def materialize_preflight(
     cfg: Config,
     output: str | Path,
     tracking_identity: dict[str, Any] | None = None,
+    warm_start_from: str | None = None,
 ) -> dict[str, Any]:
     """Build the exact no-step run and atomically write its resolved provenance.
 
@@ -1522,6 +1696,7 @@ def materialize_preflight(
         cfg: Fully finalized run configuration.
         output: Destination provenance JSON path.
         tracking_identity: Credential-free W&B identity fields.
+        warm_start_from: Optional initialization-only B/D checkpoint.
     Returns:
         Resolved run-provenance envelope.
     """
@@ -1529,7 +1704,12 @@ def materialize_preflight(
 
     set_seed(cfg.seed)
     device = device_for_training()
-    *_, provenance = _prepare_run(cfg, device, tracking_identity=tracking_identity)
+    *_, provenance = _prepare_run(
+        cfg,
+        device,
+        warm_start_from=warm_start_from,
+        tracking_identity=tracking_identity,
+    )
     atomic_json_save(provenance, output)
     print(f"Wrote resolved run provenance: {output}")
     return provenance
@@ -1623,7 +1803,11 @@ def _timed_operation(device: torch.device, operation: Callable[[], Any]) -> tupl
     return result, seconds
 
 
-def run_resource_preflight(cfg: Config, output: str | Path) -> dict[str, Any]:
+def run_resource_preflight(
+    cfg: Config,
+    output: str | Path,
+    warm_start_from: str | None = None,
+) -> dict[str, Any]:
     """Exercise one exact recipe step and diagnostic without W&B/checkpoint research state.
 
     The report captures throughput and peak memory for selecting one common paired-run
@@ -1632,6 +1816,7 @@ def run_resource_preflight(cfg: Config, output: str | Path) -> dict[str, Any]:
     Args:
         cfg: Fully finalized candidate recipe.
         output: Destination resource-report JSON path.
+        warm_start_from: Optional initialization-only B/D checkpoint.
     Returns:
         Provenance envelope extended with resource measurements and metrics.
     """
@@ -1641,7 +1826,7 @@ def run_resource_preflight(cfg: Config, output: str | Path) -> dict[str, Any]:
     device = device_for_training()
     if device.type == "cuda":
         torch.cuda.reset_peak_memory_stats(device)
-    prepared = _prepare_run(cfg, device)
+    prepared = _prepare_run(cfg, device, warm_start_from=warm_start_from)
     modules, optimizer, mean_tracker, whitener, _, _, provenance = prepared
     encoder = modules[0]
     train_batch = next(
@@ -1745,6 +1930,7 @@ def run_training(
     steps: int,
     resume: str | None = None,
     *,
+    warm_start_from: str | None = None,
     require_wandb: bool = False,
     wandb_options: dict[str, Any] | None = None,
     provenance_out: str | None = None,
@@ -1758,7 +1944,15 @@ def run_training(
 
     set_seed(cfg.seed)
     device = device_for_training()
-    prepared = _prepare_run(cfg, device, resume, tracking_identity=wandb_options)
+    if resume is not None and warm_start_from is not None:
+        raise ValueError("Resume and warm start are mutually exclusive.")
+    prepared = _prepare_run(
+        cfg,
+        device,
+        resume,
+        warm_start_from,
+        tracking_identity=wandb_options,
+    )
     modules, optimizer, mean_tracker, whitener, dataset_identity, init_hash, provenance = prepared
     encoder, bottleneck, target_bottleneck, coarse_flow, decoder = modules
     encoder_spec = encoder.spec
@@ -1805,6 +1999,11 @@ def run_training(
     # Peak LRs always come from config/CLI — not checkpoint param_group["lr"], which
     # stores the *scheduled* LR at save time and would double-apply cosine decay on resume.
     base_lrs = peak_base_lrs(bottleneck, coarse_flow, decoder, cfg)
+    if warm_start_from:
+        print(
+            "Warm start begins at step 0 with a fresh optimizer and schedule; "
+            f"trainable_init_hash={init_hash}."
+        )
     if resume:
         print(
             f"Resumed step {start_step}; peak base LRs "
@@ -1981,7 +2180,7 @@ def run_training(
 def build_arg_parser() -> argparse.ArgumentParser:
     """Build the compact Phase 1 training CLI.
 
-    Scientific settings live in YAML. Only the five axes repeatedly swept in the latest
+    Scientific settings live in YAML. Only the six axes repeatedly swept in the latest
     investigations remain as direct overrides: dataset, encoder, slot count, external slot width,
     and internal bottleneck width. The remaining flags are operator controls, not hyperparameters.
     """
@@ -2023,7 +2222,21 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=None,
         help="Hot override for the YAML internal bottleneck width.",
     )
-    operator.add_argument("--resume", default=None, help="Operator override for runtime.resume.")
+    scientific.add_argument(
+        "--temporal-target",
+        choices=("residual", "full_latent"),
+        default=None,
+        help="Select only train.predict_residual for a controlled parallel target pair.",
+    )
+    initialization = operator.add_mutually_exclusive_group()
+    initialization.add_argument(
+        "--resume", default=None, help="Operator override for runtime.resume."
+    )
+    initialization.add_argument(
+        "--warm-start-from",
+        default=None,
+        help="Load only online B and matched D from a current present-only checkpoint.",
+    )
     mode = operator.add_mutually_exclusive_group()
     mode.add_argument("--stage0-only", action="store_true")
     mode.add_argument(
@@ -2038,6 +2251,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     operator.add_argument("--provenance-out", default=None)
     operator.add_argument("--compare-provenance", nargs=2, metavar=("LEFT", "RIGHT"))
+    operator.add_argument(
+        "--compare-temporal-target-provenance",
+        nargs=2,
+        metavar=("RESIDUAL", "FULL_LATENT"),
+    )
     operator.add_argument("--require-wandb", action="store_true")
     operator.add_argument("--wandb-entity", default=None)
     operator.add_argument("--wandb-project", default=None)
@@ -2253,7 +2471,7 @@ def main() -> None:
     runtime = experiment.runtime
     wandb_config = experiment.wandb
 
-    # The only scientific CLI overrides are the five axes repeatedly varied in the latest
+    # The only scientific CLI overrides are the six axes repeatedly varied in the latest
     # KANBAN investigations. Every other recipe value remains an auditable YAML edit.
     if args.data is not None:
         cfg.data.dataset = args.data
@@ -2270,6 +2488,8 @@ def main() -> None:
         cfg.model.d_c = args.d_c
     if args.bottleneck_mixer_dim is not None:
         cfg.model.bottleneck_mixer_dim = args.bottleneck_mixer_dim
+    if args.temporal_target is not None:
+        cfg.train.predict_residual = args.temporal_target == "residual"
     if args.checkpoint_dir is not None:
         cfg.checkpoint_dir = args.checkpoint_dir
 
@@ -2284,6 +2504,19 @@ def main() -> None:
         )
         print(f"Provenance parity passed: {left_path} == {right_path} (common fields)")
         return
+    if args.compare_temporal_target_provenance:
+        from provenance import compare_temporal_target_provenance
+
+        left_path, right_path = map(Path, args.compare_temporal_target_provenance)
+        compare_temporal_target_provenance(
+            json.loads(left_path.read_text(encoding="utf-8")),
+            json.loads(right_path.read_text(encoding="utf-8")),
+        )
+        print(
+            "Temporal-target provenance parity passed: "
+            f"{left_path} <> {right_path} (only predict_residual differs)"
+        )
+        return
 
     mode = runtime.mode
     if args.stage0_only:
@@ -2294,6 +2527,9 @@ def main() -> None:
         mode = "resource_preflight"
     provenance_out = args.provenance_out or runtime.provenance_out
     resume = args.resume or runtime.resume
+    warm_start_from = args.warm_start_from or runtime.warm_start_from
+    if resume is not None and warm_start_from is not None:
+        raise ValueError("runtime.resume/--resume and warm start are mutually exclusive.")
     require_wandb = args.require_wandb or runtime.require_wandb
     reset_optimizer = args.reset_optimizer or runtime.reset_optimizer
     allow_dataset_transfer = args.allow_dataset_transfer or runtime.allow_dataset_transfer
@@ -2314,15 +2550,17 @@ def main() -> None:
             cfg,
             output,
             tracking_identity=wandb_options,
+            warm_start_from=warm_start_from,
         )
     elif mode == "resource_preflight":
         output = provenance_out or "logs/preflight/resource_preflight.json"
-        run_resource_preflight(cfg, output)
+        run_resource_preflight(cfg, output, warm_start_from=warm_start_from)
     elif mode == "train":
         run_training(
             cfg,
             cfg.train.max_steps,
             resume,
+            warm_start_from=warm_start_from,
             require_wandb=require_wandb,
             wandb_options=wandb_options,
             provenance_out=provenance_out,

@@ -230,10 +230,10 @@ Root implementation files:
 | `losses.py` | Pure tensor losses and detach helper. No parameters. |
 | `diagnostics.py` | Collapse metrics, baseline comparisons, AGC, weight-decay grouping. |
 | `provenance.py` | Frame-count-bound dataset/run identities, EncoderSpec serialization, atomic writes, strict whitening and feature-cache envelopes. |
-| `train.py` | Stage-0/1, five-axis scientific CLI, operator overrides, optimizer/EMA, exact sampler/RNG atomic resume, parity/CUDA-event resource preflights, and strict/optional W&B policy. |
+| `train.py` | Stage-0/1, six-axis scientific CLI, initialization-only B/D warm start, optimizer/EMA, exact sampler/RNG atomic resume, parity/CUDA-event resource preflights, and strict/optional W&B policy. |
 | `parse_logs.py` | Parses `step=N {dict}` console logs into JSON. |
 | `run_history.py` | W&B Public API export/report helper for logged metrics. |
-| `evaluate_checkpoint_diagnostics.py` | Offline checkpoint evaluator for paired encoder/online-bottleneck cross-video cosine on the corrected fixed source-diverse batch; no optimizer or training state mutation. |
+| `evaluate_checkpoint_diagnostics.py` | Narrow offline evaluator for current unwhitened v2 checkpoints: paired encoder/live-online-bottleneck cross-video cosine on the corrected fixed source-diverse batch, repeated for determinism; no optimizer or training-state mutation. |
 | `drift_probe.py` | Offline within-video temporal drift probe: frozen-encoder drift vs bottleneck-latent drift over a pinned probe set, evaluated from checkpoints. |
 | `rank_probe.py` | Encoder-generic raw/effective-rank probe over the strict drift manifest/feature cache, including pre-concatenation frame-layout norms/ranks. |
 | `whiten_stats.py` | Deterministic context-only fp64 statistics through the same encoder/data seam; writes a strict encoder/dataset-bound eigensystem envelope. |
@@ -677,19 +677,19 @@ distinct slots.
 
 ### SIGReg, covariance, and slot losses
 
-These exist in code but are off by default:
-
 - `sigreg_loss`: stochastic projection/BHEP-style normality statistic pushing
   pooled `c_t` rows toward isotropic `N(0, I)`. It uses a per-step generator in
   `train_step` so logging it does not perturb the global RNG when its weight is
-  zero.
+  zero. Default weight `lambda_sigreg=0.0` (off).
 - `covariance_floor`: VICReg-C off-diagonal covariance penalty on pooled
-  `B * N_c` rows over `D_c` dimensions.
+  `B * N_c` rows over `D_c` dimensions. Default weight `lambda_cov=0.01` (on).
 - `slot_diversity_loss`: centers slots within each video, normalizes residual
   slot vectors, and penalizes squared off-diagonal slot cosine similarities.
+  Default weight `lambda_slot=0.0` (off).
 
-Do not assume these should be turned on. Their weights default to zero. If you
-change them, explain the gradient effect and watch the core prediction metrics.
+Default geometry recipe: `lambda_var=0.5`, `lambda_cov=0.01`. SIGReg and slot
+diversity stay off unless an experiment turns them on. If you change these
+weights, explain the gradient effect and watch the core prediction metrics.
 
 ## 8. Exact current training step
 
@@ -835,6 +835,13 @@ Checkpoints:
   `next_step`, train count, and physical batch before mutating state, then passes that
   exact saved position to the first resumed dataloader. It also restores RNG and resumes
   at the saved `next_step`.
+- `--warm-start-from` is mutually exclusive with resume. It accepts only a current
+  present-only v2 checkpoint after exact encoder, dataset, feature-space, bottleneck, and
+  decoder validation; transfers the live online `B` and matched `D`; copies the loaded
+  `B` exactly into a fresh `B_EMA`; and keeps `F_c`, optimizer, schedule, global step,
+  sampler, RNG, W&B identity, and output state fresh. The source SHA-256 and transfer
+  policy are bound into run provenance, and the trainable initialization hash is computed
+  after transfer.
 
 ## 11. Diagnostics and what each one proves
 
@@ -846,16 +853,24 @@ loader warns and uses all available sources without duplicate refill. The config
 validation batch must contain at least two distinct source videos; otherwise the shuffled-c
 honesty probe would be an identity operation and training fails loudly.
 
+This is the post-PR-9 contract. Historical EGO4D W&B runs through local Run 072 were logged before
+the repair: their first 16 validation chunks came from one source UID, they have no
+`e_cross_video_cosine` key, and their `c_cross_video_cosine` values remain valid only as
+within-source cross-chunk measurements. Do not compare those old values directly with new
+source-diverse W&B values or silently relabel them.
+
 Representation health:
 
 - `variance_stats(c_t)` logs `c_std_mean`, `c_std_median`,
   `c_dead_dim_frac`.
 - `cross_video_cosine(e_t)` logs `e_cross_video_cosine` before the bottleneck, and
   `cross_video_cosine(c_t)` preserves the historical `c_cross_video_cosine` key after
-  the bottleneck. Both use the same unique-source fixed diagnostic batch. High values
-  indicate video-independent collapse. Here `e_t` is the `detailed` representation
-  presented to the bottleneck: raw encoder output when whitening is disabled, or the
-  whitened representation when whitening is enabled.
+  the bottleneck. The same pure function flattens each complete per-example tensor,
+  L2-normalizes it, and averages the off-diagonal pairwise cosines. Both values use the same
+  unique-source batch and the same encoder forward. Their difference isolates how much common
+  cross-source direction is removed or added by the bottleneck. Here `e_t` is the `detailed`
+  representation presented to the bottleneck: raw encoder output when whitening is disabled,
+  or the whitened representation when whitening is enabled.
 - `effective_rank(c_t)` pools batch and slots, computes covariance over
   `D_c`, then logs `exp(entropy(normalized_eigenvalues))`.
 - `slot_diversity_rank(c_t)` computes within-video effective rank over the
@@ -863,6 +878,13 @@ Representation health:
 - `attention_entropy(bottleneck, detailed)` computes normalized per-head
   cross-attention entropy. It is useful but weaker than actual slot/rank
   metrics.
+
+The offline evaluator currently accepts only unwhitened `hjepa-phase1-checkpoint-v2` files and
+restores the live online bottleneck, not `B_EMA`. On Run 069 step 15,000, 16 clips from 16 distinct
+EGO4D source UIDs gave deterministic repeated values `e_cross_video_cosine=0.4027678072` and
+`c_cross_video_cosine=0.0907106772`: a latent-minus-encoder change of `-0.31205713`, or a 77.5%
+reduction relative to the raw DINO representation. This is paired source-diverse evidence for that
+checkpoint, not a retroactive correction of its historical W&B curve.
 
 Prediction baselines:
 
@@ -930,7 +952,7 @@ Future Phase-2/3 diagnostics, not implemented yet:
 
 `config.py` supplies typed fallback defaults. `configs/train.yaml` is the only editable experiment
 recipe and `train.py` reads it on every invocation; there is no `--config` selector. Resolution is
-dataclass defaults → the single YAML → five scientific CLI overrides → operator overrides.
+dataclass defaults → the single YAML → six scientific CLI overrides → operator overrides.
 Duplicate/unknown keys, legacy or audit-owned fields, and scalar types are validated before model
 construction. Every YAML leaf documents its choices or reasonable range inline. The YAML path and
 content hash are audit-recorded but excluded from scientific parity, which binds the fully resolved
@@ -978,8 +1000,8 @@ Dataclass fallback training defaults (not the active YAML values):
 | `agc_enabled` | `True` |
 | `agc_lambda_bottleneck`, `agc_lambda_coarse_flow`, `agc_lambda_decoder` | `0.20`, `0.10`, `0.20` |
 | `ema_m_start`, `ema_m_end`, `ema_schedule_steps` | `0.996`, `0.9999`, `105000` |
-| `lambda_var`, `var_floor_std_target` | `0.10`, `1.0` |
-| `lambda_sigreg`, `lambda_cov`, `lambda_slot` | `0.0`, `0.0`, `0.0` |
+| `lambda_var`, `var_floor_std_target` | `0.5`, `1.0` |
+| `lambda_sigreg`, `lambda_cov`, `lambda_slot` | `0.0`, `0.01`, `0.0` |
 | `lambda_recon`, `lambda_recon_pred` | `0.0`, `0.0` |
 | `recon_loss_mode`, `recon_warmup_steps` | `cosine`, `2000` |
 | `recon_residual_target`, `recon_mean_momentum` | `False`, `0.99` |
@@ -1000,10 +1022,13 @@ Data/path defaults:
 | `hf_cache_dir` | `/workspace/hf_cache` |
 | `seed` | `42` |
 
-The only scientific CLI overrides are `--data`, `--encoder`, `--n-c`, `--d-c`, and
-`--bottleneck-mixer-dim`. They are the repeatedly varied axes from the recent dataset/encoder/
-latent-shape investigations. Losses, whitening, reconstruction modes, decoder shape, schedules,
-optimizer settings, and cadence live in YAML so their coupled recipe is reviewed as one unit.
+The scientific CLI overrides are `--data`, `--encoder`, `--n-c`, `--d-c`,
+`--bottleneck-mixer-dim`, and `--temporal-target {residual,full_latent}`. The first five are
+the repeatedly varied dataset/encoder/latent-shape axes. The final selector maps only to the
+already implemented `train.predict_residual` boolean so a controlled target pair can run
+concurrently from one YAML/worktree. Losses, whitening, reconstruction modes, decoder shape,
+schedules, optimizer settings, and cadence live in YAML so their coupled recipe is reviewed as
+one unit.
 Resume, preflight, provenance, W&B identity, and checkpoint-path flags remain operator controls.
 `d_c` must be positive and divisible by `f_c_heads`; checkpoints are shape-incompatible across
 either external axis. See `TRAIN_PY_HYPERPARAMETERS.md` before adding or changing a knob.

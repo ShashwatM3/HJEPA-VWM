@@ -115,6 +115,135 @@ def test_checkpoint_validates_encoder_before_mutating_and_resumes_next_step(tmp_
     assert all(torch.equal(before[name], value) for name, value in modules[1].state_dict().items())
 
 
+def test_warm_start_transfers_only_online_b_and_decoder_into_fresh_state(tmp_path):
+    """Warm start copies B/D, resets B_EMA from B, and preserves fresh F/optimizer state."""
+    import train
+    from provenance import state_dict_hash
+
+    class SpecOnlyEncoder(torch.nn.Module):
+        def __init__(self, spec):
+            super().__init__()
+            self.spec = spec
+
+    spec = _spec()
+    source_cfg, source_built = _small_modules(spec)
+    source_cfg.train.present_recon_only = True
+    source_modules = (SpecOnlyEncoder(spec), *source_built[1:])
+    with torch.no_grad():
+        next(source_modules[1].parameters()).add_(1.0)
+        next(source_modules[2].parameters()).sub_(3.0)
+        next(source_modules[3].parameters()).add_(4.0)
+        next(source_modules[4].parameters()).add_(2.0)
+    source_optimizer = train.make_optimizer(
+        source_modules[1], source_modules[3], source_modules[4], source_cfg
+    )
+    dataset = {"fingerprint": "d" * 64, "dataset": "fake"}
+    path = tmp_path / "present-only.pt"
+    train.save_checkpoint(
+        path,
+        15_000,
+        source_modules,
+        source_optimizer,
+        source_cfg,
+        dataset_identity=dataset,
+        trainable_init_hash="i" * 64,
+        wandb_run_id="source123",
+    )
+    checkpoint = torch.load(path, map_location="cpu", weights_only=False)
+
+    destination_cfg, destination_built = _small_modules(spec)
+    destination_cfg.train.present_recon_only = False
+    destination_modules = (SpecOnlyEncoder(spec), *destination_built[1:])
+    fresh_flow_hash = state_dict_hash(destination_modules[3].state_dict())
+    destination_optimizer = train.make_optimizer(
+        destination_modules[1],
+        destination_modules[3],
+        destination_modules[4],
+        destination_cfg,
+    )
+
+    warm_start = train.load_warm_start_checkpoint(
+        path,
+        destination_modules,
+        destination_cfg,
+        expected_encoder_spec=spec,
+        expected_dataset_identity=dataset,
+    )
+
+    for name, value in checkpoint["bottleneck"].items():
+        assert torch.equal(value, destination_modules[1].state_dict()[name])
+    for name, value in checkpoint["decoder"].items():
+        assert torch.equal(value, destination_modules[4].state_dict()[name])
+    for name, value in destination_modules[1].state_dict().items():
+        assert torch.equal(value, destination_modules[2].bottleneck.state_dict()[name])
+    assert any(
+        not torch.equal(
+            value,
+            checkpoint["target_bottleneck"][f"bottleneck.{name}"],
+        )
+        for name, value in destination_modules[1].state_dict().items()
+    )
+    assert state_dict_hash(destination_modules[3].state_dict()) == fresh_flow_hash
+    assert destination_optimizer.state_dict()["state"] == {}
+    assert warm_start["source_next_step"] == 15_000
+    assert warm_start["source_wandb_run_id"] == "source123"
+    assert warm_start["transferred_components"] == ["bottleneck", "decoder"]
+    assert warm_start["target_bottleneck_policy"].startswith("fresh_exact_copy")
+
+
+def test_warm_start_rejects_identity_mismatch_before_parameter_mutation(tmp_path):
+    """Dataset/encoder/feature/architecture guards all run before the first B/D load."""
+    import train
+
+    class SpecOnlyEncoder(torch.nn.Module):
+        def __init__(self, spec):
+            super().__init__()
+            self.spec = spec
+
+    spec = _spec()
+    source_cfg, source_built = _small_modules(spec)
+    source_cfg.train.present_recon_only = True
+    source_modules = (SpecOnlyEncoder(spec), *source_built[1:])
+    optimizer = train.make_optimizer(
+        source_modules[1], source_modules[3], source_modules[4], source_cfg
+    )
+    dataset = {"fingerprint": "d" * 64, "dataset": "fake"}
+    path = tmp_path / "present-only.pt"
+    train.save_checkpoint(
+        path,
+        100,
+        source_modules,
+        optimizer,
+        source_cfg,
+        dataset_identity=dataset,
+    )
+
+    destination_cfg, destination_built = _small_modules(spec)
+    destination_cfg.train.present_recon_only = False
+    destination_modules = (SpecOnlyEncoder(spec), *destination_built[1:])
+    with torch.no_grad():
+        next(destination_modules[1].parameters()).add_(7.0)
+    before_b = {name: value.clone() for name, value in destination_modules[1].state_dict().items()}
+    before_d = {name: value.clone() for name, value in destination_modules[4].state_dict().items()}
+
+    with pytest.raises(ValueError, match="dataset fingerprint"):
+        train.load_warm_start_checkpoint(
+            path,
+            destination_modules,
+            destination_cfg,
+            expected_encoder_spec=spec,
+            expected_dataset_identity={"fingerprint": "x" * 64},
+        )
+    assert all(
+        torch.equal(before_b[name], value)
+        for name, value in destination_modules[1].state_dict().items()
+    )
+    assert all(
+        torch.equal(before_d[name], value)
+        for name, value in destination_modules[4].state_dict().items()
+    )
+
+
 def test_checkpoint_restores_exact_saved_dataloader_position(tmp_path):
     import train
     from data import build_dataloader
@@ -323,6 +452,16 @@ def test_training_cli_exposes_hot_encoder_and_operator_surface(monkeypatch):
     assert not hasattr(args, "batch_size")
     assert not hasattr(args, "lr_decoder")
     assert args.preflight_only and args.require_wandb
+
+
+def test_resume_and_warm_start_cli_are_mutually_exclusive():
+    """A run cannot combine exact continuation with initialization-only transfer."""
+    import train
+
+    with pytest.raises(SystemExit):
+        train.build_arg_parser().parse_args(
+            ["--resume", "resume.pt", "--warm-start-from", "source.pt"]
+        )
 
 
 def test_training_cli_describes_dino_as_a_pinned_one_flag_choice(monkeypatch, capsys):

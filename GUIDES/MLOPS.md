@@ -190,8 +190,20 @@ python train.py \
   --resume /workspace/checkpoints/phase1_step15000.pt
 ```
 
+Initialization-only transfer is a different operation:
+
+```bash
+python train.py \
+  --warm-start-from /workspace/ckpt/source/phase1_step15000.pt
+```
+
+Warm start loads only the validated online bottleneck and matched decoder, initializes a fresh
+EMA target from the loaded online bottleneck, and starts fresh flow/optimizer/step/RNG/sampler/W&B
+state. Never use `--resume` as a substitute for a pretraining transfer.
+
 Losses, schedules, modes, and optimizer settings always come from `configs/train.yaml`. Only dataset,
-encoder, `N_c`, `D_c`, and bottleneck mixer width remain scientific CLI overrides.
+encoder, `N_c`, `D_c`, bottleneck mixer width, and the controlled temporal-target selector remain
+scientific CLI overrides.
 
 ---
 

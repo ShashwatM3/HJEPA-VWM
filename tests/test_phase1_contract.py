@@ -162,7 +162,8 @@ def test_config_exposes_locked_phase1_constants(monkeypatch):
     assert cfg.encoder.hf_cache_dir == cfg.hf_cache_dir
     assert cfg.train.stage1_steps == 15_000
     assert cfg.train.total_latent_steps == 105_000
-    assert cfg.train.lambda_var == 0.10
+    assert cfg.train.lambda_var == 0.5
+    assert cfg.train.lambda_cov == 0.01
     assert cfg.train.sigreg_warmup_steps == 2_000
     assert cfg.train.recon_loss_mode == "cosine"
     assert cfg.train.present_recon_only is False

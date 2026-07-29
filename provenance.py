@@ -558,6 +558,7 @@ def build_run_provenance(
     trainable_init: str,
     whitening_payload_fingerprint: str | None,
     tracking_identity: dict[str, Any] | None = None,
+    warm_start: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Materialize paired-arm identity with one explicit common comparison hash.
 
@@ -571,6 +572,7 @@ def build_run_provenance(
         trainable_init: Fingerprint of the freshly initialized B/F/D stack.
         whitening_payload_fingerprint: Bound whitening artifact identity, if enabled.
         tracking_identity: Optional credential-free W&B entity/project/group/name/id fields.
+        warm_start: Optional initialization-only checkpoint transfer identity.
     Returns:
         Versioned run provenance with common, encoder, data, and tracking identities.
     """
@@ -623,6 +625,7 @@ def build_run_provenance(
         "encoder_runtime_contract": encoder_runtime_contract,
         "runtime": runtime_identity(),
         "seed_streams": _seed_stream_identity(cfg.seed),
+        "warm_start": warm_start,
     }
     return {
         "schema": "hjepa-run-provenance-v1",
@@ -634,6 +637,7 @@ def build_run_provenance(
         "dataset_identity": dataset_identity,
         "resolved_config": config,
         "tracking_identity": resolved_tracking,
+        "warm_start": warm_start,
     }
 
 
@@ -653,6 +657,48 @@ def compare_run_provenance(left: dict[str, Any], right: dict[str, Any]) -> None:
             raise ValueError(f"{label} provenance has an unsupported schema.")
     if left.get("common_identity") != right.get("common_identity"):
         raise ValueError("Encoder-arm provenance differs in encoder-independent fields.")
+
+
+def compare_temporal_target_provenance(left: dict[str, Any], right: dict[str, Any]) -> None:
+    """Require a paired run to differ only in residual versus full-latent prediction.
+
+    Tracking identity and resource measurements are operational outputs rather than
+    scientific controls. Every resolved identity—including encoder, dataset, warm-start
+    checkpoint, step-0 trainable bytes, schedules, and seed streams—must otherwise match.
+
+    Args:
+        left: First resolved run/resource provenance envelope.
+        right: Second resolved run/resource provenance envelope.
+    Returns:
+        None. Any difference beyond ``train.predict_residual`` raises.
+    """
+    for label, payload in (("left", left), ("right", right)):
+        if payload.get("schema") != "hjepa-run-provenance-v1":
+            raise ValueError(f"{label} provenance has an unsupported schema.")
+
+    def prediction_mode(payload: dict[str, Any]) -> bool:
+        try:
+            value = payload["resolved_config"]["train"]["predict_residual"]
+        except (KeyError, TypeError) as exc:
+            raise ValueError("Temporal-target provenance is missing predict_residual.") from exc
+        if not isinstance(value, bool):
+            raise ValueError("Temporal-target predict_residual must be boolean.")
+        return value
+
+    if prediction_mode(left) == prediction_mode(right):
+        raise ValueError("Temporal-target pair must contain one residual and one full-latent arm.")
+
+    def normalized(payload: dict[str, Any]) -> dict[str, Any]:
+        comparable = json.loads(json.dumps(payload))
+        comparable.pop("common_identity", None)
+        comparable.pop("tracking_identity", None)
+        comparable.pop("resource_preflight", None)
+        comparable["resolved_config"]["train"].pop("predict_residual", None)
+        comparable["common"]["config"]["train"].pop("predict_residual", None)
+        return comparable
+
+    if normalized(left) != normalized(right):
+        raise ValueError("Temporal-target provenance differs beyond train.predict_residual.")
 
 
 def compare_checkpoint_provenance(

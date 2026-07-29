@@ -180,14 +180,14 @@ class TrainConfig:
     ema_m_start: float = 0.996
     ema_m_end: float = 0.9999
     ema_schedule_steps: int = 105_000
-    lambda_var: float = 0.10  # variance-floor weight (VICReg V)
+    lambda_var: float = 0.5  # variance-floor weight (VICReg V); default ON
     var_floor_std_target: float = 1.0  # hinge target in L_var
     # SIGReg (LeJEPA isotropic-Gaussian regularizer) on c_t — investigation_008.
     # Pushes the pooled c_t distribution toward N(0, I), the provably risk-optimal
     # embedding law; isotropy maximizes effective rank by construction, attacking the
     # c_effective_rank≈13/256 utilization ceiling the one-sided variance floor can't
     # move. Default 0.0 -> L_sigreg is computed for logging but NOT added to the loss,
-    # so the baseline is byte-identical. The var floor stays on (small λ_var) as a
+    # so the baseline is byte-identical. The var floor stays on (λ_var=0.5) as a
     # non-interfering safety net (its hinge is inactive once std≥1, where SIGReg lands).
     lambda_sigreg: float = 0.0
     # SIGReg warmup (investigation_010, Issue 7). SIGReg hits the ONLINE bottleneck
@@ -201,10 +201,9 @@ class TrainConfig:
     # lagging target can't masquerade as a healthy online rank.
     sigreg_warmup_steps: int = 2_000
     # VICReg-C off-diagonal covariance penalty on c_t (Plan Phase 04, anti-collapse).
-    # Default 0.0 -> term computed for logging (L_cov) but NOT added to loss, so the
-    # v0.2 baseline is reproduced exactly. Nonzero = sweep knob: start small
-    # (~0.01-0.1), calibrate against L_cov's baseline magnitude, watch copy-ratio.
-    lambda_cov: float = 0.0
+    # Default 0.01 -> term is active in the loss. Set 0.0 to compute L_cov for logging
+    # only. Calibrate against L_cov's magnitude; watch copy-ratio.
+    lambda_cov: float = 0.01
     # Within-video slot-diversity penalty on c_t (Plan Phase 04, anti slot-collapse).
     # Default 0.0 -> term computed for logging (L_slot) but NOT added to loss.
     # Nonzero is the primary knob after Run A showed c_slot_diversity_rank≈1.6/32.
@@ -392,6 +391,7 @@ class RuntimeConfig:
 
     mode: Literal["train", "stage0", "preflight", "resource_preflight"] = "train"
     resume: str | None = None
+    warm_start_from: str | None = None
     provenance_out: str | None = None
     compare_provenance: tuple[str, str] | None = None
     require_wandb: bool = False
@@ -567,7 +567,7 @@ def load_experiment_config(path: str | Path) -> ExperimentConfig:
     """Load one strict YAML recipe over the shipped dataclass defaults.
 
     The YAML may be partial, but every supplied key must name a real dataclass field. Scientific
-    command-line overrides are applied later by ``train.py`` only for the five active sweep axes.
+    command-line overrides are applied later by ``train.py`` only for the six active sweep axes.
 
     Args:
         path: YAML file containing Config sections plus optional ``runtime`` and ``wandb`` maps.

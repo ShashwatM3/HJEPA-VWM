@@ -113,10 +113,10 @@ def test_yaml_encoder_cache_path_stays_synchronized(tmp_path: Path) -> None:
     assert experiment.config.hf_cache_dir == experiment.config.encoder.hf_cache_dir
 
 
-def test_cli_keeps_only_five_scientific_sweep_overrides(
+def test_cli_keeps_only_six_scientific_sweep_overrides(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Expose only the five axes repeatedly varied in the latest investigations."""
+    """Expose only the six axes repeatedly varied in the latest investigations."""
     import train
 
     monkeypatch.setattr(
@@ -162,7 +162,7 @@ def test_cli_keeps_only_five_scientific_sweep_overrides(
         train.parse_args()
 
 
-def test_scientific_cli_group_contains_exactly_five_options() -> None:
+def test_scientific_cli_group_contains_exactly_six_options() -> None:
     """Make CLI-surface growth an explicit reviewed test change."""
     import train
 
@@ -183,13 +183,14 @@ def test_scientific_cli_group_contains_exactly_five_options() -> None:
         "--n-c",
         "--d-c",
         "--bottleneck-mixer-dim",
+        "--temporal-target",
     }
 
 
 def test_main_loads_yaml_then_applies_hot_overrides(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Resolve the complete recipe from YAML before applying the five CLI axes."""
+    """Resolve the complete recipe from YAML before applying the six CLI axes."""
     import train
 
     path = tmp_path / "stage0.yaml"
@@ -236,6 +237,49 @@ runtime:
     assert cfg.model.bottleneck_mixer_dim == 512
     assert cfg.model.decoder_dim == 512
     assert cfg.train.lambda_var == 0.5
+
+
+@pytest.mark.parametrize(
+    ("temporal_target", "expected"),
+    [("residual", True), ("full_latent", False)],
+)
+def test_temporal_target_override_changes_only_predict_residual(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    temporal_target: str,
+    expected: bool,
+) -> None:
+    """The paired CLI selector maps directly to the existing target-mode boolean."""
+    import train
+    from config import load_experiment_config
+
+    path = tmp_path / "stage0.yaml"
+    path.write_text(
+        """
+train:
+  present_recon_only: false
+runtime:
+  mode: stage0
+""",
+        encoding="utf-8",
+    )
+    captured = {}
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["train.py", "--temporal-target", temporal_target],
+    )
+    monkeypatch.setattr(train, "EXPERIMENT_CONFIG_PATH", path)
+    monkeypatch.setattr(train, "run_stage0", lambda cfg: captured.setdefault("cfg", cfg))
+
+    train.main()
+
+    cfg = captured["cfg"]
+    baseline = load_experiment_config(path).config
+    train.finalize_training_config(baseline)
+    assert cfg.train.predict_residual is expected
+    cfg.train.predict_residual = baseline.train.predict_residual
+    assert cfg == baseline
 
 
 def test_encoder_override_rejects_a_revision_pinned_for_another_alias(
@@ -289,7 +333,7 @@ def test_shipped_yaml_is_the_only_complete_runnable_recipe() -> None:
     assert experiment.config.train.lambda_sigreg == 0.0
     assert experiment.config.train.lambda_slot == 0.0
     assert experiment.config.train.lambda_recon == 1.0
-    assert experiment.config.train.present_recon_only is True
+    assert experiment.config.train.present_recon_only is False
     assert experiment.config.train.whiten_features is False
     assert experiment.runtime.mode == "train"
     assert experiment.wandb.project == "hjepa-vwm"

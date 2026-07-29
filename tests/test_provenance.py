@@ -397,3 +397,39 @@ def test_checkpoint_provenance_dataset_transfer_drops_only_dataset_fields():
             target,
             allow_dataset_transfer=True,
         )
+
+
+def test_temporal_target_provenance_allows_only_predict_residual():
+    """Paired full-prediction arms may differ in exactly one target-mode boolean."""
+    import copy
+
+    import provenance
+
+    full = {
+        "schema": "hjepa-run-provenance-v1",
+        "common_identity": "full",
+        "common": {
+            "config": {"train": {"predict_residual": False, "lambda_cov": 0.01}},
+            "warm_start": {"checkpoint_sha256": "a" * 64},
+        },
+        "resolved_config": {
+            "train": {"predict_residual": False, "lambda_cov": 0.01},
+        },
+        "encoder_spec": {"feature_fingerprint": "e" * 64},
+        "dataset_identity": {"fingerprint": "d" * 64},
+        "warm_start": {"checkpoint_sha256": "a" * 64},
+        "tracking_identity": {"name": "full"},
+        "resource_preflight": {"metrics": {"L_flow": 1.0}},
+    }
+    residual = copy.deepcopy(full)
+    residual["common_identity"] = "residual"
+    residual["common"]["config"]["train"]["predict_residual"] = True
+    residual["resolved_config"]["train"]["predict_residual"] = True
+    residual["tracking_identity"]["name"] = "residual"
+    residual["resource_preflight"]["metrics"]["L_flow"] = 2.0
+
+    provenance.compare_temporal_target_provenance(full, residual)
+
+    residual["resolved_config"]["train"]["lambda_cov"] = 0.0
+    with pytest.raises(ValueError, match="beyond"):
+        provenance.compare_temporal_target_provenance(full, residual)

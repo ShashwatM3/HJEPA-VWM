@@ -394,3 +394,51 @@ width at `M=512` and runs the complete `N_c={16,64}` by `D_c={128,512}` factoria
 for V-JEPA2, DINOv3, and SigLIP 2. All auxiliary geometry weights and feature whitening are off.
 The encoder lanes execute in that order; four cells run concurrently on GPUs 0–3 within a lane.
 No W&B entry exists until launch.
+
+## Live correction (2026-07-28) — W&B entry 076 and source-diverse diagnostics
+
+This is the current source of truth after the preserved 2026-07-26 reconciliation above.
+
+- Live W&B contains **76 entries**: 35 finished, 29 crashed, 11 killed, 1 failed, and 0 running.
+  Entry 076 is local scientific Run 072
+  [`utcpfj57`](https://wandb.ai/smahalanobis-uc-davis/hjepa-vwm/runs/utcpfj57); it finished all
+  15,000 updates. The 75-entry inventory and “not yet launched” text above are dated history.
+- Run 072 was stable and correctly present-only (`prediction_active=0`, zero skipped/NaN updates).
+  At the final diagnostic its present/shuffled reconstruction was `0.35721/0.42989` (gap
+  `0.07268`), `c_std_mean=0.48411`, `c_effective_rank=57.09`, and the historical-batch
+  `c_cross_video_cosine=0.73884`. Pure SIGReg improved substantially over the no-geometry V-JEPA2
+  control but did not match the covariance-plus-variance partial reference or pass the registered
+  std/rank/cosine gates. Verdict: **collapsed on the recorded within-source batch; decodable,
+  cross-source specificity unmeasured**. It is not prediction evidence.
+- PR 9 repaired the fixed diagnostic population for future executions. EGO4D now scans validation
+  order and keeps the first clip from each distinct source UID; SSv2 retains first-N behavior.
+  Shortfall warns without duplicate refill, and fewer than two realized sources fails loudly.
+  Therefore the deterministic code roll used by `L_recon_shuffled_c` is also cross-source.
+- The same encoder forward now logs `e_cross_video_cosine` on the detailed representation and the
+  historical `c_cross_video_cosine` key on the abstract latent, using the same flatten-normalize-
+  off-diagonal-mean function. Historical W&B entries 001–076 retain their original metrics:
+  EGO4D `c` values are within-source cross-chunk measurements and no `e` key was logged.
+- The corrected offline evaluation of unwhitened Run 069 step 15,000 used 16 clips from 16 unique
+  EGO4D source UIDs. Two repetitions were identical:
+  `e_cross_video_cosine=0.4027678072`, `c_cross_video_cosine=0.0907106772`,
+  `c-e=-0.31205713`, or a 77.5% reduction relative to raw DINO. This is checkpoint evidence on the
+  live online bottleneck, not a retroactive replacement of Run 069's W&B curve. The current narrow
+  evaluator rejects whitened checkpoints.
+
+Current research frontier: the bottleneck can carry strong present representations under some
+geometry recipes, and the repaired Run 069 probe shows that one DINO bottleneck removes much of
+the raw encoder's shared cross-source direction. No full-prediction run has passed both Phase-1
+forecasting gates, no DINO full-prediction run exists, and Investigation 017's non-center
+latent-shape sweep remains incomplete.
+
+## Registered follow-up (2026-07-28) — Investigation 020
+
+[Investigation 020](investigation_020/) registers the paired transfer from the selected
+Investigation-019 DINOv3 `64×512`, `M=512` bottleneck into the current full-prediction architecture.
+Both arms will warm-start the exact same DINOv3 online bottleneck and matched decoder checkpoint, keep
+the bottleneck trainable, reinitialize the EMA target from the loaded online bottleneck, and start
+fresh flow, optimizer, schedule, sampler, RNG, checkpoint, and W&B state. Covariance plus variance
+is fixed in both arms; the only scientific difference is residual versus full-latent temporal
+prediction. The initialization-only warm start, concurrent temporal-target CLI, and narrow parity
+guard are implemented and locally tested; the pair is ready for its exact-commit pod gates and
+launch. No W&B entry exists yet.
