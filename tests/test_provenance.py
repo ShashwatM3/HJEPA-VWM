@@ -83,6 +83,36 @@ def test_dataset_identity_binds_manifest_sorted_inventory_and_frame_counts(tmp_p
     assert provenance.build_dataset_identity(cfg)["fingerprint"] != frame_changed["fingerprint"]
 
 
+def test_parallel_split_inventory_preserves_canonical_sorted_fingerprint(tmp_path, monkeypatch):
+    import provenance
+
+    root = tmp_path / "dataset"
+    split = root / "train"
+    split.mkdir(parents=True)
+    for name, payload in (
+        ("clip-c.mp4", b"ccc"),
+        ("clip-a.mp4", b"a"),
+        ("clip-b.mp4", b"bb"),
+    ):
+        (split / name).write_bytes(payload)
+    frame_counts = {"clip-a.mp4": 11, "clip-b.mp4": 12, "clip-c.mp4": 13}
+    monkeypatch.setattr(
+        provenance,
+        "_video_frame_count",
+        lambda path: frame_counts[path.name],
+    )
+
+    inventory = provenance._split_inventory(root, "train")
+    canonical_entries = [
+        {"path": "train/clip-a.mp4", "size": 1, "frames": 11},
+        {"path": "train/clip-b.mp4", "size": 2, "frames": 12},
+        {"path": "train/clip-c.mp4", "size": 3, "frames": 13},
+    ]
+    assert inventory["count"] == 3
+    assert inventory["total_frames"] == 36
+    assert inventory["fingerprint"] == provenance._metadata_fingerprint(canonical_entries)
+
+
 def test_whitening_envelope_is_atomic_and_rejects_shape_matched_wrong_encoder(tmp_path):
     import provenance
 

@@ -14,6 +14,7 @@ import platform
 import subprocess
 import sys
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -242,20 +243,31 @@ def _split_inventory(root: Path, split: str) -> dict[str, Any]:
     files = sorted([*split_dir.glob("*.webm"), *split_dir.glob("*.mp4")])
     if not files:
         raise FileNotFoundError(f"No .webm or .mp4 clips found in {split_dir}")
-    entries = []
-    for path in files:
+
+    def inventory_entry(path: Path) -> dict[str, Any]:
+        """Resolve one clip without changing the sorted inventory order."""
         try:
             resolved = path.resolve(strict=True)
             size = resolved.stat().st_size
         except FileNotFoundError as exc:
             raise FileNotFoundError(f"Broken dataset clip/symlink: {path}") from exc
-        entries.append(
-            {
-                "path": str(path.relative_to(root)),
-                "size": size,
-                "frames": _video_frame_count(resolved),
-            }
-        )
+        return {
+            "path": str(path.relative_to(root)),
+            "size": size,
+            "frames": _video_frame_count(resolved),
+        }
+
+    # A full EGO4D identity contains roughly 170k clips. Opening those videos
+    # serially makes every preflight and launch spend tens of minutes before
+    # model initialization. Executor.map preserves the already sorted input
+    # order, so bounded parallel metadata reads accelerate the operation without
+    # changing the canonical entries or their fingerprint.
+    workers = min(16, len(files))
+    with ThreadPoolExecutor(
+        max_workers=workers,
+        thread_name_prefix="dataset-inventory",
+    ) as executor:
+        entries = list(executor.map(inventory_entry, files))
     frame_counts = [entry["frames"] for entry in entries]
     return {
         "count": len(entries),
