@@ -444,3 +444,28 @@ narrow parity guard are implemented and tested. Both exact-source resource gates
 pair is running from clean commit `7649f8efde1b104dd81cfbd110af18d499f67304`: residual
 [`3y2hxj5t`](https://wandb.ai/smahalanobis-uc-davis/hjepa-vwm/runs/3y2hxj5t) and full latent
 [`8r6akjsx`](https://wandb.ai/smahalanobis-uc-davis/hjepa-vwm/runs/8r6akjsx).
+
+## Update (2026-08-01) — Investigation 020 completed
+
+This is the current W&B reconciliation after the dated launch record above. The project contains
+**94 runs**: 49 finished, 33 crashed, 11 killed, 1 failed, and 0 running. The newest two runs are
+the completed Investigation-020 full-prediction pair:
+
+| Arm | W&B ID | State | Verdict | Late copy ratio | Late batch ratio |
+|---|---|---|---|---:|---:|
+| residual | [`3y2hxj5t`](https://wandb.ai/smahalanobis-uc-davis/hjepa-vwm/runs/3y2hxj5t) | finished | **Healthy rep, no predictor** | 1.726204 | 1.817973 |
+| full latent | [`8r6akjsx`](https://wandb.ai/smahalanobis-uc-davis/hjepa-vwm/runs/8r6akjsx) | finished | **Static-`c` trap** | 3.132558 | 0.946963 |
+
+[Investigation 020](investigation_020/) is **CLOSED with no winner**. Both arms completed all
+15,000 updates from the same pretrained DINOv3 B/D checkpoint, and W&B provenance confirms that
+only `predict_residual` differs scientifically. Neither arm passed the `<=0.70` copy gate or the
+`<=0.50` batch-mean gate at any diagnostic point.
+
+Residual prediction preserved the useful substrate: late rank is `376.932/512`, source-diverse
+latent cosine is `0.179245` against encoder `0.402768`, and copy loss rose. It still lost to zero
+residual and batch mean. Full-latent prediction contracted rank to `296.622/512`, raised latent
+cosine to `0.325100`, and reduced copy loss while becoming more than three times worse than copy.
+The research frontier is therefore no longer “can a strong present bottleneck be transferred?”;
+it is “can the current Fc/flow objective learn temporal dynamics in fixed bottleneck coordinates?”
+The registered next probe is residual prediction with B/B_EMA frozen, without simultaneous
+encoder, regularizer, horizon, or Fc-capacity changes.

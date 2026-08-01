@@ -76,3 +76,56 @@ without skipped gradients, nonfinite metrics, or instability warnings.
 This early evidence establishes a valid live pair only. Append terminal states, final-six
 diagnostic medians, and Reading-Cycle-A verdicts after both arms complete. Do not compare absolute
 `L_flow` across the two target parameterizations.
+
+## 2026-08-01 — completed paired result
+
+Both W&B runs are `finished`, each has 300 finite training rows through the final logging point and
+a hashed step-15,000 checkpoint, and neither logged a skipped update, NaN gradient, or instability
+warning. Downloaded W&B provenance and recursive config comparison confirm a valid one-variable
+pair: the only scientific difference is `train.predict_residual`.
+
+Late values are medians over the final six diagnostic rows:
+
+| Metric | residual `3y2hxj5t` | full latent `8r6akjsx` |
+|---|---:|---:|
+| Q8 verdict | **Healthy rep, no predictor** | **Static-`c` trap** |
+| `c_std_mean` | 1.118518 | 1.077082 |
+| `c_dead_dim_frac` | 0 | 0 |
+| `c_cross_video_cosine` (`e=0.402768`) | 0.179245 | 0.325100 |
+| `c_effective_rank` | 376.932 | 296.622 |
+| `c_plus_effective_rank` | 363.957 | 293.805 |
+| `coarse_copy_loss` | 1.300293 | 0.362214 |
+| `coarse_vs_copy_ratio` | 1.726204 | 3.132558 |
+| `coarse_vs_batch_mean_ratio` | 1.817973 | 0.946963 |
+| copy-gate passes in final six | 0/6 | 0/6 |
+| batch-gate passes in final six | 0/6 | 0/6 |
+| `L_recon_present` | 0.104876 | 0.129828 |
+| `L_recon_cplus` | 0.100083 | 0.122533 |
+| `L_recon_chat` | 0.181156 | 0.187286 |
+| `L_recon_video_gap` | 0.443072 | 0.406016 |
+
+### Conclusion
+
+**No winner.** Neither arm passes `coarse_vs_copy_ratio<=0.70` or
+`coarse_vs_batch_mean_ratio<=0.50` at any diagnostic point, so the preregistered decision rule does
+not permit selecting a temporal predictor.
+
+The failure modes are nevertheless sharply different. Residual copy loss rises about 35% while
+rank improves about 3.5%: the code remains dynamic and the forecaster loses to zero residual and
+batch mean. Full-latent copy loss falls about 62%, online rank falls about 19%, and pair cosine
+nearly triples: joint training makes future≈present cheaper while Fc becomes more than three times
+worse than copy.
+
+This closes the target-parameterization question for the current recipe. Residual is the only
+defensible substrate for a causal follow-up because it avoids temporal erasure, but that is not a
+prediction win. The next one-variable probe should freeze the transferred B and B_EMA under the
+residual target and train Fc in fixed coordinates. A pass would implicate moving joint coordinates;
+a continued ratio above one would implicate Fc/flow-objective learnability on the fixed code.
+
+Detailed evidence and mechanisms:
+
+- residual: [`METRIC_READOUT.md`](residual_prediction_cov_var/METRIC_READOUT.md) and
+  [`ANALYSIS.md`](residual_prediction_cov_var/ANALYSIS.md);
+- full latent: [`METRIC_READOUT.md`](full_latent_prediction_cov_var/METRIC_READOUT.md) and
+  [`ANALYSIS.md`](full_latent_prediction_cov_var/ANALYSIS.md);
+- first-principles summary: [`TLDR.md`](TLDR.md).

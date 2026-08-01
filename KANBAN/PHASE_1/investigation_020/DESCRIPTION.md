@@ -2,7 +2,13 @@
 
 ## Status
 
-RUNNING — paired arms launched and verified on two A100s.
+CLOSED — both paired arms completed all 15,000 steps; neither passed the copy or batch-mean
+prediction gates.
+
+Residual prediction is **Healthy rep, no predictor**. Full-latent prediction is a
+**Static-`c` trap**. The registered rule therefore yields no winner. See the completed synthesis
+in [`OBSERVATIONS.md`](OBSERVATIONS.md), the plain-language [`TLDR.md`](TLDR.md), and the two
+run-level analyses.
 
 The Investigation-019 source decision is complete. The initialization-only warm start,
 temporal-target selector, provenance parity guard, targeted tests, exact source gate, and both

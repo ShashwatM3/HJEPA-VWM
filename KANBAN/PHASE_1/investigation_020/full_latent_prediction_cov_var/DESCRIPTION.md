@@ -2,7 +2,11 @@
 
 ## Status
 
-RUNNING — launched from clean commit `7649f8efde1b104dd81cfbd110af18d499f67304`.
+FINISHED — completed all 15,000 steps from clean commit
+`7649f8efde1b104dd81cfbd110af18d499f67304`.
+
+Verdict: **Static-`c` trap**. See [`METRIC_READOUT.md`](METRIC_READOUT.md) and
+[`ANALYSIS.md`](ANALYSIS.md).
 
 W&B: [`8r6akjsx`](https://wandb.ai/smahalanobis-uc-davis/hjepa-vwm/runs/8r6akjsx).
 
