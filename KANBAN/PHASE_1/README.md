@@ -469,3 +469,19 @@ The research frontier is therefore no longer “can a strong present bottleneck 
 it is “can the current Fc/flow objective learn temporal dynamics in fixed bottleneck coordinates?”
 The registered next probe is residual prediction with B/B_EMA frozen, without simultaneous
 encoder, regularizer, horizon, or Fc-capacity changes.
+
+## Registered follow-up (2026-08-02) — Investigation 021
+
+[Investigation 021](investigation_021/) registers the one-GPU, full 15,000-step fixed-coordinate
+residual probe spawned by Investigation 020. It warm-starts from the same Investigation-019 DINOv3
+`64×512`, `M=512` present-only checkpoint and fresh exact-copy `B_EMA=B` used at the start of the
+completed residual baseline, then freezes `B`, `B_EMA`, and `D` for the whole temporal phase. Only
+`F_c` is optimized, with `L_flow` as the sole optimized objective and frozen-state hashes bound
+into provenance/checkpoints.
+
+The only scientific change from residual run `3y2hxj5t` is
+`train.optimization_scope: joint -> fc_only`; encoder, source checkpoint, seed/data order, target
+and noise construction, horizon, flow architecture, batch, schedule, and diagnostics remain fixed.
+The run is registered but not launched, so no W&B ID exists yet. Its exact post-`NEW_POD.md`
+procedure is
+[`fixed_residual_coordinates_fc_only/GUIDE.md`](investigation_021/fixed_residual_coordinates_fc_only/GUIDE.md).
