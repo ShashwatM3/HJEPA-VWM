@@ -1,0 +1,7 @@
+interface:
+  display_name: "Run Remote Experiment"
+  short_description: "Bootstrap and operate HJEPA over SSH"
+  default_prompt: "Use $run-remote-experiment to bootstrap a fresh pod if needed, run the requested experiment in tmux, and verify its early tripwires."
+
+policy:
+  allow_implicit_invocation: true

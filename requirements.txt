@@ -2,10 +2,13 @@ torch>=2.1
 torchvision
 decord
 numpy
+PyYAML>=6.0
 wandb
 diffusers
-transformers
+transformers==4.57.6  # One tested 4.x source for V-JEPA2, DINOv3 ViT, and SigLIP2 vision
 accelerate
+einops
+matplotlib  # drift_probe.py plots; probe degrades to JSON-only if absent
 pytest
 black
 ruff

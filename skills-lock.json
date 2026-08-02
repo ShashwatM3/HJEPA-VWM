@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "wandb-primary": {
+      "source": "wandb/skills",
+      "sourceType": "github",
+      "skillPath": "skills/wandb-primary/SKILL.md",
+      "computedHash": "ccb081451b2a51147206586006ccefa4031d647ae92539397c7dd5d4c494af04"
+    }
+  }
+}

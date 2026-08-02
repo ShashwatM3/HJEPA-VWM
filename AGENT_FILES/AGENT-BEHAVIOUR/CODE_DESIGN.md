@@ -10,7 +10,7 @@
 
 1. **Readability beats cleverness.** Optimize for a tired version of you reading this later.
 2. **One function per named concept in the brief.** If the brief names it (bottleneck, coarse flow,
-   SIGReg, EMA update, shuffled-c test), it gets exactly one function/class that owns it.
+   variance floor, EMA update, shuffled-c test), it gets exactly one function/class that owns it.
 3. **Modular, but not fragmented.** A function maps to a step in the pipeline, not to three lines
    you felt like extracting. Avoid both mega-functions and one-line-wrapper sprawl.
 4. **The gradient graph must read clearly.** Anything touching stop-gradient, EMA, or detached
@@ -24,9 +24,9 @@
 
 ```
 config.py       # dataclass configs: dims, lambdas, LRs, momentum, runtime flags
-data.py         # SSv2 dataset, preprocessing, tubelet dropout, dataloader
-models.py       # nn.Modules: encoder, bottleneck, coarse/fine flows, generator, EMA target wrapper
-losses.py       # flow-matching primitives + flow_matching_loss, SIGReg, total objective
+data.py         # SSv2 dataset, preprocessing (no tubelet dropout in v0.2), dataloader
+models.py       # nn.Modules: frozen encoder, bottleneck, coarse/fine flows, generator, B_EMA wrapper
+losses.py       # flow-matching primitives + flow_matching_loss, variance_floor, total objective
 diagnostics.py  # collapse/bypass probes, each a pure function returning a metrics dict
 train.py        # training loop, EMA update, wandb logging, entry point
 ```
@@ -50,22 +50,25 @@ never deviate. Put this table at the top of `config.py`.
 
 | Brief symbol | Code identifier      | Meaning                              |
 |--------------|----------------------|--------------------------------------|
-| `x`          | `context_clip`       | Input context frames                 |
-| `E`          | `online_encoder`     | Online video encoder                 |
-| `e_t`        | `detailed`           | Current detailed latent              |
-| `B`          | `bottleneck`         | Bottleneck module                    |
+| `x`          | `context_clip`       | Input context frames (8 @256)        |
+| `E`          | `encoder`            | **Frozen** pretrained V-JEPA 2 ViT-L/16 (shared) |
+| `e_t`        | `detailed`           | Current detailed latent (frozen E)   |
+| `B`          | `bottleneck`         | Trainable bottleneck module          |
 | `c_t`        | `abstract`           | Current abstract latent              |
-| `y`          | `future_frame`       | Target frame at t+1                   |
-| `E_bar`      | `target_encoder`     | EMA copy of online encoder           |
-| `B_bar`      | `target_bottleneck`  | EMA copy of bottleneck               |
-| `e_plus`     | `target_detailed`    | Target (stop-grad) detailed latent   |
-| `c_plus`     | `target_abstract`    | Target (stop-grad) abstract latent   |
+| `x_{≤t+k}`   | `target_clip`        | Future clip ending at t+k            |
+| `B_EMA`      | `target_bottleneck`  | EMA copy of bottleneck (only EMA module) |
+| `e_plus`     | `target_detailed`    | Target (stop-grad) detailed latent (frozen E on target clip) |
+| `c_plus`     | `target_abstract`    | Target (stop-grad) abstract latent (= c⁺_{t+k}) |
 | `F_c`        | `coarse_flow`        | Coarse flow predictor                |
 | `F_e`        | `fine_flow`          | Fine flow predictor                  |
+| `h_k`        | `horizon_embed`      | Learned horizon embedding (Phase 4)  |
 | `c_hat`      | `pred_abstract`      | Predicted future abstract latent     |
 | `e_hat`      | `pred_detailed`      | Predicted future detailed latent     |
 | `D`          | `frame_generator`    | Frame generator (VAE latent space)   |
 | `A`          | `vae_encoder`        | Frozen image VAE encoder             |
+
+> **v0.2:** there is no `online_encoder`/`target_encoder` split — `E` is a single **frozen** module
+> used by both branches. Only the **bottleneck** has an EMA copy (`B_EMA`).
 
 Ambiguity between `c_t` / `c_plus` / `c_hat` is the likeliest source of a sign-or-routing bug. This
 table is the cheapest defense.
@@ -115,10 +118,13 @@ if cfg.debug_shapes:
 The forward pass should read like the data path in the brief:
 
 ```python
-detailed = online_encoder(context_clip)
-abstract = bottleneck(detailed)
-target_detailed, target_abstract = target_branch(future_frame)   # detached inside
-pred_abstract = coarse_flow(abstract)
+with torch.no_grad():
+    detailed = encoder(context_clip)              # frozen V-JEPA 2.1
+abstract = bottleneck(detailed)                   # trainable
+with torch.no_grad():
+    target_detailed = encoder(target_clip)        # same frozen encoder
+    target_abstract = as_target(target_bottleneck(target_detailed))  # B_EMA, detached
+pred_abstract = coarse_flow(abstract)             # (+ horizon_embed in Phase 4)
 pred_detailed = fine_flow(detailed, coarse_cond)
 ```
 

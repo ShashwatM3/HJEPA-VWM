@@ -1,0 +1,133 @@
+# HJEPA-VWM Phase-1 experiment configuration.
+# This is the only experiment YAML. train.py reads it on every invocation.
+# Resolution order: config.py fallback defaults -> this file -> seven hot scientific CLI overrides.
+
+# CATEGORY: Reproducibility and outputs
+seed: 42  # Integer in [0, 4294967295]; keep fixed across comparison arms.
+debug_shapes: true  # Boolean (true or false): true enables cheap tensor-shape assertions.
+checkpoint_dir: /workspace/checkpoints  # Writable path; paid runs should use /workspace/ckpt/<run-tag>.
+
+encoder:
+  # CATEGORY: Frozen encoder and input contract
+  alias: vjepa2_vitl16  # One of: vjepa2_vitl16, siglip2_vitb16, dinov3_vitb16.
+  revision: null  # null uses the tested alias SHA; otherwise exactly one immutable 40-char commit SHA.
+  input_frames: 8  # Exactly 8 in the current encoder contract.
+  input_height: 256  # Exactly 256 pixels in the current encoder contract.
+  input_width: 256  # Exactly 256 pixels in the current encoder contract.
+  precision: bf16  # One of: bf16, fp32; bf16 is recommended on A100-class GPUs.
+  frame_microbatch: null  # null selects tested alias default (V-JEPA2=8, SigLIP2=8, DINOv3=32); otherwise positive integer, reasonably 1-32.
+  attention_implementation: sdpa  # Tested value: sdpa; eager is a slower debugging alternative.
+  hf_cache_dir: /workspace/hf_cache  # Writable Hugging Face cache path.
+
+model:
+  # CATEGORY: Abstract latent shape
+  n_c: 32  # Positive integer; recently tested: 16, 32, 64, 128.
+  d_c: 256  # Positive integer divisible by f_c_heads; recently tested: 128, 256, 512.
+
+  # CATEGORY: Bottleneck architecture
+  bottleneck_mixer_dim: 512  # Positive integer divisible by cross-attn heads; tested: 256, 512, 1024.
+  bottleneck_convnext_blocks: 2  # Non-negative integer; reasonable range: 1-4.
+  bottleneck_cross_attn_heads: 8  # Positive divisor of bottleneck_mixer_dim; reasonable: 4, 8, 16.
+  bottleneck_latent_blocks: 3  # Integer >= 1; recommended range: 2-4.
+
+  # CATEGORY: Coarse flow architecture
+  f_c_blocks: 6  # Positive integer; reasonable transformer depth: 2-12.
+  f_c_heads: 8  # Positive divisor of d_c; reasonable: 4, 8, 16.
+  condition_dropout: 0.10  # Probability in [0, 1]; typical range: 0.0-0.2.
+
+  # CATEGORY: Reconstruction decoder architecture
+  decoder_dim: 512  # Positive integer divisible by decoder_heads; tested: 256, 512.
+  decoder_blocks: 4  # Positive integer; tested: 2, 4; reasonable range: 1-8.
+  decoder_heads: 8  # Positive divisor of decoder_dim; reasonable: 4, 8, 16.
+
+train:
+  optimization_scope: joint  # joint trains B/F_c/D with EMA; fc_only freezes B/B_EMA/D.
+  # CATEGORY: Batch and training duration
+  global_batch: 64  # Integer > 1; typical range: 16-128, subject to GPU memory.
+  stage1_steps: 15000  # Positive integer LR-schedule endpoint; typical range: 5000-100000.
+  max_steps: 15000  # Positive integer stop step; normally <= stage1_steps.
+
+  # CATEGORY: Optimizer and learning-rate schedule
+  lr_bottleneck: 0.0001  # Positive float; reasonable range: 1e-6 to 1e-3.
+  lr_coarse_flow: 0.0001  # Positive float; reasonable range: 1e-6 to 1e-3.
+  lr_decoder: 0.0001  # Positive float; reasonable range: 1e-6 to 1e-3.
+  warmup_steps: 1500  # Non-negative integer < stage1_steps; typically 5%-20% of the run.
+  total_latent_steps: 105000  # Positive integer >= stage1_steps; shared long-horizon schedule denominator.
+  adam_betas: [0.9, 0.95]  # Two floats in [0, 1); common ranges: beta1 0.8-0.95, beta2 0.9-0.999.
+  weight_decay: 0.05  # Float in [0, 1]; typical range: 0.0-0.2.
+
+  # CATEGORY: Gradient stability
+  grad_clip: 0.5  # Positive global-norm cap; typical range: 0.1-5.0.
+  grad_skip_threshold: 150.0  # Positive post-AGC tail guard > grad_clip; typical range: 10-1000.
+  agc_enabled: true  # Boolean (true or false): true enables adaptive gradient clipping.
+  agc_lambda_bottleneck: 0.20  # Positive AGC ratio; typical range: 0.01-1.0.
+  agc_lambda_coarse_flow: 0.10  # Positive AGC ratio; typical range: 0.01-1.0.
+  agc_lambda_decoder: 0.20  # Positive AGC ratio; typical range: 0.01-1.0.
+  agc_eps: 0.001  # Positive numerical floor; reasonable range: 1e-8 to 1e-2.
+  instability_warn_grad_norm: 30.0  # Positive log-only warning threshold; calibrate below skip threshold.
+  instability_warn_l_flow: 1.0  # Positive log-only flow-loss warning threshold; typical range: 0.5-5.0.
+
+  # CATEGORY: EMA target schedule
+  ema_m_start: 0.996  # Float in [0, 1); typical range: 0.9-0.9999.
+  ema_m_end: 0.9999  # Float in [ema_m_start, 1); typical range: 0.99-0.99999.
+  ema_schedule_steps: 105000  # Positive integer; normally equal to total_latent_steps.
+
+  # CATEGORY: Latent geometry objectives
+  lambda_var: 0.5  # Non-negative loss weight; recently tested: 0.0, 0.1, 0.5. Default ON.
+  var_floor_std_target: 1.0  # Positive target standard deviation; reasonable range: 0.5-2.0.
+  lambda_cov: 0.01  # Non-negative loss weight; recently tested: 0.0, 0.01. Default ON.
+  lambda_slot: 0.0  # Supported value: 0.0; nonzero previously Goodharted slot rank and requires re-investigation.
+  lambda_sigreg: 0.0  # Off for Investigation 19; covariance plus variance provide geometry pressure.
+  sigreg_warmup_steps: 2000  # Non-negative integer; typical range: 0-5000.
+
+  # CATEGORY: Reconstruction objectives
+  lambda_recon: 1.0  # Non-negative present-anchor weight; recently tested: 0.0, 0.05, 1.0.
+  lambda_recon_pred: 0.0  # Non-negative predicted-anchor weight; exploratory range: 0.0-1.0.
+  recon_loss_mode: cosine  # One of: cosine, relative_mse.
+  recon_warmup_steps: 2000  # Non-negative integer; typical range: 0-5000.
+  recon_residual_target: false  # Boolean (true or false): true reconstructs e minus its position mean.
+  recon_mean_momentum: 0.99  # Float strictly between 0 and 1; typical range: 0.9-0.9999.
+  present_recon_only: false  # Boolean (true or false): true trains only present reconstruction.
+  predict_residual: false  # Boolean (true or false): true predicts temporal latent delta.
+
+  # CATEGORY: Offline feature whitening
+  whiten_features: false  # Boolean (true or false): true enables fixed offline whitening.
+  whiten_stats_path: ""  # Empty only when whitening is false; otherwise a valid whitening artifact path.
+  whiten_expected_clips: 12800  # Positive integer matching the artifact; typical: 1000-200000.
+  whiten_eps: 0.0001  # Positive eigenvalue floor; reasonable range: 1e-8 to 1e-2.
+
+  # CATEGORY: Temporal prediction and logging
+  horizon_k: 12  # Non-negative frame offset; tested: 4, 12; 16+ gives non-overlapping windows.
+  frame_stride: 2  # Positive integer frame stride; reasonable range: 1-4.
+  precision: bf16  # One of: bf16, fp32; bf16 is the tested GPU training mode.
+  log_every: 50  # Positive integer step cadence; reasonable range: 10-500.
+  diag_every: 500  # Positive integer diagnostic cadence; reasonable range: 100-2500.
+  checkpoint_every: 2500  # Positive integer save cadence <= max_steps; typical: 500-5000.
+
+data:
+  # CATEGORY: Dataset and loader
+  dataset: ssv2_tiny  # One of: ssv2, ssv2_tiny, ego4d, ego4d_tiny.
+  num_workers: 8  # Non-negative integer; typical range: 0-32, tuned to host CPU and storage.
+  pin_memory: true  # Boolean (true or false): true is recommended for CUDA training.
+  ego4d_selection_manifest: /workspace/ego4d_raw/manifests/selection_manifest.json  # Existing JSON path for EGO4D provenance.
+  ego4d_download_manifest: /workspace/ego4d_raw/video_540ss_manifest.csv  # Existing CSV path for EGO4D provenance.
+
+runtime:
+  # CATEGORY: Runtime controls
+  mode: train  # One of: train, stage0, preflight, resource_preflight.
+  resume: null  # null for fresh training, or a compatible checkpoint path.
+  warm_start_from: null  # null, or a current present-only checkpoint supplying only B and D.
+  provenance_out: null  # null for the mode default, or a writable JSON output path.
+  compare_provenance: null  # null, or exactly [left.json, right.json] to compare and exit.
+  require_wandb: false  # Boolean (true or false): true makes W&B failures fatal.
+  reset_optimizer: false  # Boolean (true or false): true discards optimizer state on resume.
+  allow_dataset_transfer: false  # Boolean (true or false): true permits a guarded dataset change.
+  allow_legacy_checkpoint: false  # Boolean (true or false): true permits legacy provenance.
+
+wandb:
+  # CATEGORY: Weights & Biases identity
+  entity: null  # null uses the authenticated default, or set a W&B entity/team string.
+  project: hjepa-vwm  # Non-empty W&B project string.
+  group: null  # null, or a shared group string for related comparison arms.
+  name: null  # null for an auto-name, or a unique human-readable run display name.
+  run_id: null  # null for a new run, or an existing W&B run ID when explicitly resuming it.

@@ -1,0 +1,29 @@
+Run these in the second RunPod SSH terminal.
+
+1. Confirm the stuck process environment:
+
+tr '\0' '\n' < /proc/26538/environ | grep -E 'VJEPA_REV|FRAME_MB|BATCH|HF_HOME|EGO_STATS|PREFLIGHT_DIR|STATS_DIR|JEPA'
+
+2. Show open file descriptors:
+
+ls -l /proc/26538/fd
+
+3. Show the process working directory:
+
+pwdx 26538
+
+4. Try to show the kernel stack:
+
+cat /proc/26538/stack
+
+5. Show recently modified preflight/log files:
+
+find /workspace/preflight/inv016_bottleneck_capacity logs -maxdepth 2 -type f -mmin -60 -print
+
+6. Check what files the process has open:
+
+lsof -p 26538 | tail -n 80
+
+7. If lsof is missing, install it, then rerun command 6:
+
+apt-get update && apt-get install -y lsof
