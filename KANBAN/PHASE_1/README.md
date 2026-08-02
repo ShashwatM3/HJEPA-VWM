@@ -482,6 +482,7 @@ into provenance/checkpoints.
 The only scientific change from residual run `3y2hxj5t` is
 `train.optimization_scope: joint -> fc_only`; encoder, source checkpoint, seed/data order, target
 and noise construction, horizon, flow architecture, batch, schedule, and diagnostics remain fixed.
-The run is registered but not launched, so no W&B ID exists yet. Its exact post-`NEW_POD.md`
-procedure is
+The run launched from clean commit `54a207cf9193404401c2c36c3eaf8be09039167c` and is live as
+[`r0s6ouwd`](https://wandb.ai/smahalanobis-uc-davis/hjepa-vwm/runs/r0s6ouwd). Its exact
+post-`NEW_POD.md` procedure is
 [`fixed_residual_coordinates_fc_only/GUIDE.md`](investigation_021/fixed_residual_coordinates_fc_only/GUIDE.md).

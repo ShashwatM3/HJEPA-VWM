@@ -2,7 +2,9 @@
 
 ## Status
 
-PLANNED — not launched. W&B ID and launch commit remain unset until the launch proof passes.
+RUNNING — launched from clean commit `54a207cf9193404401c2c36c3eaf8be09039167c`.
+
+W&B: [`r0s6ouwd`](https://wandb.ai/smahalanobis-uc-davis/hjepa-vwm/runs/r0s6ouwd).
 
 ## Hypothesis
 

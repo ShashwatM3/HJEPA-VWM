@@ -1,9 +1,8 @@
 # Next steps — fixed residual coordinates
 
-1. Complete `AGENT_FILES/SETUPS/NEW_POD.md` through W&B login.
-2. Execute [`GUIDE.md`](GUIDE.md) from its first post-bootstrap command through immediate launch
-   proof on exactly one GPU.
-3. Add the immutable W&B ID/URL and clean launch commit to `DESCRIPTION.md` and `OBSERVATIONS.md`.
+1. Completed: pod synchronization and W&B authentication recovery.
+2. Completed: exact resource gate and immediate one-GPU launch proof.
+3. Completed: recorded W&B `r0s6ouwd` and clean launch commit in the KANBAN.
 4. Monitor without changing the recipe; allow the registered 15,000-step run to finish unless a
    declared validity tripwire fails.
 5. Verify W&B state, final checkpoint, provenance, frozen hashes, and checkpoint SHA-256.

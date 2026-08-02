@@ -2,7 +2,10 @@
 
 ## Status
 
-OPEN — one full 15,000-step run is registered but not launched. No W&B ID exists yet.
+RUNNING — the full 15,000-step run is live on one A100 from clean launch commit
+`54a207cf9193404401c2c36c3eaf8be09039167c`.
+
+W&B: [`r0s6ouwd`](https://wandb.ai/smahalanobis-uc-davis/hjepa-vwm/runs/r0s6ouwd).
 
 The implementation is complete in commit
 `0c1d343ce19258d5d575ea17a1654a46b32abf85`. The exact run protocol lives in
@@ -122,7 +125,7 @@ Do not add SIGReg, change encoder, change horizon, enable prediction-side recons
 
 | Folder | GPU | Intended W&B identity | Comparator |
 |---|---:|---|---|
-| [`fixed_residual_coordinates_fc_only/`](fixed_residual_coordinates_fc_only/) | 0 | `Investigation 21 · Fixed residual coordinates · Coarse flow only, DINOv3 64 slots by 512` | Investigation-020 residual `3y2hxj5t` |
+| [`fixed_residual_coordinates_fc_only/`](fixed_residual_coordinates_fc_only/) | 0 | [`r0s6ouwd`](https://wandb.ai/smahalanobis-uc-davis/hjepa-vwm/runs/r0s6ouwd) — `Investigation 21 · Fixed residual coordinates · Coarse flow only, DINOv3 64 slots by 512` | Investigation-020 residual `3y2hxj5t` |
 
 ## Decision rule
 
