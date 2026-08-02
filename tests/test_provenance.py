@@ -387,6 +387,43 @@ def test_paired_provenance_allows_backend_identity_but_binds_runtime_feature_con
         provenance.compare_run_provenance(left, wrong_runtime)
 
 
+def test_fc_only_provenance_records_explicit_trainability_contract(tmp_path):
+    """A run artifact states the frozen modules, sole trainable, and stopped EMA."""
+    import provenance
+    from config import Config
+
+    cfg = Config()
+    cfg.train.optimization_scope = "fc_only"
+    cfg.encoder.precision = "fp32"
+    cfg.encoder.frame_microbatch = 4
+    cfg.data.data_root = str(tmp_path / "data")
+    root = tmp_path / "data" / cfg.data.dataset
+    for split in ("train", "validation"):
+        (root / split).mkdir(parents=True)
+        (root / split / f"{split}.webm").write_bytes(split.encode())
+    dataset = {"dataset": "fake", "fingerprint": "d" * 64}
+    frozen_hashes = {"B": "b" * 64, "B_EMA": "e" * 64, "D": "d" * 64}
+
+    resolved = provenance.build_run_provenance(
+        cfg,
+        encoder_spec=_spec(),
+        dataset_identity=dataset,
+        trainable_init="i" * 64,
+        whitening_payload_fingerprint=None,
+        frozen_state_hashes=frozen_hashes,
+    )
+
+    assert resolved["optimization_contract"] == {
+        "scope": "fc_only",
+        "trainable_modules": ["F_c"],
+        "frozen_modules": ["B", "B_EMA", "D"],
+        "ema_updates": False,
+        "optimized_objective_terms": ["L_flow"],
+    }
+    assert resolved["frozen_state_hashes"] == frozen_hashes
+    assert resolved["common"]["frozen_state_hashes"] == frozen_hashes
+
+
 def test_checkpoint_provenance_dataset_transfer_drops_only_dataset_fields():
     """The explicit transfer policy permits data changes but retains every other guard."""
     import copy

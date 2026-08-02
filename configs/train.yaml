@@ -1,6 +1,6 @@
 # HJEPA-VWM Phase-1 experiment configuration.
 # This is the only experiment YAML. train.py reads it on every invocation.
-# Resolution order: config.py fallback defaults -> this file -> six hot scientific CLI overrides.
+# Resolution order: config.py fallback defaults -> this file -> seven hot scientific CLI overrides.
 
 # CATEGORY: Reproducibility and outputs
 seed: 42  # Integer in [0, 4294967295]; keep fixed across comparison arms.
@@ -41,6 +41,7 @@ model:
   decoder_heads: 8  # Positive divisor of decoder_dim; reasonable: 4, 8, 16.
 
 train:
+  optimization_scope: joint  # joint trains B/F_c/D with EMA; fc_only freezes B/B_EMA/D.
   # CATEGORY: Batch and training duration
   global_batch: 64  # Integer > 1; typical range: 16-128, subject to GPU memory.
   stage1_steps: 15000  # Positive integer LR-schedule endpoint; typical range: 5000-100000.

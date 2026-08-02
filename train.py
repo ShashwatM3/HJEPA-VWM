@@ -1,9 +1,9 @@
 """Phase 1 training entry point for HJEPA-VWM (v0.2 — pluggable frozen encoder).
 
 Implements Stage 0 synthetic sanity and Stage 1 coarse-dynamics training only:
-frozen dense encoder + trainable bottleneck + EMA bottleneck + coarse flow F_c,
-with a variance floor on c_t. Fine flow, Stages 2-4, VAE, and the frame generator
-are intentionally out of scope.
+frozen dense encoder + online bottleneck + EMA bottleneck + coarse flow F_c, with
+joint and fixed-representation optimization scopes. Fine flow, Stages 2-4, VAE,
+and the frame generator are intentionally out of scope.
 """
 
 from __future__ import annotations
@@ -15,6 +15,7 @@ import random
 import time
 import warnings
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -120,8 +121,197 @@ def linear_ramp_scale(step: int, warmup_steps: int) -> float:
     return min(1.0, max(0.0, step / warmup_steps))
 
 
+@dataclass(frozen=True)
+class OptimizationPlan:
+    """Resolve the complete trainability contract behind one configuration field.
+
+    Optimizer construction, global clipping, representation losses, and EMA updates all
+    consume this plan so the scope cannot drift across separate training-loop branches.
+
+    Args:
+        scope: Canonical optimization scope (``joint`` or ``fc_only``).
+        module_specs: Ordered ``(name, module, peak_lr)`` trainable-module records.
+        updates_ema: Whether successful optimizer steps update ``B_EMA`` from ``B``.
+    """
+
+    scope: str
+    module_specs: tuple[tuple[str, nn.Module, float], ...]
+    updates_ema: bool
+
+    @property
+    def trains_bottleneck(self) -> bool:
+        """Report whether gradients may update online bottleneck B.
+
+        Returns:
+            True only for the joint optimization scope.
+        """
+        return any(name == "B" for name, _, _ in self.module_specs)
+
+    @property
+    def trains_decoder(self) -> bool:
+        """Report whether gradients may update reconstruction decoder D.
+
+        Returns:
+            True only for the joint optimization scope.
+        """
+        return any(name == "D" for name, _, _ in self.module_specs)
+
+    def parameters(self) -> list[nn.Parameter]:
+        """Collect exactly the parameters governed by optimizer and global clipping.
+
+        Returns:
+            Trainable parameters from the scope-selected modules in stable module order.
+        """
+        return [
+            parameter
+            for _, module, _ in self.module_specs
+            for parameter in module.parameters()
+            if parameter.requires_grad
+        ]
+
+
+def apply_optimization_scope(
+    bottleneck: nn.Module,
+    coarse_flow: nn.Module,
+    decoder: nn.Module,
+    cfg: Config,
+) -> OptimizationPlan:
+    """Apply and return the resolved optimization scope for Stage 1.
+
+    ``fc_only`` is an atomic contract: B and D are frozen while F_c remains trainable;
+    the associated plan also disables B_EMA transitions. Reapplying the function is
+    idempotent, which keeps direct smoke/test callers aligned with paid-run preparation.
+
+    Args:
+        bottleneck: Online bottleneck B.
+        coarse_flow: Coarse flow predictor F_c.
+        decoder: Reconstruction decoder D.
+        cfg: Finalized experiment configuration.
+    Returns:
+        Optimization plan containing the complete trainable-module and EMA contract.
+    """
+    _require_torch()
+    scope = cfg.train.optimization_scope
+    if scope not in {"joint", "fc_only"}:
+        raise ValueError(f"Unsupported train.optimization_scope: {scope!r}")
+    trains_representation = scope == "joint"
+    bottleneck.requires_grad_(trains_representation)
+    decoder.requires_grad_(trains_representation)
+    coarse_flow.requires_grad_(True)
+    bottleneck.train(trains_representation)
+    decoder.train(trains_representation)
+    coarse_flow.train()
+    all_specs = (
+        ("B", bottleneck, cfg.train.lr_bottleneck),
+        ("F_c", coarse_flow, cfg.train.lr_coarse_flow),
+        ("D", decoder, cfg.train.lr_decoder),
+    )
+    module_specs = tuple(
+        spec for spec in all_specs if any(param.requires_grad for param in spec[1].parameters())
+    )
+    return OptimizationPlan(
+        scope=scope,
+        module_specs=module_specs,
+        updates_ema=trains_representation,
+    )
+
+
+def _assert_fixed_bottleneck_pair(
+    bottleneck: nn.Module,
+    target_bottleneck: nn.Module,
+) -> None:
+    """Require B and the wrapped B_EMA payload to define the same fixed coordinates.
+
+    Exact equality makes copy-baseline stationarity an initialization invariant instead of
+    an assumption inferred from the warm-start procedure.
+
+    Args:
+        bottleneck: Fixed online bottleneck B.
+        target_bottleneck: Fixed target wrapper B_EMA.
+    Returns:
+        None. A coordinate mismatch raises before training.
+    """
+    target_payload = getattr(target_bottleneck, "bottleneck", target_bottleneck)
+    online_state = bottleneck.state_dict()
+    target_state = target_payload.state_dict()
+    if online_state.keys() != target_state.keys() or any(
+        not torch.equal(value, target_state[name]) for name, value in online_state.items()
+    ):
+        raise RuntimeError("fc_only requires an exact B_EMA=B initialization.")
+
+
+def capture_frozen_state_hashes(
+    modules: tuple[nn.Module, nn.Module, nn.Module, nn.Module, nn.Module],
+    cfg: Config,
+) -> dict[str, str]:
+    """Capture the immutable module bytes guarded by Fc-only training.
+
+    Args:
+        modules: Canonical ``(E, B, B_EMA, F_c, D)`` module bundle.
+        cfg: Resolved experiment configuration.
+    Returns:
+        State hashes for B, B_EMA, and D, or an empty mapping for joint training.
+    """
+    if cfg.train.optimization_scope != "fc_only":
+        return {}
+    from provenance import state_dict_hash
+
+    _, bottleneck, target_bottleneck, _, decoder = modules
+    _assert_fixed_bottleneck_pair(bottleneck, target_bottleneck)
+    return {
+        "B": state_dict_hash(bottleneck.state_dict()),
+        "B_EMA": state_dict_hash(target_bottleneck.state_dict()),
+        "D": state_dict_hash(decoder.state_dict()),
+    }
+
+
+def verify_frozen_state_hashes(
+    modules: tuple[nn.Module, nn.Module, nn.Module, nn.Module, nn.Module],
+    cfg: Config,
+    expected: dict[str, str],
+) -> None:
+    """Fail if any Fc-only frozen module changed after initialization.
+
+    Args:
+        modules: Canonical ``(E, B, B_EMA, F_c, D)`` module bundle.
+        cfg: Resolved experiment configuration.
+        expected: Hashes captured from the initialized fixed representation.
+    Returns:
+        None. Any frozen-state mutation raises before checkpoint publication.
+    """
+    actual = capture_frozen_state_hashes(modules, cfg)
+    if actual != expected:
+        changed = sorted(
+            key for key in set(actual) | set(expected) if actual.get(key) != expected.get(key)
+        )
+        raise RuntimeError(f"Fc-only frozen module state changed: {changed}")
+
+
+def verify_provenance_frozen_state(
+    modules: tuple[nn.Module, nn.Module, nn.Module, nn.Module, nn.Module],
+    cfg: Config,
+    provenance: dict[str, Any],
+) -> dict[str, str]:
+    """Verify live frozen modules against the immutable run-provenance baseline.
+
+    Args:
+        modules: Canonical ``(E, B, B_EMA, F_c, D)`` module bundle.
+        cfg: Resolved experiment configuration.
+        provenance: Run identity containing the bound frozen-state hashes.
+    Returns:
+        Copied frozen-state baseline for later checkpoint guards.
+    """
+    expected = dict(provenance.get("frozen_state_hashes") or {})
+    verify_frozen_state_hashes(modules, cfg, expected)
+    return expected
+
+
 def _trainable_param_groups(
-    bottleneck: nn.Module, coarse_flow: nn.Module, decoder: nn.Module, cfg: Config
+    bottleneck: nn.Module,
+    coarse_flow: nn.Module,
+    decoder: nn.Module,
+    cfg: Config,
+    optimization_plan: OptimizationPlan | None = None,
 ) -> list[dict]:
     """Build the AdamW param-group spec: a decay and a no-decay group per module.
 
@@ -133,18 +323,14 @@ def _trainable_param_groups(
     normalization scales fights c's representation geometry — exactly the surface
     SIGReg is trying to shape.
 
-    Groups are emitted in a fixed order — for each of (B, F_c, D), its decay group
-    then its no-decay group — so :func:`peak_base_lrs` (which rebuilds from the same
-    spec) stays index-aligned with ``optimizer.param_groups`` for the LR schedule.
+    Groups are emitted in a fixed order over the scope-selected subset of (B, F_c, D),
+    with decay then no-decay per module. :func:`peak_base_lrs` rebuilds the same plan,
+    keeping it index-aligned with ``optimizer.param_groups`` for the LR schedule.
     """
     _require_torch()
-    spec = [
-        ("B", bottleneck, cfg.train.lr_bottleneck),
-        ("F_c", coarse_flow, cfg.train.lr_coarse_flow),
-        ("D", decoder, cfg.train.lr_decoder),
-    ]
+    plan = optimization_plan or apply_optimization_scope(bottleneck, coarse_flow, decoder, cfg)
     groups: list[dict] = []
-    for tag, module, lr in spec:
+    for tag, module, lr in plan.module_specs:
         decay, no_decay = partition_decay_params(module)
         if decay:
             groups.append(
@@ -168,14 +354,17 @@ def _trainable_param_groups(
 
 
 def make_optimizer(
-    bottleneck: nn.Module, coarse_flow: nn.Module, decoder: nn.Module, cfg: Config
+    bottleneck: nn.Module,
+    coarse_flow: nn.Module,
+    decoder: nn.Module,
+    cfg: Config,
+    optimization_plan: OptimizationPlan | None = None,
 ) -> torch.optim.Optimizer:
     """Create AdamW param groups for the trainable modules only (E is frozen).
 
-    The decoder D is always in the optimizer so it trains/saves/loads consistently;
-    when lambda_recon=0 it simply receives no gradient (AdamW skips ``None`` grads),
-    so its parameters never move on the baseline. Each module contributes a decay and
-    a no-decay group (Issue 9 — see :func:`_trainable_param_groups`).
+    Joint scope includes B, F_c, and D; Fc-only scope includes only F_c. Each selected
+    module contributes a decay and a no-decay group (Issue 9 — see
+    :func:`_trainable_param_groups`).
 
     NOTE: the decay/no-decay split changes the optimizer's param-group COUNT, so an
     optimizer state_dict saved before this change (3 groups) cannot be loaded into the
@@ -184,16 +373,23 @@ def make_optimizer(
     existing "do not --resume across architecture knobs" guidance.
 
     Args:
-        bottleneck: Trainable bottleneck B.
+        bottleneck: Online bottleneck B, trainable only in joint scope.
         coarse_flow: Coarse flow F_c.
-        decoder: Reconstruction decoder D.
+        decoder: Reconstruction decoder D, trainable only in joint scope.
         cfg: Config with locked Phase 1 learning rates.
+        optimization_plan: Optional already-applied plan reused by paid run preparation.
     Returns:
-        AdamW optimizer over B, F_c, and D (the encoder is not in any group).
+        AdamW optimizer over the scope-selected modules (the encoder is never included).
     """
     _require_torch()
     return torch.optim.AdamW(
-        _trainable_param_groups(bottleneck, coarse_flow, decoder, cfg),
+        _trainable_param_groups(
+            bottleneck,
+            coarse_flow,
+            decoder,
+            cfg,
+            optimization_plan,
+        ),
         betas=cfg.train.adam_betas,
         weight_decay=cfg.train.weight_decay,
     )
@@ -210,7 +406,11 @@ def apply_lr_schedule(
 
 
 def peak_base_lrs(
-    bottleneck: nn.Module, coarse_flow: nn.Module, decoder: nn.Module, cfg: Config
+    bottleneck: nn.Module,
+    coarse_flow: nn.Module,
+    decoder: nn.Module,
+    cfg: Config,
+    optimization_plan: OptimizationPlan | None = None,
 ) -> list[float]:
     """Peak (pre-schedule) LR per optimizer group, index-aligned with make_optimizer.
 
@@ -219,7 +419,16 @@ def peak_base_lrs(
     config — NOT from a resumed checkpoint's ``param_group["lr"]`` (which stores the
     SCHEDULED lr at save time and would double-apply cosine decay on resume).
     """
-    return [group["lr"] for group in _trainable_param_groups(bottleneck, coarse_flow, decoder, cfg)]
+    return [
+        group["lr"]
+        for group in _trainable_param_groups(
+            bottleneck,
+            coarse_flow,
+            decoder,
+            cfg,
+            optimization_plan,
+        )
+    ]
 
 
 def device_for_training() -> torch.device:
@@ -373,13 +582,14 @@ def train_step(
     device: torch.device,
     mean_tracker: nn.Module | None = None,
     whitener: nn.Module | None = None,
+    optimization_plan: OptimizationPlan | None = None,
 ) -> dict[str, float]:
     """Run one Stage 1 coarse-dynamics training step.
 
     Args:
         batch: `(context_clip, target_clip)`, both (B, 8, 3, 256, 256).
-        modules: `(encoder, bottleneck, target_bottleneck, coarse_flow)`.
-        optimizer: AdamW over B and F_c.
+        modules: `(encoder, bottleneck, target_bottleneck, coarse_flow, decoder)`.
+        optimizer: AdamW over the modules selected by ``train.optimization_scope``.
         step: Global Stage 1 step.
         cfg: Training config.
         device: CUDA or CPU device.
@@ -391,6 +601,7 @@ def train_step(
             None) otherwise. Whitening happens inside the forward helpers, so
             every downstream tensor (c_t, c_plus, recon targets, tracker mean)
             lives in the same whitened space.
+        optimization_plan: Optional already-applied plan reused by paid training loops.
     Returns:
         Scalar metrics for logging.
     """
@@ -401,12 +612,21 @@ def train_step(
     if device.type == "cuda":
         torch.cuda.manual_seed_all(cfg.seed * 1_000_003 + step)
     encoder, bottleneck, target_bottleneck, coarse_flow, decoder = modules
+    optimization = optimization_plan or apply_optimization_scope(
+        bottleneck, coarse_flow, decoder, cfg
+    )
+    present_recon_trains = optimization.trains_bottleneck or optimization.trains_decoder
+    prediction_recon_trains = optimization.trains_bottleneck
     # Residual reconstruction target (investigation_013): active only when the flag is
     # set AND a reconstruction anchor actually trains (finalize_training_config enforces
     # this pairing, so the check here is a belt-and-braces guard for direct callers).
     residual_recon_active = cfg.train.recon_residual_target and (
-        cfg.train.lambda_recon > 0.0
-        or (not cfg.train.present_recon_only and cfg.train.lambda_recon_pred > 0.0)
+        (cfg.train.lambda_recon > 0.0 and present_recon_trains)
+        or (
+            prediction_recon_trains
+            and not cfg.train.present_recon_only
+            and cfg.train.lambda_recon_pred > 0.0
+        )
     )
     if residual_recon_active and mean_tracker is None:
         raise RuntimeError(
@@ -492,18 +712,19 @@ def train_step(
             loss = abstract.sum() * 0.0
         else:
             loss = flow_loss
-        loss = loss + cfg.train.lambda_var * var_loss
-        if cfg.train.lambda_cov > 0.0:
-            loss = loss + cfg.train.lambda_cov * cov_loss
-        if cfg.train.lambda_slot > 0.0:
-            loss = loss + cfg.train.lambda_slot * slot_loss
+        if optimization.trains_bottleneck:
+            loss = loss + cfg.train.lambda_var * var_loss
+            if cfg.train.lambda_cov > 0.0:
+                loss = loss + cfg.train.lambda_cov * cov_loss
+            if cfg.train.lambda_slot > 0.0:
+                loss = loss + cfg.train.lambda_slot * slot_loss
         # SIGReg warmup (Issue 7): ramp the weight linearly over sigreg_warmup_steps so a
         # strong λ_sigreg doesn't move the ONLINE bottleneck's coordinate system faster than
         # the EMA target (the flow target c_plus) can follow — which would give F_c a moving
         # input/output geometry and the rank-up / flow-plateau pattern. Same ramp shape as
         # the recon anchors. sigreg_scale stays 0 when the term is off (logged for clarity).
         sigreg_scale = 0.0
-        if cfg.train.lambda_sigreg > 0.0:
+        if optimization.trains_bottleneck and cfg.train.lambda_sigreg > 0.0:
             sigreg_scale = linear_ramp_scale(step, cfg.train.sigreg_warmup_steps)
             loss = loss + cfg.train.lambda_sigreg * sigreg_scale * sigreg_l
         # Reconstruction anchor (option 1): decode the ONLINE c_t back to e_hat and
@@ -516,11 +737,13 @@ def train_step(
         recon_loss_val = 0.0
         recon_pred_loss_val = 0.0
         recon_scale = 0.0
-        if cfg.train.lambda_recon > 0.0 or (
-            not cfg.train.present_recon_only and cfg.train.lambda_recon_pred > 0.0
+        if (cfg.train.lambda_recon > 0.0 and present_recon_trains) or (
+            prediction_recon_trains
+            and not cfg.train.present_recon_only
+            and cfg.train.lambda_recon_pred > 0.0
         ):
             recon_scale = linear_ramp_scale(step, cfg.train.recon_warmup_steps)
-        if cfg.train.lambda_recon > 0.0:
+        if cfg.train.lambda_recon > 0.0 and present_recon_trains:
             # Residual mode (investigation_013): the target becomes e_t - mean, so the
             # video-independent template component earns zero and every unit of loss
             # reduction must route video-specific content through c_t. The decoder's
@@ -544,7 +767,11 @@ def train_step(
         # reconstruction_loss). Reuses the present anchor's warmup ramp. Default off =>
         # not run, so the option-1 baseline stays byte-identical. With this on, the diag
         # readout L_recon_chat should drop (the gradient now acts on it).
-        if not cfg.train.present_recon_only and cfg.train.lambda_recon_pred > 0.0:
+        if (
+            prediction_recon_trains
+            and not cfg.train.present_recon_only
+            and cfg.train.lambda_recon_pred > 0.0
+        ):
             endpoint = z_c + (1.0 - tau_c.reshape(-1, 1, 1)) * u_c_hat
             # Residual mode reconstructs the future from ĉ = c_t + Δ̂ (online c_t, so the
             # recon gradient still reaches B via the add-back and the F_c conditioning).
@@ -572,9 +799,7 @@ def train_step(
         lambda_decoder=cfg.train.agc_lambda_decoder,
         eps=cfg.train.agc_eps,
     )
-    trainable = (
-        list(bottleneck.parameters()) + list(coarse_flow.parameters()) + list(decoder.parameters())
-    )
+    trainable = optimization.parameters()
     grad_norm = torch.nn.utils.clip_grad_norm_(trainable, cfg.train.grad_clip)
     # Survivability guard (POSTMORTEM_RUN1.md; retuned after elated-snowflake-15).
     # AGC runs first and clips per-tensor spikes; this checks the post-AGC global
@@ -594,7 +819,7 @@ def train_step(
     momentum = ema_cosine(
         step, cfg.train.ema_m_start, cfg.train.ema_m_end, cfg.train.ema_schedule_steps
     )
-    if not grad_skipped:
+    if not grad_skipped and optimization.updates_ema:
         _update_ema(bottleneck, target_bottleneck, momentum)
     return {
         "loss": float(loss.detach().float().item()),
@@ -756,6 +981,44 @@ def _require_state_compatible(
         )
 
 
+def _validate_checkpoint_frozen_state_hashes(
+    checkpoint: dict[str, Any],
+    run_provenance: dict[str, Any] | None,
+) -> None:
+    """Validate Fc-only frozen checkpoint bytes before mutating live modules.
+
+    The hashes are duplicated at the provenance top level for readers and inside the
+    common identity for continuation parity. Requiring both copies and the checkpoint
+    tensors to agree prevents a corrupted checkpoint from becoming its own new baseline.
+
+    Args:
+        checkpoint: Deserialized current-schema checkpoint payload.
+        run_provenance: Saved run-provenance envelope from that checkpoint.
+    Returns:
+        None. Missing, unbound, or mismatched frozen state raises before loading.
+    """
+    if not isinstance(run_provenance, dict):
+        return
+    contract = run_provenance.get("optimization_contract") or {}
+    if contract.get("scope") != "fc_only":
+        return
+    expected = run_provenance.get("frozen_state_hashes")
+    common_expected = (run_provenance.get("common") or {}).get("frozen_state_hashes")
+    required = {"B", "B_EMA", "D"}
+    if not isinstance(expected, dict) or set(expected) != required or expected != common_expected:
+        raise RuntimeError("Fc-only checkpoint has missing or unbound frozen-state hashes.")
+    from provenance import state_dict_hash
+
+    actual = {
+        "B": state_dict_hash(checkpoint["bottleneck"]),
+        "B_EMA": state_dict_hash(checkpoint["target_bottleneck"]),
+        "D": state_dict_hash(checkpoint["decoder"]),
+    }
+    changed = sorted(key for key in required if actual[key] != expected[key])
+    if changed:
+        raise RuntimeError(f"Fc-only checkpoint frozen-state hash mismatch: {changed}")
+
+
 def load_checkpoint(
     path: str | Path,
     modules: tuple[nn.Module, nn.Module, nn.Module, nn.Module, nn.Module],
@@ -845,6 +1108,7 @@ def load_checkpoint(
             ) != expected_dataset_identity.get("fingerprint"):
                 raise ValueError("Checkpoint dataset fingerprint does not match this run.")
         saved_provenance = ckpt.get("run_provenance")
+        _validate_checkpoint_frozen_state_hashes(ckpt, saved_provenance)
         if expected_run_provenance is not None:
             compare_checkpoint_provenance(
                 saved_provenance,
@@ -1285,7 +1549,14 @@ def run_stage0(cfg: Config) -> None:
     modules = _build_and_init(cfg, device, load_encoder=True)
     encoder, bottleneck, target_bottleneck, coarse_flow, decoder = modules
     assert sum(p.numel() for p in encoder.parameters() if p.requires_grad) == 0, "E not frozen"
-    optimizer = make_optimizer(bottleneck, coarse_flow, decoder, cfg)
+    optimization = apply_optimization_scope(bottleneck, coarse_flow, decoder, cfg)
+    optimizer = make_optimizer(
+        bottleneck,
+        coarse_flow,
+        decoder,
+        cfg,
+        optimization_plan=optimization,
+    )
     mean_tracker = _build_mean_tracker(cfg, device, encoder.spec)
     dataset_identity = None
     if cfg.train.whiten_features:
@@ -1317,7 +1588,15 @@ def run_stage0(cfg: Config) -> None:
     # multiplied by (1 - momentum), can round back to the old fp32 target value.
     ema_before = [p.detach().clone() for p in target_bottleneck.parameters()]
     metrics = train_step(
-        batch, modules, optimizer, 0, cfg, device, mean_tracker=mean_tracker, whitener=whitener
+        batch,
+        modules,
+        optimizer,
+        0,
+        cfg,
+        device,
+        mean_tracker=mean_tracker,
+        whitener=whitener,
+        optimization_plan=optimization,
     )
     enc_after = next(encoder.parameters()).detach().clone()
     ema_after = [p.detach().clone() for p in target_bottleneck.parameters()]
@@ -1592,6 +1871,30 @@ def reconstruction_readouts(
         }
 
 
+def load_resume_run_provenance(path: str | Path) -> dict[str, Any] | None:
+    """Read the original run identity needed to construct strict continuation provenance.
+
+    Reading immutable metadata before live-state mutation lets the ordinary checkpoint
+    provenance comparison retain warm-start and frozen-state identities exactly.
+
+    Args:
+        path: Checkpoint selected for exact continuation.
+    Returns:
+        Copied run provenance, or ``None`` for a legacy checkpoint.
+    """
+    checkpoint = torch.load(path, map_location="cpu", weights_only=False)
+    provenance = checkpoint.get("run_provenance")
+    if provenance is None:
+        return None
+    if not isinstance(provenance, dict) or provenance.get("schema") != "hjepa-run-provenance-v1":
+        raise ValueError("Resume checkpoint contains malformed run provenance.")
+    if provenance.get("warm_start") is not None and not isinstance(
+        provenance.get("warm_start"), dict
+    ):
+        raise ValueError("Resume checkpoint contains malformed warm-start provenance.")
+    return json.loads(json.dumps(provenance))
+
+
 def _prepare_run(
     cfg: Config,
     device: torch.device,
@@ -1611,8 +1914,8 @@ def _prepare_run(
         warm_start_from: Optional present-only checkpoint supplying only B and D.
         tracking_identity: Credential-free W&B identity fields.
     Returns:
-        Modules, optimizer, auxiliary state, dataset identity, initialization hash,
-        and resolved run provenance.
+        Modules, one applied optimization plan, optimizer, auxiliary state, dataset
+        identity, initialization hash, and resolved run provenance.
     """
     from provenance import (
         WHITENING_EIGENSOLVER,
@@ -1622,6 +1925,10 @@ def _prepare_run(
         trainable_state_hash,
     )
 
+    if cfg.train.optimization_scope == "fc_only" and resume is None and warm_start_from is None:
+        raise ValueError(
+            "train.optimization_scope=fc_only requires a warm start or resume checkpoint."
+        )
     dataset_identity = build_dataset_identity(cfg, require_complete=cfg.data.dataset == "ego4d")
     modules = _build_and_init(cfg, device, load_encoder=True)
     encoder, bottleneck, _, coarse_flow, decoder = modules
@@ -1633,7 +1940,14 @@ def _prepare_run(
         dataset_identity,
         checkpoint_path=resume,
     )
-    warm_start = None
+    resume_provenance = load_resume_run_provenance(resume) if resume is not None else None
+    if (
+        resume is not None
+        and cfg.train.optimization_scope == "fc_only"
+        and resume_provenance is None
+    ):
+        raise ValueError("Fc-only resume requires a current checkpoint with strict provenance.")
+    warm_start = resume_provenance.get("warm_start") if resume_provenance is not None else None
     if warm_start_from is not None:
         warm_start = load_warm_start_checkpoint(
             warm_start_from,
@@ -1648,8 +1962,22 @@ def _prepare_run(
             f"{warm_start_from} sha256={warm_start['checkpoint_sha256']}; "
             "initialized fresh B_EMA=B; F_c/optimizer/step/RNG/sampler/W&B are fresh."
         )
-    init_hash = trainable_state_hash((bottleneck, coarse_flow, decoder))
-    optimizer = make_optimizer(bottleneck, coarse_flow, decoder, cfg)
+    optimization = apply_optimization_scope(bottleneck, coarse_flow, decoder, cfg)
+    init_hash = trainable_state_hash(tuple(module for _, module, _ in optimization.module_specs))
+    if resume_provenance is not None:
+        frozen_hashes = resume_provenance.get("frozen_state_hashes")
+        if cfg.train.optimization_scope == "fc_only" and not isinstance(frozen_hashes, dict):
+            raise ValueError("Fc-only resume provenance is missing frozen-state hashes.")
+        frozen_hashes = dict(frozen_hashes or {})
+    else:
+        frozen_hashes = capture_frozen_state_hashes(modules, cfg)
+    optimizer = make_optimizer(
+        bottleneck,
+        coarse_flow,
+        decoder,
+        cfg,
+        optimization_plan=optimization,
+    )
     whitening_fingerprint = None
     stats_path = Path(cfg.train.whiten_stats_path)
     if cfg.train.whiten_features and resume:
@@ -1678,8 +2006,18 @@ def _prepare_run(
         whitening_payload_fingerprint=whitening_fingerprint,
         tracking_identity=tracking_identity,
         warm_start=warm_start,
+        frozen_state_hashes=frozen_hashes,
     )
-    return modules, optimizer, mean_tracker, whitener, dataset_identity, init_hash, provenance
+    return (
+        modules,
+        optimization,
+        optimizer,
+        mean_tracker,
+        whitener,
+        dataset_identity,
+        init_hash,
+        provenance,
+    )
 
 
 def materialize_preflight(
@@ -1704,12 +2042,14 @@ def materialize_preflight(
 
     set_seed(cfg.seed)
     device = device_for_training()
-    *_, provenance = _prepare_run(
+    prepared = _prepare_run(
         cfg,
         device,
         warm_start_from=warm_start_from,
         tracking_identity=tracking_identity,
     )
+    modules, *_, provenance = prepared
+    verify_provenance_frozen_state(modules, cfg, provenance)
     atomic_json_save(provenance, output)
     print(f"Wrote resolved run provenance: {output}")
     return provenance
@@ -1827,7 +2167,8 @@ def run_resource_preflight(
     if device.type == "cuda":
         torch.cuda.reset_peak_memory_stats(device)
     prepared = _prepare_run(cfg, device, warm_start_from=warm_start_from)
-    modules, optimizer, mean_tracker, whitener, _, _, provenance = prepared
+    modules, optimization, optimizer, mean_tracker, whitener, _, _, provenance = prepared
+    frozen_hashes = verify_provenance_frozen_state(modules, cfg, provenance)
     encoder = modules[0]
     train_batch = next(
         iter(
@@ -1870,8 +2211,10 @@ def run_resource_preflight(
             device,
             mean_tracker=mean_tracker,
             whitener=whitener,
+            optimization_plan=optimization,
         ),
     )
+    verify_frozen_state_hashes(modules, cfg, frozen_hashes)
     total_peak = torch.cuda.max_memory_allocated(device) if device.type == "cuda" else None
     # Validation diagnostics are deliberately outside the timed/peak training-step
     # interval so their extra encoder/decoder forwards cannot contaminate throughput.
@@ -1953,7 +2296,16 @@ def run_training(
         warm_start_from,
         tracking_identity=wandb_options,
     )
-    modules, optimizer, mean_tracker, whitener, dataset_identity, init_hash, provenance = prepared
+    (
+        modules,
+        optimization,
+        optimizer,
+        mean_tracker,
+        whitener,
+        dataset_identity,
+        init_hash,
+        provenance,
+    ) = prepared
     encoder, bottleneck, target_bottleneck, coarse_flow, decoder = modules
     encoder_spec = encoder.spec
     restored_sampler_state: dict[str, int] = {}
@@ -1975,6 +2327,7 @@ def run_training(
         if resume
         else 0
     )
+    frozen_hashes = verify_provenance_frozen_state(modules, cfg, provenance)
     transfer_active = False
     if resume:
         resume_checkpoint = torch.load(resume, map_location="cpu", weights_only=False)
@@ -1998,7 +2351,13 @@ def run_training(
             )
     # Peak LRs always come from config/CLI — not checkpoint param_group["lr"], which
     # stores the *scheduled* LR at save time and would double-apply cosine decay on resume.
-    base_lrs = peak_base_lrs(bottleneck, coarse_flow, decoder, cfg)
+    base_lrs = peak_base_lrs(
+        bottleneck,
+        coarse_flow,
+        decoder,
+        cfg,
+        optimization_plan=optimization,
+    )
     if warm_start_from:
         print(
             "Warm start begins at step 0 with a fresh optimizer and schedule; "
@@ -2115,6 +2474,7 @@ def run_training(
                 device,
                 mean_tracker=mean_tracker,
                 whitener=whitener,
+                optimization_plan=optimization,
             )
             metrics["lr_mult"] = lr_mult
             diagnostic_due = step % cfg.train.diag_every == 0
@@ -2136,6 +2496,7 @@ def run_training(
                 log_to_wandb(metrics, step)
             next_step = step + 1
             if next_step % cfg.train.checkpoint_every == 0:
+                verify_frozen_state_hashes(modules, cfg, frozen_hashes)
                 save_checkpoint(
                     checkpoint_dir / f"phase1_step{next_step}.pt",
                     next_step,
@@ -2151,6 +2512,7 @@ def run_training(
                 )
             step = next_step
     final_checkpoint = checkpoint_dir / f"phase1_step{steps}.pt"
+    verify_frozen_state_hashes(modules, cfg, frozen_hashes)
     save_checkpoint(
         final_checkpoint,
         steps,
@@ -2180,9 +2542,9 @@ def run_training(
 def build_arg_parser() -> argparse.ArgumentParser:
     """Build the compact Phase 1 training CLI.
 
-    Scientific settings live in YAML. Only the six axes repeatedly swept in the latest
-    investigations remain as direct overrides: dataset, encoder, slot count, external slot width,
-    and internal bottleneck width. The remaining flags are operator controls, not hyperparameters.
+    Scientific settings live in YAML. Seven reviewed fields retain direct overrides: dataset,
+    encoder, slot count, external slot width, internal bottleneck width, temporal target, and
+    optimization scope. The remaining flags are operator controls, not hyperparameters.
     """
     parser = argparse.ArgumentParser(
         description="Train HJEPA-VWM Phase 1 from the repository's single configs/train.yaml."
@@ -2227,6 +2589,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         choices=("residual", "full_latent"),
         default=None,
         help="Select only train.predict_residual for a controlled parallel target pair.",
+    )
+    scientific.add_argument(
+        "--optimization-scope",
+        choices=("joint", "fc_only"),
+        default=None,
+        help="Select joint B/F_c/D optimization or fixed-representation F_c-only training.",
     )
     initialization = operator.add_mutually_exclusive_group()
     initialization.add_argument(
@@ -2350,6 +2718,11 @@ def finalize_training_config(cfg: Config) -> None:
             f"decoder_heads={cfg.model.decoder_heads}; got {cfg.model.decoder_dim}"
         )
 
+    if cfg.train.optimization_scope not in {"joint", "fc_only"}:
+        raise ValueError(
+            "train.optimization_scope must be 'joint' or 'fc_only'; "
+            f"got {cfg.train.optimization_scope!r}"
+        )
     if cfg.train.global_batch <= 0:
         raise ValueError("train.global_batch must be positive")
     if cfg.train.global_batch <= 1:
@@ -2418,6 +2791,16 @@ def finalize_training_config(cfg: Config) -> None:
         raise ValueError("train.recon_warmup_steps must be non-negative")
     if not 0.0 < cfg.train.recon_mean_momentum < 1.0:
         raise ValueError("cfg.train.recon_mean_momentum must be in (0, 1)")
+    if cfg.train.optimization_scope == "fc_only" and cfg.train.present_recon_only:
+        raise ValueError(
+            "train.optimization_scope=fc_only is incompatible with "
+            "train.present_recon_only because F_c would receive no gradient."
+        )
+    if cfg.train.optimization_scope == "fc_only" and cfg.train.lambda_recon_pred > 0.0:
+        raise ValueError(
+            "train.optimization_scope=fc_only requires train.lambda_recon_pred=0 so "
+            "L_flow is the sole optimized objective."
+        )
     if cfg.train.present_recon_only:
         if cfg.train.lambda_recon <= 0.0:
             raise ValueError("train.present_recon_only requires train.lambda_recon > 0")
@@ -2463,6 +2846,40 @@ def finalize_training_config(cfg: Config) -> None:
         raise ValueError("cfg.data.num_workers must be non-negative")
 
 
+def validate_optimization_initialization(
+    cfg: Config,
+    *,
+    mode: str,
+    resume: str | None,
+    warm_start_from: str | None,
+) -> None:
+    """Reject Fc-only launches that lack a learned fixed representation.
+
+    The configuration owns trainability while runtime initialization owns the source
+    weights. Validating them together prevents an expensive but meaningless run against
+    a randomly initialized frozen B.
+
+    Args:
+        cfg: Finalized experiment configuration.
+        mode: Resolved runtime mode.
+        resume: Optional continuation checkpoint.
+        warm_start_from: Optional present-only initialization checkpoint.
+    Returns:
+        None. Invalid Fc-only initialization raises before any paid work starts.
+    """
+    if cfg.train.optimization_scope != "fc_only":
+        return
+    if mode == "stage0":
+        raise ValueError(
+            "train.optimization_scope=fc_only is incompatible with stage0; use a "
+            "warm-started preflight or resource preflight."
+        )
+    if resume is None and warm_start_from is None:
+        raise ValueError(
+            "train.optimization_scope=fc_only requires a warm start or resume checkpoint."
+        )
+
+
 def main() -> None:
     """Run the requested Phase 1 command (Stage 0 sanity or Stage 1 training)."""
     args = parse_args()
@@ -2471,7 +2888,7 @@ def main() -> None:
     runtime = experiment.runtime
     wandb_config = experiment.wandb
 
-    # The only scientific CLI overrides are the six axes repeatedly varied in the latest
+    # The only scientific CLI overrides are the seven axes repeatedly varied in the latest
     # KANBAN investigations. Every other recipe value remains an auditable YAML edit.
     if args.data is not None:
         cfg.data.dataset = args.data
@@ -2490,6 +2907,8 @@ def main() -> None:
         cfg.model.bottleneck_mixer_dim = args.bottleneck_mixer_dim
     if args.temporal_target is not None:
         cfg.train.predict_residual = args.temporal_target == "residual"
+    if args.optimization_scope is not None:
+        cfg.train.optimization_scope = args.optimization_scope
     if args.checkpoint_dir is not None:
         cfg.checkpoint_dir = args.checkpoint_dir
 
@@ -2542,6 +2961,12 @@ def main() -> None:
         "id": args.wandb_run_id if args.wandb_run_id is not None else wandb_config.run_id,
     }
     finalize_training_config(cfg)
+    validate_optimization_initialization(
+        cfg,
+        mode=mode,
+        resume=resume,
+        warm_start_from=warm_start_from,
+    )
     if mode == "stage0":
         run_stage0(cfg)
     elif mode == "preflight":

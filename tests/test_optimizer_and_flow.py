@@ -86,6 +86,31 @@ def test_make_optimizer_keeps_geometry_and_zero_init_out_of_weight_decay():
     assert set(weight_decay_by_id) == trainable_ids
 
 
+def test_make_optimizer_fc_only_excludes_bottleneck_and_decoder():
+    """Fc-only optimization freezes the representation and exposes only F_c groups."""
+    models = importlib.import_module("models")
+    train = importlib.import_module("train")
+    cfg = _small_cfg()
+    cfg.train.optimization_scope = "fc_only"
+    _, bottleneck, _, coarse_flow, decoder = models.build_phase1_modules(cfg, load_encoder=False)
+
+    optimizer = train.make_optimizer(bottleneck, coarse_flow, decoder, cfg)
+
+    assert [group["name"] for group in optimizer.param_groups] == [
+        "F_c/decay",
+        "F_c/no_decay",
+    ]
+    assert not any(param.requires_grad for param in bottleneck.parameters())
+    assert all(param.requires_grad for param in coarse_flow.parameters())
+    assert not any(param.requires_grad for param in decoder.parameters())
+    optimized = {id(param) for group in optimizer.param_groups for param in group["params"]}
+    assert optimized == {id(param) for param in coarse_flow.parameters()}
+    assert train.peak_base_lrs(bottleneck, coarse_flow, decoder, cfg) == [
+        cfg.train.lr_coarse_flow,
+        cfg.train.lr_coarse_flow,
+    ]
+
+
 def test_coarse_flow_slot_type_embeddings_are_trainable_and_used():
     """CoarseFlow stamps slot and stream identity before concatenated attention."""
     models = importlib.import_module("models")

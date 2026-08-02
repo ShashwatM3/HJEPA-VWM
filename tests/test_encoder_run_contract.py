@@ -464,6 +464,28 @@ def test_resume_and_warm_start_cli_are_mutually_exclusive():
         )
 
 
+def test_resume_inherits_original_warm_start_identity(tmp_path):
+    """Fc-only continuation keeps the source-representation identity in provenance."""
+    import train
+
+    warm_start = {
+        "schema": "hjepa-warm-start-v1",
+        "checkpoint_sha256": "a" * 64,
+    }
+    path = tmp_path / "fc-only.pt"
+    torch.save(
+        {
+            "run_provenance": {
+                "schema": "hjepa-run-provenance-v1",
+                "warm_start": warm_start,
+            }
+        },
+        path,
+    )
+
+    assert train.load_resume_run_provenance(path)["warm_start"] == warm_start
+
+
 def test_training_cli_describes_dino_as_a_pinned_one_flag_choice(monkeypatch, capsys):
     import train
 

@@ -230,7 +230,7 @@ Root implementation files:
 | `losses.py` | Pure tensor losses and detach helper. No parameters. |
 | `diagnostics.py` | Collapse metrics, baseline comparisons, AGC, weight-decay grouping. |
 | `provenance.py` | Frame-count-bound dataset/run identities, EncoderSpec serialization, atomic writes, strict whitening and feature-cache envelopes. |
-| `train.py` | Stage-0/1, six-axis scientific CLI, initialization-only B/D warm start, optimizer/EMA, exact sampler/RNG atomic resume, parity/CUDA-event resource preflights, and strict/optional W&B policy. |
+| `train.py` | Stage-0/1, seven-axis scientific CLI, initialization-only B/D warm start, optimizer/EMA, exact sampler/RNG atomic resume, parity/CUDA-event resource preflights, and strict/optional W&B policy. |
 | `parse_logs.py` | Parses `step=N {dict}` console logs into JSON. |
 | `run_history.py` | W&B Public API export/report helper for logged metrics. |
 | `evaluate_checkpoint_diagnostics.py` | Narrow offline evaluator for current unwhitened v2 checkpoints: paired encoder/live-online-bottleneck cross-video cosine on the corrected fixed source-diverse batch, repeated for determinism; no optimizer or training-state mutation. |
@@ -699,7 +699,7 @@ Inputs:
 
 - `batch = (context_clip, target_clip)`.
 - `modules = (encoder, bottleneck, target_bottleneck, coarse_flow, decoder)`.
-- optimizer over `B`, `F_c`, and `Decoder`.
+- optimizer over `B`, `F_c`, and `Decoder` in `joint`, or `F_c` alone in `fc_only`.
 
 Normal prediction mode:
 
@@ -723,25 +723,27 @@ Normal prediction mode:
 9. Always compute for logging: `var_loss`, `cov_loss`, `slot_loss`,
    `sigreg_l`.
 10. Start total loss as `flow_loss`.
-11. Add `lambda_var * var_loss`.
-12. Add optional active terms:
+11. In `joint`, add `lambda_var * var_loss`.
+12. In `joint`, add optional active terms:
     - `lambda_cov * L_cov` if `lambda_cov > 0`.
     - `lambda_slot * L_slot` if `lambda_slot > 0`.
     - `lambda_sigreg * sigreg_scale * L_sigreg` if `lambda_sigreg > 0`.
 13. If reconstruction anchors are active, compute a linear `recon_scale`.
-14. If `lambda_recon > 0`, add present reconstruction.
-15. If `lambda_recon_pred > 0`, build one-step endpoint:
+14. In `joint`, if `lambda_recon > 0`, add present reconstruction.
+15. In `joint`, if `lambda_recon_pred > 0`, build one-step endpoint:
     `endpoint = z_c + (1 - tau_c) * u_c_hat`; in residual mode,
     `c_hat = abstract + endpoint`, otherwise `c_hat = endpoint`; add
     prediction-side reconstruction.
 16. Exit autocast and call `loss.backward()`.
-17. Apply module-specific AGC to `B`, `F_c`, and `Decoder` if enabled.
-18. Apply global `clip_grad_norm_` with `grad_clip`.
+17. Apply module-specific AGC to modules with gradients (`B`/`F_c`/`Decoder` in `joint`,
+    only `F_c` in `fc_only`) if enabled.
+18. Apply global `clip_grad_norm_` to the scope-selected trainable parameters.
 19. If the returned norm is non-finite or greater than
     `grad_skip_threshold`, zero grads and skip `optimizer.step()`.
 20. Otherwise step optimizer.
 21. Compute EMA momentum with `ema_cosine`.
-22. If the optimizer step was not skipped, update `B_EMA` from `B`.
+22. In `joint`, if the optimizer step was not skipped, update `B_EMA` from `B`; in
+    `fc_only`, never update EMA.
 23. Return a flat metrics dict.
 
 Present-only reconstruction mode:
@@ -770,6 +772,9 @@ L_total =
 `sigreg_scale` and `recon_scale` are linear ramps from 0 to 1 over their warmup
 step counts.
 
+In `fc_only`, `L_total = L_flow`: representation and reconstruction values remain
+diagnostic readouts, `lambda_recon_pred` must be zero, and B/B_EMA/D are immutable.
+
 Terms may be computed for logging even when their weights are zero. Do not
 mistake a logged scalar for an active gradient source.
 
@@ -777,9 +782,9 @@ mistake a logged scalar for an active gradient source.
 
 Optimizer:
 
-- `make_optimizer` creates AdamW over `B`, `F_c`, and `Decoder`.
-- The decoder is always included so checkpoints are consistent; when no
-  reconstruction loss is active, it receives no gradients and does not move.
+- `make_optimizer` creates AdamW over `B`, `F_c`, and `Decoder` in `joint` scope, or
+  over `F_c` alone in `fc_only` scope.
+- The decoder is always saved, but it is excluded from the `fc_only` optimizer.
 - Each module is split into decay and no-decay groups by
   `diagnostics.partition_decay_params`.
 - Decayed: genuine Linear/Conv weight matrices.
@@ -800,7 +805,7 @@ AGC and global clipping:
 - `adaptive_gradient_clip` enforces per-tensor `||g|| <= lambda * (||w|| + eps)`
   on eligible tensors.
 - Current default AGC lambdas: `B=0.20`, `F_c=0.10`, `Decoder=0.20`.
-- Global `clip_grad_norm_` then clips all trainable params to `grad_clip=0.5`.
+- Global `clip_grad_norm_` then clips scope-selected trainable params to `grad_clip=0.5`.
 - `grad_norm` in `train_step` is the norm returned by `clip_grad_norm_` before
   the global rescale, after AGC.
 - `gradient_health` reports a post-clip norm and should not be read as the raw
@@ -815,8 +820,8 @@ B_EMA <- m * B_EMA + (1 - m) * B
 
 Defaults: start `0.996`, end `0.9999`, denominator `105000`.
 
-EMA updates only after successful optimizer steps. If a step is skipped, the EMA
-target does not move.
+In `joint`, EMA updates only after successful optimizer steps. In `fc_only`, EMA is
+disabled unconditionally. If a joint step is skipped, the EMA target does not move.
 
 Checkpoints:
 
@@ -909,7 +914,7 @@ Reconstruction readouts:
 Gradient and stability:
 
 - `grad_norm`: per-step post-AGC/pre-global-rescale norm from training.
-- `grad_skipped`: whether optimizer/EMA update was skipped.
+- `grad_skipped`: whether the optimizer step (and joint-scope EMA update) was skipped.
 - `instability_warn`: `grad_norm` and `L_flow` are both above warning
   thresholds.
 - `agc_*`: module-level AGC ratios and clipped tensor counts.
@@ -952,7 +957,7 @@ Future Phase-2/3 diagnostics, not implemented yet:
 
 `config.py` supplies typed fallback defaults. `configs/train.yaml` is the only editable experiment
 recipe and `train.py` reads it on every invocation; there is no `--config` selector. Resolution is
-dataclass defaults → the single YAML → six scientific CLI overrides → operator overrides.
+dataclass defaults → the single YAML → seven scientific CLI overrides → operator overrides.
 Duplicate/unknown keys, legacy or audit-owned fields, and scalar types are validated before model
 construction. Every YAML leaf documents its choices or reasonable range inline. The YAML path and
 content hash are audit-recorded but excluded from scientific parity, which binds the fully resolved
@@ -991,6 +996,7 @@ Dataclass fallback training defaults (not the active YAML values):
 
 | Field | Default |
 |---|---|
+| `optimization_scope` | `joint` (choices: `joint`, `fc_only`) |
 | `global_batch` | `64` |
 | `stage1_steps`, `max_steps` | `15000`, `15000` |
 | `lr_bottleneck`, `lr_coarse_flow`, `lr_decoder` | `1e-4`, `2e-4`, `1e-4` |
@@ -1023,12 +1029,13 @@ Data/path defaults:
 | `seed` | `42` |
 
 The scientific CLI overrides are `--data`, `--encoder`, `--n-c`, `--d-c`,
-`--bottleneck-mixer-dim`, and `--temporal-target {residual,full_latent}`. The first five are
-the repeatedly varied dataset/encoder/latent-shape axes. The final selector maps only to the
-already implemented `train.predict_residual` boolean so a controlled target pair can run
-concurrently from one YAML/worktree. Losses, whitening, reconstruction modes, decoder shape,
-schedules, optimizer settings, and cadence live in YAML so their coupled recipe is reviewed as
-one unit.
+`--bottleneck-mixer-dim`, `--temporal-target {residual,full_latent}`, and
+`--optimization-scope {joint,fc_only}`. The first five are the repeatedly varied
+dataset/encoder/latent-shape axes. The target selector maps only to the implemented
+`train.predict_residual` boolean. The optimization selector atomically chooses joint B/F_c/D
+training with B_EMA updates or fixed B/B_EMA/D coordinates with F_c as the sole trainable module.
+Losses, whitening, reconstruction modes, decoder shape, schedules, optimizer settings, and
+cadence live in YAML so their coupled recipe is reviewed as one unit.
 Resume, preflight, provenance, W&B identity, and checkpoint-path flags remain operator controls.
 `d_c` must be positive and divisible by `f_c_heads`; checkpoints are shape-incompatible across
 either external axis. See `TRAIN_PY_HYPERPARAMETERS.md` before adding or changing a knob.

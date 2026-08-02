@@ -562,6 +562,48 @@ def _seed_stream_identity(seed: int) -> dict[str, Any]:
     }
 
 
+def optimization_contract(cfg: Config) -> dict[str, Any]:
+    """Describe the effective trainability, EMA, and objective contract.
+
+    This derived readout makes ``train.optimization_scope`` explicit in artifacts and
+    W&B instead of requiring readers to reconstruct it from separate training branches.
+
+    Args:
+        cfg: Fully resolved experiment configuration.
+    Returns:
+        JSON-compatible module and objective contract for the run.
+    """
+    if cfg.train.optimization_scope == "fc_only":
+        return {
+            "scope": "fc_only",
+            "trainable_modules": ["F_c"],
+            "frozen_modules": ["B", "B_EMA", "D"],
+            "ema_updates": False,
+            "optimized_objective_terms": ["L_flow"],
+        }
+    objective_terms = [] if cfg.train.present_recon_only else ["L_flow"]
+    for active, name in (
+        (cfg.train.lambda_var > 0.0, "L_var"),
+        (cfg.train.lambda_cov > 0.0, "L_cov"),
+        (cfg.train.lambda_slot > 0.0, "L_slot"),
+        (cfg.train.lambda_sigreg > 0.0, "L_sigreg"),
+        (cfg.train.lambda_recon > 0.0, "L_recon"),
+        (
+            not cfg.train.present_recon_only and cfg.train.lambda_recon_pred > 0.0,
+            "L_recon_pred",
+        ),
+    ):
+        if active:
+            objective_terms.append(name)
+    return {
+        "scope": "joint",
+        "trainable_modules": ["B", "F_c", "D"],
+        "frozen_modules": ["B_EMA"],
+        "ema_updates": True,
+        "optimized_objective_terms": objective_terms,
+    }
+
+
 def build_run_provenance(
     cfg: Config,
     *,
@@ -571,6 +613,7 @@ def build_run_provenance(
     whitening_payload_fingerprint: str | None,
     tracking_identity: dict[str, Any] | None = None,
     warm_start: dict[str, Any] | None = None,
+    frozen_state_hashes: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Materialize paired-arm identity with one explicit common comparison hash.
 
@@ -581,10 +624,11 @@ def build_run_provenance(
         cfg: Fully finalized runtime configuration.
         encoder_spec: Resolved immutable encoder identity.
         dataset_identity: Validated dataset and preprocessing identity.
-        trainable_init: Fingerprint of the freshly initialized B/F/D stack.
+        trainable_init: Fingerprint of the scope-selected freshly initialized trainables.
         whitening_payload_fingerprint: Bound whitening artifact identity, if enabled.
         tracking_identity: Optional credential-free W&B entity/project/group/name/id fields.
         warm_start: Optional initialization-only checkpoint transfer identity.
+        frozen_state_hashes: Immutable B/B_EMA/D hashes for Fc-only training.
     Returns:
         Versioned run provenance with common, encoder, data, and tracking identities.
     """
@@ -629,9 +673,19 @@ def build_run_provenance(
     resolved_tracking = {
         field: provided_tracking.get(field) for field in sorted(allowed_tracking_fields)
     }
+    optimization = optimization_contract(cfg)
+    resolved_frozen_hashes = dict(frozen_state_hashes or {})
+    if cfg.train.optimization_scope == "fc_only" and set(resolved_frozen_hashes) != {
+        "B",
+        "B_EMA",
+        "D",
+    }:
+        raise ValueError("Fc-only run provenance requires B/B_EMA/D frozen-state hashes.")
     common = {
         "dataset_fingerprint": dataset_identity["fingerprint"],
         "trainable_init_hash": trainable_init,
+        "optimization_contract": optimization,
+        "frozen_state_hashes": resolved_frozen_hashes,
         "data_order": order,
         "config": common_config,
         "encoder_runtime_contract": encoder_runtime_contract,
@@ -647,6 +701,8 @@ def build_run_provenance(
         "feature_fingerprint": encoder_spec.fingerprint,
         "whitening_payload_fingerprint": whitening_payload_fingerprint,
         "dataset_identity": dataset_identity,
+        "optimization_contract": optimization,
+        "frozen_state_hashes": resolved_frozen_hashes,
         "resolved_config": config,
         "tracking_identity": resolved_tracking,
         "warm_start": warm_start,

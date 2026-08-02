@@ -3,8 +3,7 @@
 Naming map from AGENT_FILES/AGENT-BEHAVIOUR/CODE_DESIGN.md §3.
 Architecture reference: AGENT_FILES/AGENTS.md and GUIDES/latest_brief.md (narrative only).
 Typed fallback defaults live in this file; the canonical editable recipe is
-``configs/train.yaml``. Only dataset, encoder, N_c, D_c, and bottleneck mixer width remain
-scientific CLI overrides.
+``configs/train.yaml``. Seven reviewed scientific fields retain direct CLI overrides.
 """
 
 from __future__ import annotations
@@ -138,6 +137,8 @@ class ModelConfig:
 class TrainConfig:
     """Phase 1 training and diagnostic defaults (see AGENT_FILES/AGENTS.md §12)."""
 
+    # Atomic trainability contract: joint updates B/F_c/D + B_EMA; fc_only updates only F_c.
+    optimization_scope: Literal["joint", "fc_only"] = "joint"
     global_batch: int = 64
     # Step counts retuned 2026-06-10 after `peachy-terrain-5` crashed at step
     # 10750 (see AGENT_FILES/KANBAN/02-LAUNCH-FULL-PHASE-1-RUN/POSTMORTEM_RUN1.md).
@@ -567,7 +568,7 @@ def load_experiment_config(path: str | Path) -> ExperimentConfig:
     """Load one strict YAML recipe over the shipped dataclass defaults.
 
     The YAML may be partial, but every supplied key must name a real dataclass field. Scientific
-    command-line overrides are applied later by ``train.py`` only for the six active sweep axes.
+    command-line overrides are applied later by ``train.py`` only for the seven active sweep axes.
 
     Args:
         path: YAML file containing Config sections plus optional ``runtime`` and ``wandb`` maps.

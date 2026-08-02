@@ -62,7 +62,7 @@ These flat files are the entire Phase 1 implementation. There is no `src/` packa
 | `losses.py` | `flow_matching_loss`, `variance_floor`, `reconstruction_loss`, `as_target`, … | Any `nn.Parameter` |
 | `diagnostics.py` | `variance_stats`, `coarse_baselines`, `reconstruction_readouts`, AGC/decay grouping | Training loop |
 | `provenance.py` | Dataset/run fingerprints, EncoderSpec serialization, atomic JSON/Torch writes, strict whitening/cache envelopes | Model math or network authentication |
-| `train.py` | `train_step`, diagnostics, EMA, strict resume/checkpoints, parity/resource preflight, five-axis scientific CLI, W&B policy | Encoder backend classes or new module architectures |
+| `train.py` | `train_step`, diagnostics, joint/F_c-only optimization scope, EMA, strict resume/checkpoints, parity/resource preflight, seven-axis scientific CLI, W&B policy | Encoder backend classes or new module architectures |
 
 **Typical read order for a change:**
 
@@ -125,8 +125,8 @@ Configuration interface:
 - **Single YAML recipe:** `configs/train.yaml`, always loaded; encoder details, batch/schedule,
   losses, reconstruction/whitening modes, decoder/background architecture, optimizer/AGC,
   cadence, runtime, and W&B defaults. Every leaf has allowed-value/range guidance inline.
-- **Five scientific CLI overrides:** `--data`, `--encoder`, `--n-c`, `--d-c`,
-  `--bottleneck-mixer-dim`.
+- **Seven scientific CLI overrides:** `--data`, `--encoder`, `--n-c`, `--d-c`,
+  `--bottleneck-mixer-dim`, `--temporal-target`, and `--optimization-scope`.
 - **Operations:** strict W&B, atomic RNG/sampler resume, explicit optimizer reset/dataset
   transfer/legacy flags, frame-count-bound provenance comparison, CUDA-event resource preflight
   with examples/frames/tokens throughput
@@ -180,7 +180,7 @@ Prefer the **W&B MCP server** in Cursor for interactive metric pulls (see
 | `tests/test_phase1_contract.py` | Config, subset manifest, flat-file deliverables |
 | `tests/test_encoders.py` | Raw-input validation, normalization once, both dense layouts, frame ordering/microbatching, fingerprints, sticky freeze, registry/revision failures, and V-JEPA legacy parity |
 | `tests/test_encoder_run_contract.py` | Paired initialization, deterministic resume/transfer, checkpoint-before-mutation, B>1 honesty, CLI and diagnostic RNG contracts |
-| `tests/test_experiment_config.py` | Strict duplicate/key/type/legacy-field YAML validation, exact five-axis CLI, precedence, cache synchronization, and shipped recipes |
+| `tests/test_experiment_config.py` | Strict duplicate/key/type/legacy-field YAML validation, exact seven-axis CLI, precedence, cache synchronization, and shipped recipes |
 | `tests/test_provenance.py` | Dataset/runtime/seed identity, narrow transfer, and strict atomic whitening/feature-cache envelope validation |
 | `tests/test_reconstruction_loss.py` | Reconstruction loss modes and detach behaviour |
 | `tests/test_optimizer_and_flow.py` | Optimizer groups and flow loss contracts |
@@ -188,6 +188,7 @@ Prefer the **W&B MCP server** in Cursor for interactive metric pulls (see
 | `tests/test_decoder.py` | Fixed-position decoder invariants |
 | `tests/test_residual_recon_target.py` | `FeatureMeanTracker` + shuffled-c readouts |
 | `tests/test_present_recon_only.py` | Present-only mode gradient routing |
+| `tests/test_fc_only_optimization.py` | Fixed B/B_EMA/D, F_c-only updates, and frozen-state hash guards |
 | `tests/test_sigreg.py` | SIGReg loss and logging RNG isolation |
 | `tests/test_bottleneck_attention.py` | Bottleneck latent-stack identity-at-init + sharp-attention diagnostics |
 | `tests/test_evaluate_checkpoint_diagnostics.py` | Offline evaluator restoration, fixed-batch, one-forward, inference/eval, output, and failure contracts with fake modules |

@@ -45,6 +45,35 @@ wandb:
     assert experiment.wandb.group == "yaml-group"
 
 
+def test_yaml_loads_fc_only_optimization_scope(tmp_path: Path) -> None:
+    """Select the complete frozen-representation contract with one scientific field."""
+    from config import load_experiment_config
+
+    path = tmp_path / "fc_only.yaml"
+    path.write_text(
+        """
+train:
+  optimization_scope: fc_only
+""",
+        encoding="utf-8",
+    )
+
+    experiment = load_experiment_config(path)
+
+    assert experiment.config.train.optimization_scope == "fc_only"
+
+
+def test_yaml_rejects_unknown_optimization_scope(tmp_path: Path) -> None:
+    """Reject an invalid trainability enum during strict YAML loading."""
+    from config import load_experiment_config
+
+    path = tmp_path / "invalid_scope.yaml"
+    path.write_text("train:\n  optimization_scope: flow_only\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="optimization_scope.*joint.*fc_only"):
+        load_experiment_config(path)
+
+
 def test_yaml_rejects_unknown_keys_before_training(tmp_path: Path) -> None:
     """Reject misspelled recipe fields instead of silently falling back to defaults."""
     from config import load_experiment_config
@@ -113,10 +142,10 @@ def test_yaml_encoder_cache_path_stays_synchronized(tmp_path: Path) -> None:
     assert experiment.config.hf_cache_dir == experiment.config.encoder.hf_cache_dir
 
 
-def test_cli_keeps_only_six_scientific_sweep_overrides(
+def test_cli_keeps_only_seven_scientific_sweep_overrides(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Expose only the six axes repeatedly varied in the latest investigations."""
+    """Expose only the seven explicitly reviewed scientific hot overrides."""
     import train
 
     monkeypatch.setattr(
@@ -162,7 +191,7 @@ def test_cli_keeps_only_six_scientific_sweep_overrides(
         train.parse_args()
 
 
-def test_scientific_cli_group_contains_exactly_six_options() -> None:
+def test_scientific_cli_group_contains_exactly_seven_options() -> None:
     """Make CLI-surface growth an explicit reviewed test change."""
     import train
 
@@ -184,13 +213,14 @@ def test_scientific_cli_group_contains_exactly_six_options() -> None:
         "--d-c",
         "--bottleneck-mixer-dim",
         "--temporal-target",
+        "--optimization-scope",
     }
 
 
 def test_main_loads_yaml_then_applies_hot_overrides(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Resolve the complete recipe from YAML before applying the six CLI axes."""
+    """Resolve the complete recipe from YAML before applying the seven CLI axes."""
     import train
 
     path = tmp_path / "stage0.yaml"
@@ -280,6 +310,113 @@ runtime:
     assert cfg.train.predict_residual is expected
     cfg.train.predict_residual = baseline.train.predict_residual
     assert cfg == baseline
+
+
+def test_optimization_scope_override_changes_only_optimization_scope(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Map the single Fc-only selector directly to the resolved training contract."""
+    import train
+    from config import load_experiment_config
+
+    path = tmp_path / "train.yaml"
+    path.write_text("runtime:\n  mode: train\n", encoding="utf-8")
+    captured = {}
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "train.py",
+            "--optimization-scope",
+            "fc_only",
+            "--warm-start-from",
+            "source.pt",
+        ],
+    )
+    monkeypatch.setattr(train, "EXPERIMENT_CONFIG_PATH", path)
+    monkeypatch.setattr(
+        train,
+        "run_training",
+        lambda cfg, *_args, **_kwargs: captured.setdefault("cfg", cfg),
+    )
+
+    train.main()
+
+    cfg = captured["cfg"]
+    baseline = load_experiment_config(path).config
+    train.finalize_training_config(baseline)
+    assert cfg.train.optimization_scope == "fc_only"
+    cfg.train.optimization_scope = baseline.train.optimization_scope
+    assert cfg == baseline
+
+
+def test_finalize_rejects_unknown_optimization_scope() -> None:
+    """Fail before paid work when the trainability contract is misspelled."""
+    import train
+    from config import Config
+
+    cfg = Config()
+    cfg.train.optimization_scope = "flow_only"
+
+    with pytest.raises(ValueError, match="optimization_scope"):
+        train.finalize_training_config(cfg)
+
+
+def test_finalize_rejects_present_only_fc_only_combination() -> None:
+    """Fc-only mode must retain the prediction path that supplies F_c gradients."""
+    import train
+    from config import Config
+
+    cfg = Config()
+    cfg.train.optimization_scope = "fc_only"
+    cfg.train.present_recon_only = True
+    cfg.train.lambda_recon = 1.0
+
+    with pytest.raises(ValueError, match="present_recon_only"):
+        train.finalize_training_config(cfg)
+
+
+def test_finalize_rejects_prediction_reconstruction_in_fc_only() -> None:
+    """The fixed-coordinate experiment optimizes the flow objective and nothing else."""
+    import train
+    from config import Config
+
+    cfg = Config()
+    cfg.train.optimization_scope = "fc_only"
+    cfg.train.lambda_recon_pred = 1.0
+
+    with pytest.raises(ValueError, match="lambda_recon_pred"):
+        train.finalize_training_config(cfg)
+
+
+def test_main_rejects_fc_only_without_warm_start_or_resume(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Never spend a run training F_c against a randomly frozen representation."""
+    import train
+
+    path = tmp_path / "fc_only.yaml"
+    path.write_text(
+        """
+train:
+  optimization_scope: fc_only
+runtime:
+  mode: train
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(sys, "argv", ["train.py"])
+    monkeypatch.setattr(train, "EXPERIMENT_CONFIG_PATH", path)
+    monkeypatch.setattr(
+        train,
+        "run_training",
+        lambda *_args, **_kwargs: pytest.fail("training started without fixed source state"),
+    )
+
+    with pytest.raises(ValueError, match="warm start or resume"):
+        train.main()
 
 
 def test_encoder_override_rejects_a_revision_pinned_for_another_alias(
