@@ -2,9 +2,13 @@
 
 ## Status
 
-RUNNING — launched from clean commit `54a207cf9193404401c2c36c3eaf8be09039167c`.
+HUMAN-STOPPED at training step 12,450 after approximately four hours. The last fixed-batch
+diagnostic is step 12,000. The registered 15,000-step run is formally incomplete, but the observed
+trajectory is a stable **Healthy rep, no predictor** negative result.
 
 W&B: [`r0s6ouwd`](https://wandb.ai/smahalanobis-uc-davis/hjepa-vwm/runs/r0s6ouwd).
+
+Full evidence: [`METRIC_READOUT.md`](METRIC_READOUT.md) and [`ANALYSIS.md`](ANALYSIS.md).
 
 ## Hypothesis
 

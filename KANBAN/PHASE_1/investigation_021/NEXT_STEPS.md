@@ -8,10 +8,12 @@
 3. Completed: exact source/config and resource/frozen-state gates passed without changing the
    scientific recipe.
 4. Completed: W&B run `r0s6ouwd`, process, GPU, provenance, and step-0 proof passed.
-5. Monitor the immutable-state tripwires and the Reading-Cycle-A prediction metrics through the
-   full 15,000 steps. Do not stop merely because early ratios are poor; this is the registered
-   full-scale test.
-6. After completion, pull unsampled W&B history, write `METRIC_READOUT.md` and `ANALYSIS.md`, update
-   both triads, and reconcile `KANBAN/PHASE_1/README.md` with the immutable W&B ID.
-7. If fixed coordinates still lose to both baselines, open a predictor/objective investigation.
-   Do not return to encoder, bottleneck-geometry, SIGReg, or latent-shape sweeps first.
+5. Completed by human decision: stopped at step 12,450 after a long stable negative plateau. The
+   run is formally incomplete but had consumed 99.02% of cumulative learning-rate schedule mass.
+6. Completed: pulled unsampled W&B history, wrote `METRIC_READOUT.md` and `ANALYSIS.md`, and updated
+   both triads and the Phase-1 index.
+7. Opened [Investigation 022](../investigation_022/) to audit conditioning use, integrated-flow
+   endpoints, the velocity baseline's interpretation, and the final normalized output before
+   registering another paid predictor run.
+8. Do not return first to encoder, bottleneck geometry, SIGReg, covariance, latent shape, or decoder
+   capacity. This investigation isolated the remaining failure downstream of those components.

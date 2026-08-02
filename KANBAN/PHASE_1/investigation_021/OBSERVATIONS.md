@@ -55,3 +55,24 @@ To meet the human's explicit accelerated-launch instruction, the pod skipped the
 test suite and generic model/diagnostic/encoder smokes. The implementation commit had already
 passed 254 local tests, formatting, lint, and compilation. The exact source/config/SHA gate and
 the materially stronger warm-started full-batch resource/frozen-state gate were retained.
+
+## Conclusion (2026-08-02)
+
+The human stopped W&B run `r0s6ouwd` at training step 12,450 after approximately four hours. The
+last fixed diagnostic is step 12,000. W&B finalized the run as `crashed`, so this is not a formally
+completed 15,000-step run.
+
+The fixed-coordinate intervention worked exactly. Copy loss, batch-mean loss, spread, rank,
+cross-video cosine, slot metrics, attention metrics, and all fixed-decoder readouts were bitwise
+constant across 25 diagnostic rows. The substrate remained healthy: rank `364.281/512`, latent
+cosine `0.109722` against encoder `0.402768`, std `1.103687`, and zero dead dimensions.
+
+`F_c` learned substantially from initialization, but it never beat either baseline. Its best copy
+and batch ratios were `1.456283` and `1.541340`; last-six available medians were `1.488469` and
+`1.575406`. Freezing improved matched late ratios by about 12.5% relative to the joint residual
+comparator, so coordinate motion mattered. It was not sufficient and was not the dominant
+obstruction.
+
+The next investigation belongs on the predictor/objective axis. The recommended full-scale test is
+direct residual regression on the same fixed codes, preceded by an offline integrated-flow endpoint
+readout. See the run's [`ANALYSIS.md`](fixed_residual_coordinates_fc_only/ANALYSIS.md).

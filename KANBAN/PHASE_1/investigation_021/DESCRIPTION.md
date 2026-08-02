@@ -2,14 +2,18 @@
 
 ## Status
 
-RUNNING — the full 15,000-step run is live on one A100 from clean launch commit
-`54a207cf9193404401c2c36c3eaf8be09039167c`.
+CLOSED after a human stop at training step 12,450. The registered 15,000-step run is formally
+incomplete. Its stable observed trajectory is **Healthy rep, no predictor**, and it is sufficient
+to move the research frontier to the temporal predictor/objective.
 
 W&B: [`r0s6ouwd`](https://wandb.ai/smahalanobis-uc-davis/hjepa-vwm/runs/r0s6ouwd).
 
 The implementation is complete in commit
 `0c1d343ce19258d5d575ea17a1654a46b32abf85`. The exact run protocol lives in
 [`fixed_residual_coordinates_fc_only/GUIDE.md`](fixed_residual_coordinates_fc_only/GUIDE.md).
+The complete result lives in
+[`fixed_residual_coordinates_fc_only/METRIC_READOUT.md`](fixed_residual_coordinates_fc_only/METRIC_READOUT.md)
+and [`fixed_residual_coordinates_fc_only/ANALYSIS.md`](fixed_residual_coordinates_fc_only/ANALYSIS.md).
 
 ## Parent result
 

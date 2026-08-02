@@ -486,3 +486,45 @@ The run launched from clean commit `54a207cf9193404401c2c36c3eaf8be09039167c` an
 [`r0s6ouwd`](https://wandb.ai/smahalanobis-uc-davis/hjepa-vwm/runs/r0s6ouwd). Its exact
 post-`NEW_POD.md` procedure is
 [`fixed_residual_coordinates_fc_only/GUIDE.md`](investigation_021/fixed_residual_coordinates_fc_only/GUIDE.md).
+
+## Update (2026-08-02) — Investigation 021 stopped and analyzed
+
+The W&B project contains **95 runs** at this reconciliation: 49 finished, 34 crashed, 11 killed,
+1 failed, and 0 running. Run
+[`r0s6ouwd`](https://wandb.ai/smahalanobis-uc-davis/hjepa-vwm/runs/r0s6ouwd) was human-stopped after
+approximately four hours at training step 12,450; the last diagnostic row is step 12,000. W&B
+finalized it as `crashed`, so the registered 15,000-step run is formally **Invalid/incomplete**.
+Its observed Reading-Cycle-A trajectory is **Healthy rep, no predictor**.
+
+The fixed-coordinate contract held. All representation and fixed-baseline diagnostics were exactly
+stationary. Rank was `364.281/512`, latent cross-video cosine was `0.109722` against encoder
+`0.402768`, std was `1.103687`, dead fraction was zero, copy loss was `0.962544`, and batch-mean
+loss was `0.909427`.
+
+`F_c` reduced fixed-batch model loss by 53.61%, but its best copy and batch ratios were still
+`1.456283` and `1.541340`; no diagnostic row beat either baseline. Over matched steps 9,500-12,000,
+freezing improved both ratios by about 12.5% relative to the joint Investigation-020 residual arm.
+Moving coordinates were therefore a real but insufficient obstruction.
+
+Investigation 021 is **CLOSED**. The next paid axis is the temporal predictor/objective, not another
+static bottleneck-geometry sweep. Full evidence:
+[`METRIC_READOUT.md`](investigation_021/fixed_residual_coordinates_fc_only/METRIC_READOUT.md) and
+[`ANALYSIS.md`](investigation_021/fixed_residual_coordinates_fc_only/ANALYSIS.md).
+
+## Reasoning audit (2026-08-02) — Investigation 022
+
+[Investigation 022](investigation_022/) records the post-run architecture and metric audit before
+another paid experiment. The copy/batch arithmetic is correct, but the denominator is a direct
+target-space guess translated with evaluator-known noise, whereas `F_c` must infer a velocity from
+`z`, `tau`, and `c_t`. Under a simple equal-variance Gaussian model with unused conditioning, the
+optimal expected batch-mean ratio is `pi/2 = 1.5708`; run 021's late value was `1.575406`. This is
+strong evidence to test conditioning use and integrated endpoints before declaring a capacity
+failure.
+
+The current `F_c` does not repeat the bottleneck's old early-projection mistake: it mixes at the
+full 512-dimensional width. Its more credible architectural risks are returning a final
+`LayerNorm` directly as velocity without a learned output head and learning the unconditional
+denoising route while ignoring concatenated `c_t`. Raising present-side `lambda_recon` would be
+inactive under `fc_only`; prediction-side reconstruction is a plausible later test with the now
+honest decoder, but it is not the first diagnostic. Full answer:
+[`OBSERVATIONS.md`](investigation_022/OBSERVATIONS.md).
