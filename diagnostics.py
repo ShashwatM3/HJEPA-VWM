@@ -395,6 +395,7 @@ def coarse_baselines(
     flow_target: Tensor,
     eps_c: Tensor,
     predict_residual: bool = False,
+    flow_source: str = "noise",
 ) -> dict[str, float]:
     """Compare F_c velocity loss against copy and batch-mean baselines (§9.3).
 
@@ -405,10 +406,11 @@ def coarse_baselines(
         current_abstract: (B, 32, 256) current c_t (the conditioning).
         flow_target: (B, 32, 256) the regression target — c_plus normally, or the temporal
             residual Δ = c_{t+k} - c_t when ``predict_residual`` (both detached).
-        eps_c: (B, 32, 256) Gaussian noise used to build z_c (scaled to Δ in residual mode).
+        eps_c: (B, 32, 256) source endpoint (Gaussian noise or present latent).
         predict_residual: investigation_009. When True the copy baseline is "predict ZERO
             residual" (Δ̂=0); otherwise it is "copy c_t forward". Both reduce copy_loss to
             ‖c_t - c_plus‖² = ‖Δ‖², so coarse_vs_copy_ratio stays comparable across runs.
+        flow_source: Source kind. Present mode reports copy in endpoint space.
     Returns:
         Metrics dict with model/copy/batch-mean losses and ratios.
     """
@@ -417,20 +419,147 @@ def coarse_baselines(
         u_target = velocity_target(flow_target, eps_c)
         u_hat = coarse_flow(z_c, tau_c, current_abstract, condition_drop=_no_drop(current_abstract))
         model_loss = flow_matching_loss(u_hat, u_target)
+        endpoint = z_c + (1.0 - tau_c.reshape(-1, 1, 1)) * u_hat
+        shuffled_condition = torch.roll(current_abstract, shifts=1, dims=0)
+        shuffled_velocity = coarse_flow(
+            z_c, tau_c, shuffled_condition, condition_drop=_no_drop(shuffled_condition)
+        )
+        zero_condition = torch.zeros_like(current_abstract)
+        zero_velocity = coarse_flow(
+            z_c, tau_c, zero_condition, condition_drop=_no_drop(zero_condition)
+        )
+        endpoint_shuffled = z_c + (1.0 - tau_c.reshape(-1, 1, 1)) * shuffled_velocity
+        endpoint_zero = z_c + (1.0 - tau_c.reshape(-1, 1, 1)) * zero_velocity
+        endpoint_loss = torch.mean((endpoint - flow_target) ** 2)
+        endpoint_shuffled_loss = torch.mean((endpoint_shuffled - flow_target) ** 2)
+        endpoint_zero_loss = torch.mean((endpoint_zero - flow_target) ** 2)
+        copy_endpoint_loss = torch.mean((eps_c - flow_target) ** 2)
         # "Predict no change": zero residual (velocity -eps) in residual mode, else copy c_t
         # forward. Both give copy_loss = ‖c_t - c_plus‖² = ‖Δ‖² because the eps term cancels.
         copy_velocity = -eps_c if predict_residual else current_abstract - eps_c
-        copy_loss = flow_matching_loss(copy_velocity, u_target)
+        copy_loss = (
+            copy_endpoint_loss
+            if flow_source == "present"
+            else flow_matching_loss(copy_velocity, u_target)
+        )
         batch_mean = flow_target.mean(dim=0, keepdim=True).expand_as(flow_target)
         mean_velocity = batch_mean - eps_c
         mean_loss = flow_matching_loss(mean_velocity, u_target)
+        endpoint_cosine = (
+            1.0
+            - torch.nn.functional.cosine_similarity(
+                endpoint.flatten(1), flow_target.flatten(1), dim=1
+            ).mean()
+        )
+        copy_cosine = (
+            1.0
+            - torch.nn.functional.cosine_similarity(
+                eps_c.flatten(1), flow_target.flatten(1), dim=1
+            ).mean()
+        )
+        true_displacement = torch.linalg.vector_norm((flow_target - eps_c).flatten(1), dim=1)
+        pred_displacement = torch.linalg.vector_norm((endpoint - eps_c).flatten(1), dim=1)
     return {
         "coarse_model_loss": float(model_loss.item()),
         "coarse_copy_loss": float(copy_loss.item()),
         "coarse_batch_mean_loss": float(mean_loss.item()),
         "coarse_vs_copy_ratio": float((model_loss / copy_loss.clamp_min(1e-8)).item()),
         "coarse_vs_batch_mean_ratio": float((model_loss / mean_loss.clamp_min(1e-8)).item()),
+        "coarse_endpoint_mse": float(endpoint_loss.item()),
+        "coarse_endpoint_cosine_distance": float(endpoint_cosine.item()),
+        "coarse_copy_endpoint_mse": float(copy_endpoint_loss.item()),
+        "coarse_copy_endpoint_cosine_distance": float(copy_cosine.item()),
+        "coarse_endpoint_gain_over_copy": float((copy_endpoint_loss - endpoint_loss).item()),
+        "coarse_endpoint_vs_copy_ratio": float(
+            (endpoint_loss / copy_endpoint_loss.clamp_min(1e-8)).item()
+        ),
+        "coarse_endpoint_shuffled_condition_mse": float(endpoint_shuffled_loss.item()),
+        "coarse_endpoint_zero_condition_mse": float(endpoint_zero_loss.item()),
+        "coarse_condition_shuffle_degradation": float(
+            (endpoint_shuffled_loss - endpoint_loss).item()
+        ),
+        "coarse_condition_zero_degradation": float((endpoint_zero_loss - endpoint_loss).item()),
+        "coarse_true_displacement_norm": float(true_displacement.mean().item()),
+        "coarse_predicted_displacement_norm": float(pred_displacement.mean().item()),
+        "flow_source_present": float(flow_source == "present"),
     }
+
+
+def flow_euler_rollouts(
+    coarse_flow: nn.Module,
+    source: Tensor,
+    future: Tensor,
+    condition: Tensor,
+    copy_present: Tensor,
+    steps: tuple[int, ...] = (1, 2, 4, 8),
+) -> dict[str, float]:
+    """Evaluate Euler rollouts from a configured source against present-copy control.
+
+    Args:
+        coarse_flow: F_c velocity predictor.
+        source: (B, N_c, D_c) present or Gaussian source endpoint.
+        future: (B, N_c, D_c) fixed-bottleneck future target.
+        condition: (B, N_c, D_c) explicit present condition, normally identical to present.
+        copy_present: (B, N_c, D_c) fixed present latent for the copy baseline.
+        steps: Euler function-evaluation counts.
+    Returns:
+        Flat rollout metrics for normal, zero, and batch-shuffled conditions.
+    """
+    _require_torch()
+    results: dict[str, float] = {}
+    copy_loss = torch.mean((copy_present - future) ** 2)
+    batch_mean = future.mean(dim=0, keepdim=True).expand_as(future)
+    batch_mean_loss = torch.mean((batch_mean - future) ** 2)
+    true_displacement = future - source
+    true_norm = torch.linalg.vector_norm(true_displacement.flatten(1), dim=1)
+    conditions = {
+        "normal": condition,
+        "zero": torch.zeros_like(condition),
+        "shuffled": torch.roll(condition, shifts=1, dims=0),
+    }
+    with torch.no_grad():
+        for count in steps:
+            for label, active_condition in conditions.items():
+                state = source.clone()
+                dt = 1.0 / count
+                for index in range(count):
+                    tau = torch.full(
+                        (source.shape[0],),
+                        index / count,
+                        device=source.device,
+                        dtype=source.dtype,
+                    )
+                    velocity = coarse_flow(
+                        state,
+                        tau,
+                        active_condition,
+                        condition_drop=_no_drop(active_condition),
+                    )
+                    state = state + dt * velocity
+                error = torch.mean((state - future) ** 2)
+                cosine = (
+                    1.0
+                    - torch.nn.functional.cosine_similarity(
+                        state.flatten(1), future.flatten(1), dim=1
+                    ).mean()
+                )
+                predicted_displacement = state - source
+                predicted_norm = torch.linalg.vector_norm(predicted_displacement.flatten(1), dim=1)
+                alignment = torch.nn.functional.cosine_similarity(
+                    predicted_displacement.flatten(1), true_displacement.flatten(1), dim=1
+                ).mean()
+                prefix = f"rollout_{count}step_{label}"
+                results[f"{prefix}_endpoint_mse"] = float(error.item())
+                results[f"{prefix}_coarse_to_copy_loss_ratio"] = float(
+                    (error / copy_loss.clamp_min(1e-8)).item()
+                )
+                results[f"{prefix}_endpoint_cosine_distance"] = float(cosine.item())
+                results[f"{prefix}_displacement_norm"] = float(predicted_norm.mean().item())
+                results[f"{prefix}_displacement_alignment"] = float(alignment.item())
+    results["rollout_copy_present_endpoint_mse"] = float(copy_loss.item())
+    results["rollout_batch_mean_endpoint_mse"] = float(batch_mean_loss.item())
+    results["rollout_true_displacement_norm"] = float(true_norm.mean().item())
+    return results
 
 
 def _no_drop(abstract: Tensor) -> Tensor:

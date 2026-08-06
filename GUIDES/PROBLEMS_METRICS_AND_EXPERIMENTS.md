@@ -31,6 +31,9 @@ Implementation sources:
 
 - `present_recon_only=true` → no future clip, `L_flow=0`, no `coarse_*` baselines
 - `predict_residual=true` → copy baseline means “predict zero change” (same ratio semantics)
+- `flow_bottleneck_checkpoint` → one saved-online fixed bottleneck supplies condition/target
+- fixed `flow_source=present|noise` changes only present-vs-Gaussian source; tau/dropout are matched
+- Investigation 20 sets `condition_dropout=0.0` in both arms (no projection/dropout ablation)
 - `recon_residual_target=true` → reconstruction targets use `e - mean(e)` via `FeatureMeanTracker`
 
 **Defaults vs operating values:** `config.py` ships `horizon_k=4`, `lambda_var=0.1`,
@@ -52,6 +55,14 @@ simple baselines:
 coarse_vs_copy_ratio <= 0.70
 coarse_vs_batch_mean_ratio <= 0.50
 ```
+
+Present-source primary metrics are `rollout_{1,2,4,8}step_{normal,zero,shuffled}_*`.
+Every rollout starts strictly from `c_present` and logs endpoint MSE/cosine,
+`coarse_to_copy_loss_ratio`, displacement norm/alignment, plus shared copy-present,
+batch-mean, and true-displacement baselines. Random-tau one-step values are prefixed
+`teacher_forced_random_tau_` because their state contains future-target information and
+must not determine a GO verdict. Use k=16 as the non-overlapping primary experiment;
+k=12 is the overlapping-frame control.
 
 The current story is:
 

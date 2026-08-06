@@ -543,7 +543,7 @@ def runtime_identity() -> dict[str, Any]:
     }
 
 
-def _seed_stream_identity(seed: int) -> dict[str, Any]:
+def _seed_stream_identity(seed: int, *, fixed_flow: bool = False) -> dict[str, Any]:
     """Describe every deterministic seed stream used by the run.
 
     Args:
@@ -551,7 +551,7 @@ def _seed_stream_identity(seed: int) -> dict[str, Any]:
     Returns:
         Explicit data, initialization, training-step, and diagnostic seed contract.
     """
-    return {
+    identity = {
         "base": seed,
         "data_transform": seed,
         "train_order_epoch0": seed,
@@ -560,6 +560,11 @@ def _seed_stream_identity(seed: int) -> dict[str, Any]:
         "training_step_formula": "base*1000003+step",
         "diagnostic": seed * 1_000_003 + 900_001,
     }
+    if fixed_flow:
+        identity["fixed_flow_tau_formula"] = "base*1000003+step+101"
+        identity["fixed_flow_condition_dropout_formula"] = "base*1000003+step+202"
+        identity["fixed_flow_noise_formula"] = "base*1000003+step+303"
+    return identity
 
 
 def optimization_contract(cfg: Config) -> dict[str, Any]:
@@ -690,7 +695,9 @@ def build_run_provenance(
         "config": common_config,
         "encoder_runtime_contract": encoder_runtime_contract,
         "runtime": runtime_identity(),
-        "seed_streams": _seed_stream_identity(cfg.seed),
+        "seed_streams": _seed_stream_identity(
+            cfg.seed, fixed_flow=bool(cfg.train.flow_bottleneck_checkpoint)
+        ),
         "warm_start": warm_start,
     }
     return {

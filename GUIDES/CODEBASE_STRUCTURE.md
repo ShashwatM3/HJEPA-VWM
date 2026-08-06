@@ -33,6 +33,7 @@ HJEPA-VWM/
 ├── drift_probe.py         # Encoder-generic within-video feature-vs-latent drift probe
 ├── rank_probe.py          # Encoder-generic effective-rank probe over the shared cache
 ├── whiten_stats.py        # Encoder/dataset/seed-bound offline whitening statistics
+├── scripts/               # Audited shell entry points for specific experiments/preflights
 ├── tests/                 # Contract and gradient-routing tests
 ├── requirements.txt
 ├── pyproject.toml         # Black + Ruff
@@ -146,6 +147,8 @@ KANBAN evidence.
 | `parse_logs.py` | Parses `step=N {dict}` console lines → structured JSON |
 | `run_history.py` | Pulls full metric history from W&B Public API; `--report` for Phase 1 summaries |
 | `evaluate_checkpoint_diagnostics.py` | Restores current Phase-1 checkpoints through the strict loader and reports paired encoder/live-bottleneck cross-video cosine on one corrected fixed source-diverse batch |
+| `evaluate_noiseless_flow.py` | Runs inference-only present/future slot-alignment and fresh-CoarseFlow validation on a fixed source-unique batch |
+| `scripts/inv020_{preflight,train}_{present,noise}_k16.sh` | Shell-validated zero-condition-dropout Investigation 20 fixed-bottleneck commands |
 | `drift_probe.py` | Encoder-generic within-video detailed/latent drift; strict versioned feature cache; checkpoint EncoderSpec/whitener reconstruction; JSON/PNG plus optional W&B artifact |
 | `rank_probe.py` | Encoder-generic raw/effective rank over the shared strict probe manifest/cache; frame layouts add pre-concatenation per-frame norms/ranks; identity-bearing JSON/plot plus optional W&B artifact |
 | `whiten_stats.py` | Deterministic context-only stats through the same factory/preprocessing; atomic encoder/dataset-bound envelope consumed strictly by training; inspect and optional W&B artifact modes |

@@ -498,14 +498,14 @@ class CoarseFlow(nn.Module):
         self.null_condition = nn.Parameter(torch.zeros(cfg.n_c, cfg.d_c))
         # Issue 2: explicit token-role and slot-identity embeddings. The flow
         # transformer otherwise sees 2*N_c undifferentiated tokens and must infer
-        # from content alone which N_c are the noised future and which N_c are the
+        # from content alone which N_c are the interpolated flow state and which are the
         # c_t conditioning, and which slot index is which. Because the bottleneck
         # slots are LEARNED query slots, slot index carries meaning, so we hand the
         # flow that meaning explicitly:
         #   * slot_pos — a SHARED per-slot code added to both streams, so slot i of
         #     z_c binds to slot i of the conditioning (small-random: identity from
         #     the start, like the bottleneck queries);
-        #   * z_type / cond_type — segment codes marking the noised-future vs.
+        #   * z_type / cond_type — segment codes marking the flow-state vs.
         #     conditioning streams (zero-init: no effect at step 0, an identity start
         #     consistent with the adaLN-Zero gates).
         # All three are learned coordinate systems, so they are held out of weight
@@ -531,7 +531,7 @@ class CoarseFlow(nn.Module):
         coarse flow stays robust without changing the gradient path through `c_t`.
 
         Args:
-            z_c: (B, N_c, D_c) noised future abstract latent.
+            z_c: (B, N_c, D_c) interpolated coarse-flow state.
             tau_c: (B,) flow time.
             abstract: (B, N_c, D_c) current abstract latent c_t.
             condition_drop: Optional (B,) boolean override for dropout tests.

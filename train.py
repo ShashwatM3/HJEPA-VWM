@@ -38,6 +38,7 @@ from diagnostics import (
     coarse_baselines,
     cross_video_cosine,
     effective_rank,
+    flow_euler_rollouts,
     gradient_health,
     partition_decay_params,
     slot_diversity_rank,
@@ -194,9 +195,10 @@ def apply_optimization_scope(
     scope = cfg.train.optimization_scope
     if scope not in {"joint", "fc_only"}:
         raise ValueError(f"Unsupported train.optimization_scope: {scope!r}")
-    trains_representation = scope == "joint"
+    fixed_flow = bool(cfg.train.flow_bottleneck_checkpoint)
+    trains_representation = scope == "joint" and not fixed_flow
     bottleneck.requires_grad_(trains_representation)
-    decoder.requires_grad_(trains_representation)
+    decoder.requires_grad_(scope == "joint")
     coarse_flow.requires_grad_(True)
     bottleneck.train(trains_representation)
     decoder.train(trains_representation)
@@ -210,7 +212,7 @@ def apply_optimization_scope(
         spec for spec in all_specs if any(param.requires_grad for param in spec[1].parameters())
     )
     return OptimizationPlan(
-        scope=scope,
+        scope="fixed_flow" if fixed_flow else scope,
         module_specs=module_specs,
         updates_ema=trains_representation,
     )
@@ -573,6 +575,64 @@ def _cross_video_representation_metrics(detailed: Tensor, abstract: Tensor) -> d
     }
 
 
+def _fixed_flow_forward(
+    encoder: nn.Module,
+    fixed_bottleneck: nn.Module,
+    context_clip: Tensor,
+    target_clip: Tensor,
+    whitener: nn.Module | None = None,
+) -> tuple[Tensor, Tensor, Tensor, Tensor]:
+    """Encode both endpoints with the same frozen saved online bottleneck."""
+    fixed_bottleneck.eval()
+    with torch.no_grad():
+        detailed = encoder(context_clip)
+        target_detailed = encoder(target_clip)
+        if whitener is not None:
+            detailed = whitener.whiten(detailed)
+            target_detailed = whitener.whiten(target_detailed)
+        present = fixed_bottleneck(detailed)
+        future = fixed_bottleneck(target_detailed)
+    return present, future, detailed, target_detailed
+
+
+def _fixed_flow_randomness(
+    reference: Tensor, step: int, cfg: Config, *, sample_noise: bool
+) -> tuple[Tensor, Tensor, Tensor | None]:
+    """Draw matched tau/dropout and an isolated optional Gaussian endpoint."""
+    base_seed = cfg.seed * 1_000_003 + step
+    tau_generator = torch.Generator(device=reference.device).manual_seed(base_seed + 101)
+    dropout_generator = torch.Generator(device=reference.device).manual_seed(base_seed + 202)
+    tau = torch.rand(
+        reference.shape[0], device=reference.device, dtype=reference.dtype, generator=tau_generator
+    )
+    condition_drop = (
+        torch.rand(reference.shape[0], device=reference.device, generator=dropout_generator)
+        < cfg.model.condition_dropout
+    )
+    noise = None
+    if sample_noise:
+        noise_generator = torch.Generator(device=reference.device).manual_seed(base_seed + 303)
+        noise = torch.randn(
+            reference.shape,
+            device=reference.device,
+            dtype=reference.dtype,
+            generator=noise_generator,
+        )
+    return tau, condition_drop, noise
+
+
+def _fixed_flow_training_inputs(
+    present: Tensor, future: Tensor, step: int, cfg: Config
+) -> tuple[Tensor, Tensor, Tensor, Tensor]:
+    """Construct the fixed-arm target/source with matched non-noise randomness."""
+    tau, condition_drop, noise = _fixed_flow_randomness(
+        future, step, cfg, sample_noise=cfg.train.flow_source == "noise"
+    )
+    source = present if cfg.train.flow_source == "present" else noise
+    assert source is not None
+    return future, source, tau, condition_drop
+
+
 def train_step(
     batch: tuple[Tensor, Tensor],
     modules: tuple[nn.Module, nn.Module, nn.Module, nn.Module, nn.Module],
@@ -658,14 +718,22 @@ def train_step(
             flow_loss = abstract.new_zeros(())
         else:
             assert target_clip is not None
-            abstract, target_abstract, detailed, target_detailed = _coarse_forward(
-                encoder,
-                bottleneck,
-                target_bottleneck,
-                context_clip,
-                target_clip,
-                whitener=step_whitener,
-            )
+            if cfg.train.flow_bottleneck_checkpoint:
+                abstract, target_abstract, detailed, target_detailed = _fixed_flow_forward(
+                    encoder, bottleneck, context_clip, target_clip, whitener=step_whitener
+                )
+                flow_target, eps_c, tau_c, condition_drop = _fixed_flow_training_inputs(
+                    abstract, target_abstract, step, cfg
+                )
+            else:
+                abstract, target_abstract, detailed, target_detailed = _coarse_forward(
+                    encoder,
+                    bottleneck,
+                    target_bottleneck,
+                    context_clip,
+                    target_clip,
+                    whitener=step_whitener,
+                )
             if cfg.train.predict_residual:
                 # investigation_009: predict the temporal residual Δ = c_{t+k} - c_t
                 # (both from B_EMA -> purely temporal, fully detached) instead of the full
@@ -674,13 +742,15 @@ def train_step(
                 target_present = target_bottleneck(detailed)  # B_EMA(e_t), detached
                 flow_target, residual_sigma = residual_target(target_abstract, target_present)
                 eps_c = residual_sigma.to(flow_target.dtype) * torch.randn_like(flow_target)
-            else:
+            elif not cfg.train.flow_bottleneck_checkpoint:
                 flow_target = target_abstract
                 eps_c = torch.randn_like(target_abstract)
-            tau_c = torch.rand(target_abstract.shape[0], device=device)
+            if not cfg.train.flow_bottleneck_checkpoint:
+                tau_c = torch.rand(target_abstract.shape[0], device=device)
+                condition_drop = None
             z_c = interpolate(flow_target, eps_c, tau_c)
             u_c = velocity_target(flow_target, eps_c)
-            u_c_hat = coarse_flow(z_c, tau_c, abstract)
+            u_c_hat = coarse_flow(z_c, tau_c, abstract, condition_drop=condition_drop)
             flow_loss = flow_matching_loss(u_c_hat, u_c)
         if residual_recon_active:
             # Residual reconstruction target: fold this batch's frozen context features
@@ -1434,6 +1504,17 @@ def _build_and_init(cfg: Config, device: torch.device, load_encoder: bool = True
     coarse_flow = coarse_flow.to(device)
     decoder = decoder.to(device)
     target_bottleneck.copy_weights_from(bottleneck)
+    if cfg.train.flow_bottleneck_checkpoint:
+        checkpoint = torch.load(
+            cfg.train.flow_bottleneck_checkpoint, map_location="cpu", weights_only=False
+        )
+        state = checkpoint.get("bottleneck")
+        if not isinstance(state, dict):
+            raise ValueError("Fixed-flow checkpoint is missing online bottleneck state.")
+        bottleneck.load_state_dict(state, strict=True)
+        target_bottleneck.copy_weights_from(bottleneck)
+        bottleneck.requires_grad_(False).eval()
+        target_bottleneck.requires_grad_(False).eval()
     return encoder, bottleneck, target_bottleneck, coarse_flow, decoder
 
 
@@ -1696,22 +1777,32 @@ def _run_diagnostics_impl(
         raise RuntimeError("Full diagnostics require a target clip in the batch.")
     target_clip = target_source.to(device, non_blocking=True)
     with torch.no_grad():
-        abstract, target_abstract, detailed, target_detailed = _coarse_forward(
-            encoder,
-            bottleneck,
-            target_bottleneck,
-            context_clip,
-            target_clip,
-            whitener=diag_whitener,
-        )
+        if cfg.train.flow_bottleneck_checkpoint:
+            abstract, target_abstract, detailed, target_detailed = _fixed_flow_forward(
+                encoder, bottleneck, context_clip, target_clip, whitener=diag_whitener
+            )
+        else:
+            abstract, target_abstract, detailed, target_detailed = _coarse_forward(
+                encoder,
+                bottleneck,
+                target_bottleneck,
+                context_clip,
+                target_clip,
+                whitener=diag_whitener,
+            )
         if cfg.train.predict_residual:
             target_present = target_bottleneck(detailed)
             flow_target, residual_sigma = residual_target(target_abstract, target_present)
             eps_c = residual_sigma.to(flow_target.dtype) * torch.randn_like(flow_target)
+        elif cfg.train.flow_bottleneck_checkpoint:
+            flow_target, eps_c, tau_c, _ = _fixed_flow_training_inputs(
+                abstract, target_abstract, 900_001, cfg
+            )
         else:
             flow_target = target_abstract
             eps_c = torch.randn_like(target_abstract)
-        tau_c = torch.rand(target_abstract.shape[0], device=device)
+        if not cfg.train.flow_bottleneck_checkpoint or cfg.train.predict_residual:
+            tau_c = torch.rand(target_abstract.shape[0], device=device)
         z_c = interpolate(flow_target, eps_c, tau_c)
     metrics: dict[str, float] = {}
     metrics["present_recon_only"] = 0.0
@@ -1728,17 +1819,38 @@ def _run_diagnostics_impl(
     metrics["c_plus_std_mean"] = _tgt_var["c_std_mean"]
     metrics["c_plus_std_median"] = _tgt_var["c_std_median"]
     metrics["c_plus_effective_rank"] = effective_rank(target_abstract)["c_effective_rank"]
-    metrics.update(
-        coarse_baselines(
-            coarse_flow,
-            z_c,
-            tau_c,
-            abstract,
-            flow_target,
-            eps_c,
-            predict_residual=cfg.train.predict_residual,
-        )
+    baseline_metrics = coarse_baselines(
+        coarse_flow,
+        z_c,
+        tau_c,
+        abstract,
+        flow_target,
+        eps_c,
+        predict_residual=cfg.train.predict_residual,
+        flow_source=cfg.train.flow_source,
     )
+    if cfg.train.flow_source == "present":
+        metrics.update(
+            {
+                f"teacher_forced_random_tau_{key}": value
+                for key, value in baseline_metrics.items()
+                if key != "flow_source_present"
+            }
+        )
+        metrics["flow_source_present"] = 1.0
+    else:
+        metrics.update(baseline_metrics)
+    if cfg.train.flow_bottleneck_checkpoint:
+        metrics.update(
+            flow_euler_rollouts(
+                coarse_flow,
+                abstract,
+                target_abstract,
+                abstract,
+                abstract,
+                steps=(1, 2, 4, 8),
+            )
+        )
     metrics.update(gradient_health(nn.ModuleList([bottleneck, coarse_flow, decoder])))
     metrics.update(
         reconstruction_readouts(
@@ -1922,6 +2034,8 @@ def _prepare_run(
         build_dataset_identity,
         build_run_provenance,
         load_whitening_envelope,
+        sha256_file,
+        state_dict_hash,
         trainable_state_hash,
     )
 
@@ -2008,6 +2122,16 @@ def _prepare_run(
         warm_start=warm_start,
         frozen_state_hashes=frozen_hashes,
     )
+    provenance["coarse_flow_init_hash"] = state_dict_hash(coarse_flow.state_dict())
+    if cfg.train.flow_bottleneck_checkpoint:
+        provenance["fixed_flow_bottleneck"] = {
+            "checkpoint_sha256": sha256_file(cfg.train.flow_bottleneck_checkpoint),
+            "online_bottleneck_state_hash": state_dict_hash(bottleneck.state_dict()),
+            "used_for": ["c_present", "c_future", "explicit_present_condition"],
+            "frozen": True,
+            "eval_mode": True,
+            "condition_dropout": cfg.model.condition_dropout,
+        }
     return (
         modules,
         optimization,
@@ -2551,6 +2675,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     operator = parser.add_argument_group("operator controls")
     scientific = parser.add_argument_group("scientific hot overrides")
+    inv020 = parser.add_argument_group("Investigation 20 fixed-flow controls")
     scientific.add_argument(
         "--data",
         choices=["ssv2", "ssv2_tiny", "ego4d", "ego4d_tiny"],
@@ -2596,6 +2721,17 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=None,
         help="Select joint B/F_c/D optimization or fixed-representation F_c-only training.",
     )
+    inv020.add_argument("--flow-source", choices=("noise", "present"), default=None)
+    inv020.add_argument("--flow-bottleneck-checkpoint", default=None)
+    inv020.add_argument("--condition-dropout", type=float, default=None)
+    inv020.add_argument("--horizon-k", type=int, default=None)
+    inv020.add_argument("--lambda-var", type=float, default=None)
+    inv020.add_argument("--lambda-cov", type=float, default=None)
+    inv020.add_argument("--lambda-recon", type=float, default=None)
+    inv020.add_argument("--lambda-recon-pred", type=float, default=None)
+    inv020.add_argument("--decoder-dim", type=int, default=None)
+    inv020.add_argument("--decoder-blocks", type=int, default=None)
+    inv020.add_argument("--lr-coarse-flow", type=float, default=None)
     initialization = operator.add_mutually_exclusive_group()
     initialization.add_argument(
         "--resume", default=None, help="Operator override for runtime.resume."
@@ -2633,6 +2769,17 @@ def build_arg_parser() -> argparse.ArgumentParser:
     operator.add_argument("--reset-optimizer", action="store_true")
     operator.add_argument("--allow-dataset-transfer", action="store_true")
     operator.add_argument("--allow-legacy-checkpoint", action="store_true")
+    for option, kwargs in (
+        ("--encoder-revision", {}),
+        ("--encoder-precision", {"choices": ("bf16", "fp32")}),
+        ("--encoder-frame-microbatch", {"type": int}),
+        ("--seed", {"type": int}),
+        ("--steps", {"type": int}),
+        ("--batch-size", {"type": int}),
+        ("--log-every", {"type": int}),
+        ("--diag-every", {"type": int}),
+    ):
+        operator.add_argument(option, default=argparse.SUPPRESS, **kwargs)
     operator.add_argument(
         "--checkpoint-dir",
         type=str,
@@ -2730,6 +2877,17 @@ def finalize_training_config(cfg: Config) -> None:
             "train.global_batch must be greater than 1 because the shuffled-c honesty "
             "diagnostic requires another video."
         )
+    if cfg.train.flow_source not in {"noise", "present"}:
+        raise ValueError("cfg.train.flow_source must be 'noise' or 'present'")
+    if cfg.train.flow_source == "present" and cfg.train.predict_residual:
+        raise ValueError("--flow-source present is incompatible with residual prediction")
+    if cfg.train.flow_source == "present" and not cfg.train.flow_bottleneck_checkpoint:
+        raise ValueError("--flow-source present requires --flow-bottleneck-checkpoint")
+    if (
+        cfg.train.flow_bottleneck_checkpoint
+        and not Path(cfg.train.flow_bottleneck_checkpoint).is_file()
+    ):
+        raise ValueError("--flow-bottleneck-checkpoint must name an existing file")
     if cfg.train.stage1_steps <= 0:
         raise ValueError("train.stage1_steps must be positive")
     if not 0 <= cfg.train.warmup_steps < cfg.train.stage1_steps:
@@ -2909,6 +3067,31 @@ def main() -> None:
         cfg.train.predict_residual = args.temporal_target == "residual"
     if args.optimization_scope is not None:
         cfg.train.optimization_scope = args.optimization_scope
+    overrides = (
+        (args.flow_source, cfg.train, "flow_source"),
+        (args.flow_bottleneck_checkpoint, cfg.train, "flow_bottleneck_checkpoint"),
+        (args.condition_dropout, cfg.model, "condition_dropout"),
+        (args.horizon_k, cfg.train, "horizon_k"),
+        (args.lambda_var, cfg.train, "lambda_var"),
+        (args.lambda_cov, cfg.train, "lambda_cov"),
+        (args.lambda_recon, cfg.train, "lambda_recon"),
+        (args.lambda_recon_pred, cfg.train, "lambda_recon_pred"),
+        (args.decoder_dim, cfg.model, "decoder_dim"),
+        (args.decoder_blocks, cfg.model, "decoder_blocks"),
+        (args.lr_coarse_flow, cfg.train, "lr_coarse_flow"),
+        (getattr(args, "encoder_revision", None), cfg.encoder, "revision"),
+        (getattr(args, "encoder_precision", None), cfg.encoder, "precision"),
+        (getattr(args, "encoder_frame_microbatch", None), cfg.encoder, "frame_microbatch"),
+        (getattr(args, "batch_size", None), cfg.train, "global_batch"),
+        (getattr(args, "steps", None), cfg.train, "max_steps"),
+        (getattr(args, "log_every", None), cfg.train, "log_every"),
+        (getattr(args, "diag_every", None), cfg.train, "diag_every"),
+    )
+    for value, target, field_name in overrides:
+        if value is not None:
+            setattr(target, field_name, value)
+    if getattr(args, "seed", None) is not None:
+        cfg.seed = args.seed
     if args.checkpoint_dir is not None:
         cfg.checkpoint_dir = args.checkpoint_dir
 

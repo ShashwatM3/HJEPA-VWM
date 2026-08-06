@@ -424,6 +424,34 @@ def test_fc_only_provenance_records_explicit_trainability_contract(tmp_path):
     assert resolved["common"]["frozen_state_hashes"] == frozen_hashes
 
 
+@pytest.mark.parametrize("flow_source", ["present", "noise"])
+def test_inv020_fixed_arms_record_zero_condition_dropout(flow_source, tmp_path):
+    """Both Investigation 20 provenance envelopes bind zero condition dropout."""
+    import provenance
+    from config import Config
+
+    cfg = Config()
+    cfg.encoder.precision = "fp32"
+    cfg.encoder.frame_microbatch = 4
+    cfg.data.data_root = str(tmp_path / "data")
+    root = tmp_path / "data" / cfg.data.dataset
+    for split in ("train", "validation"):
+        (root / split).mkdir(parents=True)
+        (root / split / f"{split}.webm").write_bytes(split.encode())
+    cfg.train.flow_source = flow_source
+    cfg.train.flow_bottleneck_checkpoint = "/workspace/ckpt/run60.pt"
+    cfg.model.condition_dropout = 0.0
+    envelope = provenance.build_run_provenance(
+        cfg,
+        encoder_spec=_spec("offline/dino"),
+        dataset_identity={"dataset": "fake", "fingerprint": "d" * 64},
+        trainable_init="i" * 64,
+        whitening_payload_fingerprint=None,
+    )
+    assert envelope["resolved_config"]["model"]["condition_dropout"] == 0.0
+    assert envelope["common"]["config"]["model"]["condition_dropout"] == 0.0
+
+
 def test_checkpoint_provenance_dataset_transfer_drops_only_dataset_fields():
     """The explicit transfer policy permits data changes but retains every other guard."""
     import copy

@@ -175,13 +175,8 @@ def test_cli_keeps_only_seven_scientific_sweep_overrides(
     assert args.d_c == 512
     assert args.bottleneck_mixer_dim == 512
 
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        ["train.py", "--lambda-var", "0.5"],
-    )
-    with pytest.raises(SystemExit):
-        train.parse_args()
+    monkeypatch.setattr(sys, "argv", ["train.py", "--lambda-var", "0.0"])
+    assert train.parse_args().lambda_var == 0.0
     monkeypatch.setattr(
         sys,
         "argv",

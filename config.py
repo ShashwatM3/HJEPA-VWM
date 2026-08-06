@@ -273,6 +273,15 @@ class TrainConfig:
     # zero residual" (copy_loss = ‖Δ‖²), so coarse_vs_copy_ratio stays directly comparable
     # to the full-latent runs. Default False -> full-latent prediction, byte-identical.
     predict_residual: bool = False
+    # Rectified-flow source endpoint. ``noise`` is the historical, unchanged default.
+    # ``present`` uses the detached present target-bottleneck latent as x_0 and the
+    # detached future target-bottleneck latent as x_1. It is intentionally incompatible
+    # with predict_residual, which already changes the target semantics.
+    flow_source: str = "noise"
+    # Optional experimental fixed-coordinate contract. Loads only the saved ONLINE
+    # bottleneck and freezes it for condition and future target. Empty preserves the
+    # complete historical noise-path behavior.
+    flow_bottleneck_checkpoint: str = ""
     # Fixed offline whitening of selected frozen features (investigation_014 /
     # tmp/changes_bottleneck <2>). The original V-JEPA rank probe showed `e` is
     # strongly anisotropic (pooled entropy rank ~193/1024 with a long low-energy tail), so the bottleneck

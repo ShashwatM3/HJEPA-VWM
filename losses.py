@@ -50,30 +50,34 @@ def as_target(x: Tensor) -> Tensor:
     return x.detach()
 
 
-def interpolate(z_target: Tensor, eps: Tensor, tau: Tensor) -> Tensor:
-    """Build the rectified-flow interpolation point.
+def interpolate(z_target: Tensor, source: Tensor, tau: Tensor) -> Tensor:
+    """Build a rectified-flow interpolation point between two endpoints.
 
     Args:
         z_target: (B, N, D) stop-gradient target latent.
-        eps: (B, N, D) Gaussian noise sample.
+        source: (B, N, D) source endpoint (Gaussian noise or a present latent).
         tau: (B,) flow time, broadcast to (B, 1, 1).
     Returns:
-        z: (B, N, D) interpolated latent `(1 - tau) * eps + tau * z_target`.
+        z: (B, N, D) interpolated latent `(1 - tau) * source + tau * z_target`.
     """
+    if source.shape != z_target.shape:
+        raise ValueError(f"Flow endpoint shapes differ: {source.shape} != {z_target.shape}")
     tau_b = _broadcast_tau(tau, z_target)
-    return (1.0 - tau_b) * eps + tau_b * z_target
+    return (1.0 - tau_b) * source + tau_b * z_target
 
 
-def velocity_target(z_target: Tensor, eps: Tensor) -> Tensor:
+def velocity_target(z_target: Tensor, source: Tensor) -> Tensor:
     """Compute the rectified-flow target velocity.
 
     Args:
         z_target: (B, N, D) future latent target.
-        eps: (B, N, D) Gaussian noise source.
+        source: (B, N, D) source endpoint.
     Returns:
-        u: (B, N, D) velocity target `z_target - eps` (constant along the trajectory).
+        u: (B, N, D) velocity target `z_target - source` (constant along the trajectory).
     """
-    return z_target - eps
+    if source.shape != z_target.shape:
+        raise ValueError(f"Flow endpoint shapes differ: {source.shape} != {z_target.shape}")
+    return z_target - source
 
 
 def residual_target(

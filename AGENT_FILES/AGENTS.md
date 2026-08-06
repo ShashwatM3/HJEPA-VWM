@@ -234,6 +234,7 @@ Root implementation files:
 | `parse_logs.py` | Parses `step=N {dict}` console logs into JSON. |
 | `run_history.py` | W&B Public API export/report helper for logged metrics. |
 | `evaluate_checkpoint_diagnostics.py` | Narrow offline evaluator for current unwhitened v2 checkpoints: paired encoder/live-online-bottleneck cross-video cosine on the corrected fixed source-diverse batch, repeated for determinism; no optimizer or training-state mutation. |
+| `evaluate_noiseless_flow.py` | Inference-only fixed-bottleneck validation for present/future slot alignment and a freshly initialized CoarseFlow at k=12/16. |
 | `drift_probe.py` | Offline within-video temporal drift probe: frozen-encoder drift vs bottleneck-latent drift over a pinned probe set, evaluated from checkpoints. |
 | `rank_probe.py` | Encoder-generic raw/effective-rank probe over the strict drift manifest/feature cache, including pre-concatenation frame-layout norms/ranks. |
 | `whiten_stats.py` | Deterministic context-only fp64 statistics through the same encoder/data seam; writes a strict encoder/dataset-bound eigensystem envelope. |
@@ -610,6 +611,15 @@ L_flow = mean((u_c_hat - u_c)^2)
 
 Gradient from `L_flow` reaches `B` through `c_t` and reaches `F_c`. It does not
 reach the frozen encoder, `B_EMA`, `e_plus`, or `c_plus`.
+
+`cfg.train.flow_source` gates the source endpoint. Without a
+`flow_bottleneck_checkpoint`, the default `noise` path retains its historical online-B,
+EMA-target, optimizer, RNG, and EMA behavior. With a checkpoint, either source uses the
+same saved online bottleneck, frozen in eval mode and under `no_grad`, for `c_present`,
+`c_future`, and the explicit condition. Present uses `c_present` as its source; noise
+uses an isolated Gaussian stream. Tau and condition-dropout have purpose-specific RNG
+streams so non-noise randomness remains matched. Investigation 20 uses
+`condition_dropout=0.0` in both fixed arms; the repository default remains `0.10`.
 
 ### Residual prediction mode
 

@@ -73,9 +73,7 @@ def test_finalize_rejects_invalid_bottleneck_internal_width(width: int) -> None:
     ("field", "value", "match"),
     [("n_c", 0, "n_c"), ("d_c", 0, "d_c"), ("d_c", 250, "f_c_heads")],
 )
-def test_finalize_rejects_invalid_external_latent_shape(
-    field: str, value: int, match: str
-) -> None:
+def test_finalize_rejects_invalid_external_latent_shape(field: str, value: int, match: str) -> None:
     """Reject empty shapes and widths incompatible with coarse-flow attention."""
     config = importlib.import_module("config")
     train = importlib.import_module("train")
@@ -121,9 +119,7 @@ def test_phase1_modules_support_external_latent_shape_grid(n_c: int, d_c: int) -
     cfg.model.decoder_blocks = 1
     cfg.model.decoder_heads = 8
 
-    _, bottleneck, _, coarse_flow, decoder = models.build_phase1_modules(
-        cfg, load_encoder=False
-    )
+    _, bottleneck, _, coarse_flow, decoder = models.build_phase1_modules(cfg, load_encoder=False)
     detailed = torch.randn(1, cfg.model.n_ctx, cfg.model.d_e)
     abstract = bottleneck(detailed)
     predicted = coarse_flow(
@@ -168,6 +164,8 @@ def test_config_exposes_locked_phase1_constants(monkeypatch):
     assert cfg.train.sigreg_warmup_steps == 2_000
     assert cfg.train.recon_loss_mode == "cosine"
     assert cfg.train.present_recon_only is False
+    assert cfg.train.flow_source == "noise"
+    assert cfg.train.flow_bottleneck_checkpoint == ""
     assert cfg.train.var_floor_std_target == 1.0
     assert cfg.data.data_root == "/tmp/jepa-data"
     assert cfg.data.full_root == "/tmp/jepa-data/ssv2"
