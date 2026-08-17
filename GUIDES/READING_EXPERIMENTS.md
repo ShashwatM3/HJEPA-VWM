@@ -35,9 +35,10 @@ python run_history.py --run <run_id> --report
 python run_history.py --run <run_id> --format parse_logs -o logs/<name>/output.log
 ```
 
-Diagnostic metrics (`c_*`, `coarse_*`, `L_recon_*`) log every `diag_every` steps (default 500).
-Training metrics (`L_flow`, `L_rollout`, `rollout_2step_*`, `grad_*`) log every
-`log_every` steps (default 50).
+Core diagnostic metrics (`c_*`, prediction baselines, active `L_recon_*`) log every
+`diag_every` steps (default 500). Training health and the fixed rollout schema
+(`loss/rollout`, `rollout/*`) log every `log_every` steps (default 50). Internal
+debug variants are not forwarded to W&B.
 
 ## How to use — humans
 

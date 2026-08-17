@@ -103,17 +103,26 @@ def test_train_step_adds_ramped_rollout_loss_and_updates_only_fc():
         batch, modules, optimizer, step=750, cfg=cfg, device=torch.device("cpu")
     )
 
-    assert metrics["lambda_rollout_effective"] == pytest.approx(0.1)
-    assert metrics["weighted_rollout_loss"] == pytest.approx(0.1 * metrics["L_rollout"])
-    assert metrics["loss"] == pytest.approx(metrics["L_flow"] + metrics["weighted_rollout_loss"])
-    assert metrics["rollout_2step_endpoint_mse"] == pytest.approx(metrics["L_rollout"])
-    if metrics["rollout_2step_copy_ratio_valid"]:
-        assert metrics["rollout_2step_copy_ratio"] == pytest.approx(
-            metrics["L_rollout"] / metrics["rollout_2step_copy_mse"]
-        )
+    assert metrics["rollout/lambda_effective"] == pytest.approx(0.1)
+    assert metrics["loss"] == pytest.approx(
+        metrics["L_flow"] + 0.1 * metrics["loss/rollout"]
+    )
+    if metrics["rollout/target_displacement_valid"]:
+        assert torch.isfinite(torch.tensor(metrics["rollout/copy_ratio"]))
+        assert torch.isfinite(torch.tensor(metrics["rollout/displacement_cosine"]))
+        assert torch.isfinite(torch.tensor(metrics["rollout/displacement_norm_ratio"]))
     else:
-        assert metrics["rollout_2step_copy_mse"] <= 1e-8
-        assert torch.isnan(torch.tensor(metrics["rollout_2step_copy_ratio"]))
+        assert torch.isnan(torch.tensor(metrics["rollout/copy_ratio"]))
+        assert torch.isnan(torch.tensor(metrics["rollout/displacement_cosine"]))
+        assert torch.isnan(torch.tensor(metrics["rollout/displacement_norm_ratio"]))
+    assert {key for key in metrics if key == "loss/rollout" or key.startswith("rollout/")} == {
+        "loss/rollout",
+        "rollout/lambda_effective",
+        "rollout/copy_ratio",
+        "rollout/displacement_cosine",
+        "rollout/displacement_norm_ratio",
+        "rollout/target_displacement_valid",
+    }
     assert all(parameter.grad is None for parameter in bottleneck.parameters())
     assert all(parameter.grad is None for parameter in target_bottleneck.parameters())
     assert all(parameter.grad is None for parameter in decoder.parameters())
@@ -139,9 +148,60 @@ def test_zero_weight_does_not_execute_rollout_forwards(monkeypatch):
         batch, modules, optimizer, step=0, cfg=cfg, device=torch.device("cpu")
     )
 
-    assert metrics["L_rollout"] == 0.0
-    assert metrics["lambda_rollout_effective"] == 0.0
-    assert metrics["weighted_rollout_loss"] == 0.0
+    assert metrics["loss/rollout"] == 0.0
+    assert metrics["rollout/lambda_effective"] == 0.0
+    assert metrics["rollout/copy_ratio"] == 0.0
+
+
+def test_wandb_schema_keeps_only_decision_metrics_and_fixed_rollout_keys():
+    """W&B excludes derived/debug rollout variants and dynamic evaluation keys."""
+    train = importlib.import_module("train")
+    cfg, _, _ = _fixed_present_bundle()
+    metrics = {
+        "loss": 2.0,
+        "L_flow": 1.0,
+        "lr_mult": 0.5,
+        "grad_norm": 3.0,
+        "grad_skipped": 0.0,
+        "grad_has_nan": 0.0,
+        "instability_warn": 0.0,
+        "agc_Fc_clipped": 2.0,
+        "agc_Fc_max_ratio": 4.0,
+        "c_std_mean": 0.8,
+        "c_cross_video_cosine": 0.2,
+        "c_effective_rank": 7.0,
+        "loss/rollout": 0.9,
+        "rollout/lambda_effective": 0.1,
+        "rollout/copy_ratio": 0.7,
+        "rollout/displacement_cosine": 0.6,
+        "rollout/displacement_norm_ratio": 0.8,
+        "rollout/target_displacement_valid": 1.0,
+        "weighted_rollout_loss": 0.09,
+        "rollout_2step_normal_endpoint_mse": 0.9,
+        "rollout_first_step_displacement_norm": 1.2,
+        "grad_param_count": 123.0,
+    }
+
+    selected = train._select_wandb_metrics(metrics, cfg)
+
+    assert selected == {
+        key: value
+        for key, value in metrics.items()
+        if key
+        not in {
+            "weighted_rollout_loss",
+            "rollout_2step_normal_endpoint_mse",
+            "rollout_first_step_displacement_norm",
+            "grad_param_count",
+        }
+    }
+    assert {key for key in selected if key.startswith("rollout/")} == {
+        "rollout/lambda_effective",
+        "rollout/copy_ratio",
+        "rollout/displacement_cosine",
+        "rollout/displacement_norm_ratio",
+        "rollout/target_displacement_valid",
+    }
 
 
 def test_rollout_config_requires_fixed_present_fc_only_and_valid_ramp(tmp_path):

@@ -940,9 +940,21 @@ Gradient and stability:
 - `grad_skipped`: whether the optimizer step (and joint-scope EMA update) was skipped.
 - `instability_warn`: `grad_norm` and `L_flow` are both above warning
   thresholds.
-- `agc_*`: module-level AGC ratios and clipped tensor counts.
-- `grad_global_norm_postclip`, `grad_has_nan`, `grad_param_count`: diagnostic
-  pass gradient health.
+- W&B keeps `agc_*_clipped` and `agc_*_max_ratio` only for modules that can train
+  in the selected mode. The boolean clipped variants are derivable and omitted.
+- `grad_has_nan` is the diagnostic-pass non-finite guard. The post-clip norm and
+  gradient-bearing parameter count remain available internally but are not sent
+  to W&B because `grad_norm` is the actionable magnitude and parameter count is
+  fixed by configuration.
+
+W&B logging uses `_select_wandb_metrics`, a fixed allowlist at the logging boundary.
+Rich helper dictionaries still support local tests and resource reports, but dynamic
+per-step/per-condition rollout keys and redundant scalar variants never become W&B
+series. The differentiable intervention logs `loss/rollout`,
+`rollout/lambda_effective`, `rollout/copy_ratio`,
+`rollout/displacement_cosine`, and `rollout/displacement_norm_ratio`. A single
+`rollout/target_displacement_valid` flag marks whether the target displacement is
+nonzero enough to interpret either ratio or the displacement cosine.
 
 Offline probes (not part of the training loop):
 

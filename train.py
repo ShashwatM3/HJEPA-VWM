@@ -719,15 +719,12 @@ def train_step(
     rollout_scale = 0.0
     weighted_rollout_loss = torch.zeros((), device=device)
     rollout_metrics = {
-        "rollout_2step_endpoint_mse": 0.0,
-        "rollout_2step_copy_ratio": 0.0,
-        "rollout_2step_copy_ratio_valid": 0.0,
-        "rollout_2step_copy_mse": 0.0,
-        "rollout_2step_displacement_norm": 0.0,
-        "rollout_2step_target_displacement_norm": 0.0,
-        "rollout_2step_displacement_cosine": 0.0,
-        "rollout_first_step_displacement_norm": 0.0,
-        "rollout_second_step_displacement_norm": 0.0,
+        "loss/rollout": 0.0,
+        "rollout/lambda_effective": 0.0,
+        "rollout/copy_ratio": 0.0,
+        "rollout/displacement_cosine": 0.0,
+        "rollout/displacement_norm_ratio": 0.0,
+        "rollout/target_displacement_valid": 0.0,
     }
     if residual_recon_active and mean_tracker is None:
         raise RuntimeError(
@@ -794,8 +791,8 @@ def train_step(
             u_c_hat = coarse_flow(z_c, tau_c, abstract, condition_drop=condition_drop)
             flow_loss = flow_matching_loss(u_c_hat, u_c)
             if cfg.train.lambda_rollout > 0.0:
-                rollout_endpoint, first_displacement, second_displacement = (
-                    two_step_rollout_endpoint(coarse_flow, abstract, abstract)
+                rollout_endpoint, _, _ = two_step_rollout_endpoint(
+                    coarse_flow, abstract, abstract
                 )
                 rollout_loss = torch.mean((rollout_endpoint - target_abstract) ** 2)
                 rollout_scale = linear_ramp_scale(step, cfg.train.rollout_ramp_steps)
@@ -803,55 +800,40 @@ def train_step(
                 predicted_displacement = rollout_endpoint - abstract
                 target_displacement = target_abstract - abstract
                 copy_mse = torch.mean(target_displacement**2)
-                copy_ratio_valid = bool(copy_mse.detach().float().item() > 1e-8)
+                target_norm = torch.linalg.vector_norm(target_displacement.flatten(1), dim=1).mean()
+                predicted_norm = torch.linalg.vector_norm(
+                    predicted_displacement.flatten(1), dim=1
+                ).mean()
+                target_displacement_valid = bool(copy_mse.detach().float().item() > 1e-8)
                 rollout_metrics = {
-                    "rollout_2step_endpoint_mse": float(rollout_loss.detach().float().item()),
-                    "rollout_2step_copy_ratio": (
+                    "loss/rollout": float(rollout_loss.detach().float().item()),
+                    "rollout/lambda_effective": cfg.train.lambda_rollout * rollout_scale,
+                    "rollout/copy_ratio": (
                         float((rollout_loss / copy_mse).detach().float().item())
-                        if copy_ratio_valid
+                        if target_displacement_valid
                         else float("nan")
                     ),
-                    "rollout_2step_copy_ratio_valid": float(copy_ratio_valid),
-                    "rollout_2step_copy_mse": float(copy_mse.detach().float().item()),
-                    "rollout_2step_displacement_norm": float(
-                        torch.linalg.vector_norm(predicted_displacement.flatten(1), dim=1)
-                        .mean()
-                        .detach()
-                        .float()
-                        .item()
-                    ),
-                    "rollout_2step_target_displacement_norm": float(
-                        torch.linalg.vector_norm(target_displacement.flatten(1), dim=1)
-                        .mean()
-                        .detach()
-                        .float()
-                        .item()
-                    ),
-                    "rollout_2step_displacement_cosine": float(
-                        torch.nn.functional.cosine_similarity(
-                            predicted_displacement.flatten(1),
-                            target_displacement.flatten(1),
-                            dim=1,
+                    "rollout/displacement_cosine": (
+                        float(
+                            torch.nn.functional.cosine_similarity(
+                                predicted_displacement.flatten(1),
+                                target_displacement.flatten(1),
+                                dim=1,
+                            )
+                            .mean()
+                            .detach()
+                            .float()
+                            .item()
                         )
-                        .mean()
-                        .detach()
-                        .float()
-                        .item()
+                        if target_displacement_valid
+                        else float("nan")
                     ),
-                    "rollout_first_step_displacement_norm": float(
-                        torch.linalg.vector_norm(first_displacement.flatten(1), dim=1)
-                        .mean()
-                        .detach()
-                        .float()
-                        .item()
+                    "rollout/displacement_norm_ratio": (
+                        float((predicted_norm / target_norm).detach().float().item())
+                        if target_displacement_valid
+                        else float("nan")
                     ),
-                    "rollout_second_step_displacement_norm": float(
-                        torch.linalg.vector_norm(second_displacement.flatten(1), dim=1)
-                        .mean()
-                        .detach()
-                        .float()
-                        .item()
-                    ),
+                    "rollout/target_displacement_valid": float(target_displacement_valid),
                 }
         if residual_recon_active:
             # Residual reconstruction target: fold this batch's frozen context features
@@ -996,9 +978,6 @@ def train_step(
     return {
         "loss": float(loss.detach().float().item()),
         "L_flow": float(flow_loss.detach().float().item()),
-        "L_rollout": float(rollout_loss.detach().float().item()),
-        "lambda_rollout_effective": cfg.train.lambda_rollout * rollout_scale,
-        "weighted_rollout_loss": float(weighted_rollout_loss.detach().float().item()),
         "L_var": float(var_loss.detach().float().item()),
         "L_cov": float(cov_loss.detach().float().item()),
         "L_slot": float(slot_loss.detach().float().item()),
@@ -2498,6 +2477,80 @@ def run_resource_preflight(
     return report
 
 
+_WANDB_CORE_KEYS = frozenset(
+    {
+        "loss",
+        "L_flow",
+        "lr_mult",
+        "grad_norm",
+        "grad_skipped",
+        "grad_has_nan",
+        "instability_warn",
+        "agc_Fc_clipped",
+        "agc_Fc_max_ratio",
+        "c_std_mean",
+        "c_cross_video_cosine",
+        "c_effective_rank",
+        "coarse_copy_loss",
+        "coarse_vs_copy_ratio",
+        "coarse_vs_batch_mean_ratio",
+        "coarse_condition_shuffle_degradation",
+        "teacher_forced_random_tau_coarse_copy_loss",
+        "teacher_forced_random_tau_coarse_vs_copy_ratio",
+        "teacher_forced_random_tau_coarse_vs_batch_mean_ratio",
+        "teacher_forced_random_tau_coarse_condition_shuffle_degradation",
+        "loss/rollout",
+        "rollout/lambda_effective",
+        "rollout/copy_ratio",
+        "rollout/displacement_cosine",
+        "rollout/displacement_norm_ratio",
+        "rollout/target_displacement_valid",
+    }
+)
+
+
+def _select_wandb_metrics(metrics: dict[str, float], cfg: Config) -> dict[str, float]:
+    """Return the fixed decision-oriented W&B metric schema.
+
+    Training and diagnostic helpers retain richer internal readouts for tests and
+    local resource reports. W&B receives only metrics that decide optimization
+    health, representation health, baseline performance, or an active objective.
+
+    Args:
+        metrics: Combined train-step and optional fixed-batch diagnostic scalars.
+        cfg: Resolved run configuration used to select active-objective metrics.
+    Returns:
+        A stable subset with no dynamically constructed W&B keys.
+    """
+    selected_keys = set(_WANDB_CORE_KEYS)
+    if not cfg.train.flow_bottleneck_checkpoint:
+        selected_keys.add("c_plus_effective_rank")
+    if cfg.train.optimization_scope == "joint":
+        selected_keys.update({"agc_B_clipped", "agc_B_max_ratio"})
+    if cfg.train.lambda_var > 0.0:
+        selected_keys.add("L_var")
+    if cfg.train.lambda_cov > 0.0:
+        selected_keys.add("L_cov")
+    if cfg.train.lambda_slot > 0.0:
+        selected_keys.add("L_slot")
+    if cfg.train.lambda_sigreg > 0.0:
+        selected_keys.update({"L_sigreg", "sigreg_scale"})
+    if cfg.train.lambda_recon > 0.0:
+        selected_keys.update(
+            {
+                "L_recon",
+                "recon_scale",
+                "L_recon_present",
+                "L_recon_shuffled_c",
+                "agc_D_clipped",
+                "agc_D_max_ratio",
+            }
+        )
+    if cfg.train.lambda_recon_pred > 0.0:
+        selected_keys.update({"L_recon_pred", "recon_scale", "L_recon_cplus", "L_recon_chat"})
+    return {key: metrics[key] for key in selected_keys if key in metrics}
+
+
 def run_training(
     cfg: Config,
     steps: int,
@@ -2658,7 +2711,7 @@ def run_training(
         if wandb is None:
             return
         try:
-            wandb.log(metrics, step=current_step)
+            wandb.log(_select_wandb_metrics(metrics, cfg), step=current_step)
         except Exception as exc:  # pragma: no cover - network/auth dependent
             if require_wandb:
                 raise RuntimeError(f"Required W&B logging failed: {exc}") from exc

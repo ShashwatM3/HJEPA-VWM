@@ -16,15 +16,16 @@ This file defines the metrics those cycles reference.
 
 | Where | Cadence | What logs |
 |---|---|---|
-| `train.train_step` | every `log_every` steps (default **50**) | training losses (`L_flow`, `L_var`, …), `grad_norm`, `grad_skipped`, AGC ratios |
-| `train.run_diagnostics` | every `diag_every` steps (default **500**) | representation health, coarse baselines, reconstruction readouts, `grad_has_nan` |
+| `train.train_step` | every `log_every` steps (default **50**) | active losses, LR, gradient/AGC health, instability, and intervention metrics |
+| `train.run_diagnostics` | every `diag_every` steps (default **500**) | core representation health, prediction baselines, active reconstruction readouts, and `grad_has_nan` |
 
 Implementation sources:
 
 - **Representation + baselines:** `diagnostics.py` (`variance_stats`, `cross_video_cosine`,
   `effective_rank`, `slot_diversity_rank`, `attention_entropy`, `coarse_baselines`,
   `reconstruction_readouts`, `gradient_health`)
-- **Training step:** `train.py` (`train_step` return dict → W&B via `wandb.log`)
+- **Training step:** `train.py` (`train_step` return dict → fixed `_select_wandb_metrics`
+  allowlist → `wandb.log`)
 - **CLI export:** `run_history.py` lists `CORE_METRICS` and `DIAG_METRICS` for API pulls
 
 **Mode flags (read config first):**
@@ -58,24 +59,17 @@ coarse_vs_copy_ratio <= 0.70
 coarse_vs_batch_mean_ratio <= 0.50
 ```
 
-Present-source primary metrics are `rollout_{1,2,4,8}step_{normal,zero,shuffled}_*`.
-Every rollout starts strictly from `c_present` and logs endpoint MSE/cosine,
-`coarse_to_copy_loss_ratio`, displacement norm/alignment, plus shared copy-present,
-batch-mean, and true-displacement baselines. Random-tau one-step values are prefixed
-`teacher_forced_random_tau_` because their state contains future-target information and
-must not determine a GO verdict. Use k=16 as the non-overlapping primary experiment;
-k=12 is the overlapping-frame control.
-
-The differentiable training rollout logs every `log_every` steps under distinct
-`rollout_2step_*` keys. `L_rollout` and `rollout_2step_endpoint_mse` are the same raw
-endpoint MSE; `weighted_rollout_loss` is the term actually added after multiplying by
-`lambda_rollout_effective`. The copy ratio divides that MSE by
-`rollout_2step_copy_mse = MSE(c_present,c_future)` in the same tensor space and
-reduction. If the denominator is at most `1e-8`, the ratio is explicitly `NaN` and
-`rollout_2step_copy_ratio_valid=0`; never interpret or average that invalid ratio.
-Displacement norm/cosine compare the generated endpoint displacement with the true
-present-to-future displacement. First- and second-step norms expose where motion is
-being added.
+The internal fixed-batch evaluator can still compute multi-step normal/zero/shuffled
+rollout variants for local diagnosis, but those dynamically constructed keys are not
+W&B series. The differentiable treatment itself supplies the decision metrics needed
+for this experiment every `log_every` steps: `loss/rollout`,
+`rollout/lambda_effective`, `rollout/copy_ratio`,
+`rollout/displacement_cosine`, and `rollout/displacement_norm_ratio`.
+`rollout/target_displacement_valid=0` means the present-to-future displacement is too
+small to divide by or align against; both ratios and the displacement cosine are then
+`NaN` and must not be interpreted or averaged. Random-tau baseline values retain
+the `teacher_forced_random_tau_` prefix because their state contains future-target
+information and cannot determine a GO verdict.
 
 The current story is:
 
