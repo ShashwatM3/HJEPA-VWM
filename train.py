@@ -122,6 +122,33 @@ def linear_ramp_scale(step: int, warmup_steps: int) -> float:
     return min(1.0, max(0.0, step / warmup_steps))
 
 
+def two_step_rollout_endpoint(
+    coarse_flow: nn.Module, present: Tensor, condition: Tensor
+) -> tuple[Tensor, Tensor, Tensor]:
+    """Integrate two differentiable Euler steps from a present coarse latent.
+
+    Both model calls and the generated midpoint remain in the autograd graph. The
+    future target is deliberately absent from this helper so it cannot leak into a
+    generated rollout state.
+
+    Args:
+        coarse_flow: Existing velocity predictor F_c.
+        present: (B, N_c, D_c) detached fixed-bottleneck present endpoint.
+        condition: (B, N_c, D_c) detached fixed-bottleneck present condition.
+    Returns:
+        Endpoint, first half-step displacement, and second half-step displacement,
+        each (B, N_c, D_c).
+    """
+    batch_size = present.shape[0]
+    tau_zero = torch.zeros(batch_size, device=present.device, dtype=present.dtype)
+    no_drop = torch.zeros(batch_size, device=present.device, dtype=torch.bool)
+    first_displacement = 0.5 * coarse_flow(present, tau_zero, condition, condition_drop=no_drop)
+    midpoint = present + first_displacement
+    tau_half = torch.full((batch_size,), 0.5, device=present.device, dtype=present.dtype)
+    second_displacement = 0.5 * coarse_flow(midpoint, tau_half, condition, condition_drop=no_drop)
+    return midpoint + second_displacement, first_displacement, second_displacement
+
+
 @dataclass(frozen=True)
 class OptimizationPlan:
     """Resolve the complete trainability contract behind one configuration field.
@@ -688,6 +715,20 @@ def train_step(
             and cfg.train.lambda_recon_pred > 0.0
         )
     )
+    rollout_loss = torch.zeros((), device=device)
+    rollout_scale = 0.0
+    weighted_rollout_loss = torch.zeros((), device=device)
+    rollout_metrics = {
+        "rollout_2step_endpoint_mse": 0.0,
+        "rollout_2step_copy_ratio": 0.0,
+        "rollout_2step_copy_ratio_valid": 0.0,
+        "rollout_2step_copy_mse": 0.0,
+        "rollout_2step_displacement_norm": 0.0,
+        "rollout_2step_target_displacement_norm": 0.0,
+        "rollout_2step_displacement_cosine": 0.0,
+        "rollout_first_step_displacement_norm": 0.0,
+        "rollout_second_step_displacement_norm": 0.0,
+    }
     if residual_recon_active and mean_tracker is None:
         raise RuntimeError(
             "cfg.train.recon_residual_target is True but no mean_tracker was passed to "
@@ -752,6 +793,66 @@ def train_step(
             u_c = velocity_target(flow_target, eps_c)
             u_c_hat = coarse_flow(z_c, tau_c, abstract, condition_drop=condition_drop)
             flow_loss = flow_matching_loss(u_c_hat, u_c)
+            if cfg.train.lambda_rollout > 0.0:
+                rollout_endpoint, first_displacement, second_displacement = (
+                    two_step_rollout_endpoint(coarse_flow, abstract, abstract)
+                )
+                rollout_loss = torch.mean((rollout_endpoint - target_abstract) ** 2)
+                rollout_scale = linear_ramp_scale(step, cfg.train.rollout_ramp_steps)
+                weighted_rollout_loss = cfg.train.lambda_rollout * rollout_scale * rollout_loss
+                predicted_displacement = rollout_endpoint - abstract
+                target_displacement = target_abstract - abstract
+                copy_mse = torch.mean(target_displacement**2)
+                copy_ratio_valid = bool(copy_mse.detach().float().item() > 1e-8)
+                rollout_metrics = {
+                    "rollout_2step_endpoint_mse": float(rollout_loss.detach().float().item()),
+                    "rollout_2step_copy_ratio": (
+                        float((rollout_loss / copy_mse).detach().float().item())
+                        if copy_ratio_valid
+                        else float("nan")
+                    ),
+                    "rollout_2step_copy_ratio_valid": float(copy_ratio_valid),
+                    "rollout_2step_copy_mse": float(copy_mse.detach().float().item()),
+                    "rollout_2step_displacement_norm": float(
+                        torch.linalg.vector_norm(predicted_displacement.flatten(1), dim=1)
+                        .mean()
+                        .detach()
+                        .float()
+                        .item()
+                    ),
+                    "rollout_2step_target_displacement_norm": float(
+                        torch.linalg.vector_norm(target_displacement.flatten(1), dim=1)
+                        .mean()
+                        .detach()
+                        .float()
+                        .item()
+                    ),
+                    "rollout_2step_displacement_cosine": float(
+                        torch.nn.functional.cosine_similarity(
+                            predicted_displacement.flatten(1),
+                            target_displacement.flatten(1),
+                            dim=1,
+                        )
+                        .mean()
+                        .detach()
+                        .float()
+                        .item()
+                    ),
+                    "rollout_first_step_displacement_norm": float(
+                        torch.linalg.vector_norm(first_displacement.flatten(1), dim=1)
+                        .mean()
+                        .detach()
+                        .float()
+                        .item()
+                    ),
+                    "rollout_second_step_displacement_norm": float(
+                        torch.linalg.vector_norm(second_displacement.flatten(1), dim=1)
+                        .mean()
+                        .detach()
+                        .float()
+                        .item()
+                    ),
+                }
         if residual_recon_active:
             # Residual reconstruction target: fold this batch's frozen context features
             # into the per-position mean BEFORE the loss uses it, so step 0 subtracts a
@@ -782,6 +883,7 @@ def train_step(
             loss = abstract.sum() * 0.0
         else:
             loss = flow_loss
+        loss = loss + weighted_rollout_loss
         if optimization.trains_bottleneck:
             loss = loss + cfg.train.lambda_var * var_loss
             if cfg.train.lambda_cov > 0.0:
@@ -894,6 +996,9 @@ def train_step(
     return {
         "loss": float(loss.detach().float().item()),
         "L_flow": float(flow_loss.detach().float().item()),
+        "L_rollout": float(rollout_loss.detach().float().item()),
+        "lambda_rollout_effective": cfg.train.lambda_rollout * rollout_scale,
+        "weighted_rollout_loss": float(weighted_rollout_loss.detach().float().item()),
         "L_var": float(var_loss.detach().float().item()),
         "L_cov": float(cov_loss.detach().float().item()),
         "L_slot": float(slot_loss.detach().float().item()),
@@ -913,6 +1018,7 @@ def train_step(
         "grad_skipped": float(grad_skipped),
         "instability_warn": float(instability_warn),
         "ema_m": momentum,
+        **rollout_metrics,
         **agc_metrics,
     }
 
@@ -2732,6 +2838,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     inv020.add_argument("--decoder-dim", type=int, default=None)
     inv020.add_argument("--decoder-blocks", type=int, default=None)
     inv020.add_argument("--lr-coarse-flow", type=float, default=None)
+    inv020.add_argument("--lambda-rollout", type=float, default=None)
+    inv020.add_argument("--rollout-ramp-steps", type=int, default=None)
     initialization = operator.add_mutually_exclusive_group()
     initialization.add_argument(
         "--resume", default=None, help="Operator override for runtime.resume."
@@ -2883,6 +2991,16 @@ def finalize_training_config(cfg: Config) -> None:
         raise ValueError("--flow-source present is incompatible with residual prediction")
     if cfg.train.flow_source == "present" and not cfg.train.flow_bottleneck_checkpoint:
         raise ValueError("--flow-source present requires --flow-bottleneck-checkpoint")
+    if cfg.train.lambda_rollout > 0.0:
+        if cfg.train.flow_source != "present" or not cfg.train.flow_bottleneck_checkpoint:
+            raise ValueError(
+                "train.lambda_rollout requires fixed present-source flow with "
+                "train.flow_bottleneck_checkpoint"
+            )
+        if cfg.train.optimization_scope != "fc_only":
+            raise ValueError(
+                "train.lambda_rollout requires train.optimization_scope=fc_only so only F_c trains"
+            )
     if (
         cfg.train.flow_bottleneck_checkpoint
         and not Path(cfg.train.flow_bottleneck_checkpoint).is_file()
@@ -2932,6 +3050,7 @@ def finalize_training_config(cfg: Config) -> None:
         "lambda_sigreg",
         "lambda_recon",
         "lambda_recon_pred",
+        "lambda_rollout",
     ):
         value = getattr(cfg.train, field_name)
         if value < 0.0:
@@ -2947,6 +3066,8 @@ def finalize_training_config(cfg: Config) -> None:
         )
     if cfg.train.recon_warmup_steps < 0:
         raise ValueError("train.recon_warmup_steps must be non-negative")
+    if cfg.train.rollout_ramp_steps < 0:
+        raise ValueError("train.rollout_ramp_steps must be non-negative")
     if not 0.0 < cfg.train.recon_mean_momentum < 1.0:
         raise ValueError("cfg.train.recon_mean_momentum must be in (0, 1)")
     if cfg.train.optimization_scope == "fc_only" and cfg.train.present_recon_only:
@@ -2957,7 +3078,7 @@ def finalize_training_config(cfg: Config) -> None:
     if cfg.train.optimization_scope == "fc_only" and cfg.train.lambda_recon_pred > 0.0:
         raise ValueError(
             "train.optimization_scope=fc_only requires train.lambda_recon_pred=0 so "
-            "L_flow is the sole optimized objective."
+            "only coarse-flow objectives are optimized."
         )
     if cfg.train.present_recon_only:
         if cfg.train.lambda_recon <= 0.0:
@@ -3079,6 +3200,8 @@ def main() -> None:
         (args.decoder_dim, cfg.model, "decoder_dim"),
         (args.decoder_blocks, cfg.model, "decoder_blocks"),
         (args.lr_coarse_flow, cfg.train, "lr_coarse_flow"),
+        (args.lambda_rollout, cfg.train, "lambda_rollout"),
+        (args.rollout_ramp_steps, cfg.train, "rollout_ramp_steps"),
         (getattr(args, "encoder_revision", None), cfg.encoder, "revision"),
         (getattr(args, "encoder_precision", None), cfg.encoder, "precision"),
         (getattr(args, "encoder_frame_microbatch", None), cfg.encoder, "frame_microbatch"),

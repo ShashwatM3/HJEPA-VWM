@@ -89,6 +89,8 @@ train:
   recon_mean_momentum: 0.99  # Float strictly between 0 and 1; typical range: 0.9-0.9999.
   present_recon_only: false  # Boolean (true or false): true trains only present reconstruction.
   predict_residual: false  # Boolean (true or false): true predicts temporal latent delta.
+  lambda_rollout: 0.0  # Non-negative two-step rollout endpoint-loss weight; 0 preserves baseline behavior.
+  rollout_ramp_steps: 1500  # Non-negative zero-indexed linear-ramp duration; 0 means full strength immediately.
 
   # CATEGORY: Offline feature whitening
   whiten_features: false  # Boolean (true or false): true enables fixed offline whitening.

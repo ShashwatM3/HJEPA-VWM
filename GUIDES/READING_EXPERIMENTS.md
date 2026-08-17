@@ -16,7 +16,8 @@
 ## How to use this
 
 1. **Check run config first** (`present_recon_only`, `predict_residual`, `lambda_sigreg`,
-  `lambda_recon`, `lambda_recon_pred`, dataset, step count, horizon).
+  `lambda_recon`, `lambda_recon_pred`, `lambda_rollout`, `rollout_ramp_steps`, dataset,
+  step count, horizon).
 2. Choose the correct cycle:
   - if `present_recon_only=false`, use **Reading Cycle A — Full Prediction Runs**;
   - if `present_recon_only=true`, use **Reading Cycle B — Present Reconstruction Only Runs**.
@@ -35,7 +36,8 @@ python run_history.py --run <run_id> --format parse_logs -o logs/<name>/output.l
 ```
 
 Diagnostic metrics (`c_*`, `coarse_*`, `L_recon_*`) log every `diag_every` steps (default 500).
-Training metrics (`L_flow`, `grad_*`) log every `log_every` steps (default 50).
+Training metrics (`L_flow`, `L_rollout`, `rollout_2step_*`, `grad_*`) log every
+`log_every` steps (default 50).
 
 ## How to use — humans
 

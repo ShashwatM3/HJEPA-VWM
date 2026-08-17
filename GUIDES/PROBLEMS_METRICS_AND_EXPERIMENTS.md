@@ -33,6 +33,8 @@ Implementation sources:
 - `predict_residual=true` → copy baseline means “predict zero change” (same ratio semantics)
 - `flow_bottleneck_checkpoint` → one saved-online fixed bottleneck supplies condition/target
 - fixed `flow_source=present|noise` changes only present-vs-Gaussian source; tau/dropout are matched
+- `lambda_rollout>0` enables the fixed-present, F_c-only two-step endpoint objective; its
+  zero-indexed weight reaches the configured maximum at `rollout_ramp_steps`
 - Investigation 20 sets `condition_dropout=0.0` in both arms (no projection/dropout ablation)
 - `recon_residual_target=true` → reconstruction targets use `e - mean(e)` via `FeatureMeanTracker`
 
@@ -63,6 +65,17 @@ batch-mean, and true-displacement baselines. Random-tau one-step values are pref
 `teacher_forced_random_tau_` because their state contains future-target information and
 must not determine a GO verdict. Use k=16 as the non-overlapping primary experiment;
 k=12 is the overlapping-frame control.
+
+The differentiable training rollout logs every `log_every` steps under distinct
+`rollout_2step_*` keys. `L_rollout` and `rollout_2step_endpoint_mse` are the same raw
+endpoint MSE; `weighted_rollout_loss` is the term actually added after multiplying by
+`lambda_rollout_effective`. The copy ratio divides that MSE by
+`rollout_2step_copy_mse = MSE(c_present,c_future)` in the same tensor space and
+reduction. If the denominator is at most `1e-8`, the ratio is explicitly `NaN` and
+`rollout_2step_copy_ratio_valid=0`; never interpret or average that invalid ratio.
+Displacement norm/cosine compare the generated endpoint displacement with the true
+present-to-future displacement. First- and second-step norms expose where motion is
+being added.
 
 The current story is:
 

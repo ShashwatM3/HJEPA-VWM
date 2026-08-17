@@ -621,6 +621,14 @@ uses an isolated Gaussian stream. Tau and condition-dropout have purpose-specifi
 streams so non-noise randomness remains matched. Investigation 20 uses
 `condition_dropout=0.0` in both fixed arms; the repository default remains `0.10`.
 
+An optional fixed-present intervention adds a differentiable two-step Euler endpoint
+loss. With `lambda_rollout > 0`, `two_step_rollout_endpoint` evaluates `F_c` at
+`tau=0`, advances by `0.5*v_0`, evaluates the generated midpoint at `tau=0.5`, and
+advances by `0.5*v_half`. Neither generated state contains the future target; the
+detached fixed-bottleneck future is used only by endpoint MSE. Validation restricts
+this term to `flow_source=present`, a fixed bottleneck checkpoint, and `fc_only`, so
+only `F_c` receives gradients. The zero default executes no extra flow forwards.
+
 ### Residual prediction mode
 
 When `cfg.train.predict_residual` is true:
@@ -729,7 +737,9 @@ Normal prediction mode:
    - residual: target-present from `B_EMA(detailed)`, `Delta`, scaled noise.
 6. Sample `tau_c = rand(B)`.
 7. Build `z_c`, `u_c`, and `u_c_hat`.
-8. Compute `flow_loss`.
+8. Compute `flow_loss`. If `lambda_rollout > 0`, also compute the differentiable
+   two-step endpoint and `L_rollout`; add
+   `lambda_rollout * linear_ramp_scale(step, rollout_ramp_steps) * L_rollout`.
 9. Always compute for logging: `var_loss`, `cov_loss`, `slot_loss`,
    `sigreg_l`.
 10. Start total loss as `flow_loss`.
@@ -777,12 +787,15 @@ L_total =
   + [lambda_sigreg * sigreg_scale * L_sigreg if lambda_sigreg > 0]
   + [lambda_recon * recon_scale * L_recon if lambda_recon > 0]
   + [lambda_recon_pred * recon_scale * L_recon_pred if lambda_recon_pred > 0]
+  + [lambda_rollout * rollout_scale * L_rollout if lambda_rollout > 0]
 ```
 
-`sigreg_scale` and `recon_scale` are linear ramps from 0 to 1 over their warmup
-step counts.
+`sigreg_scale`, `recon_scale`, and `rollout_scale` are linear ramps from 0 to 1
+over their configured step counts. Global steps are zero-indexed: rollout weight is
+zero at step 0 and reaches full strength at `rollout_ramp_steps`.
 
-In `fc_only`, `L_total = L_flow`: representation and reconstruction values remain
+In ordinary `fc_only`, `L_total = L_flow`; with the fixed-present intervention it is
+`L_flow + weighted_rollout_loss`. Representation and reconstruction values remain
 diagnostic readouts, `lambda_recon_pred` must be zero, and B/B_EMA/D are immutable.
 
 Terms may be computed for logging even when their weights are zero. Do not
@@ -1019,6 +1032,7 @@ Dataclass fallback training defaults (not the active YAML values):
 | `lambda_var`, `var_floor_std_target` | `0.5`, `1.0` |
 | `lambda_sigreg`, `lambda_cov`, `lambda_slot` | `0.0`, `0.01`, `0.0` |
 | `lambda_recon`, `lambda_recon_pred` | `0.0`, `0.0` |
+| `lambda_rollout`, `rollout_ramp_steps` | `0.0`, `1500` |
 | `recon_loss_mode`, `recon_warmup_steps` | `cosine`, `2000` |
 | `recon_residual_target`, `recon_mean_momentum` | `False`, `0.99` |
 | `present_recon_only`, `predict_residual` | `False`, `False` |

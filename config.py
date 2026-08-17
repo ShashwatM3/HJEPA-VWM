@@ -282,6 +282,12 @@ class TrainConfig:
     # bottleneck and freezes it for condition and future target. Empty preserves the
     # complete historical noise-path behavior.
     flow_bottleneck_checkpoint: str = ""
+    # Two-step on-policy endpoint loss for the fixed present-to-future experiment.
+    # Default zero preserves the baseline exactly: no rollout forwards are executed.
+    # When active, the global step uses the repository's zero-index convention, so
+    # step 0 has zero rollout weight and rollout_ramp_steps reaches full strength.
+    lambda_rollout: float = 0.0
+    rollout_ramp_steps: int = 1_500
     # Fixed offline whitening of selected frozen features (investigation_014 /
     # tmp/changes_bottleneck <2>). The original V-JEPA rank probe showed `e` is
     # strongly anisotropic (pooled entropy rank ~193/1024 with a long low-energy tail), so the bottleneck

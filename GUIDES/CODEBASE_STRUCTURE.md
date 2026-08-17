@@ -192,6 +192,7 @@ Prefer the **W&B MCP server** in Cursor for interactive metric pulls (see
 | `tests/test_residual_recon_target.py` | `FeatureMeanTracker` + shuffled-c readouts |
 | `tests/test_present_recon_only.py` | Present-only mode gradient routing |
 | `tests/test_fc_only_optimization.py` | Fixed B/B_EMA/D, F_c-only updates, and frozen-state hash guards |
+| `tests/test_rollout_loss.py` | Two-step rollout gradient path, ramped objective, fixed-present scope, metrics, and zero-weight parity |
 | `tests/test_sigreg.py` | SIGReg loss and logging RNG isolation |
 | `tests/test_bottleneck_attention.py` | Bottleneck latent-stack identity-at-init + sharp-attention diagnostics |
 | `tests/test_evaluate_checkpoint_diagnostics.py` | Offline evaluator restoration, fixed-batch, one-forward, inference/eval, output, and failure contracts with fake modules |
