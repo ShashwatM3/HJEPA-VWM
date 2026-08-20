@@ -219,7 +219,7 @@ Root implementation files:
 | Path | Role |
 |---|---|
 | `config.py` | Typed dataclass defaults plus strict YAML experiment loading. |
-| `configs/train.yaml` | The only editable Phase-1 experiment recipe; always read by `train.py`. |
+| `configs/train.yaml` | Default Phase-1 recipe; `train.py --config` may select a strict inherited experiment YAML. |
 | `data.py` | Deterministic clip-per-file loader. Produces typed raw `[0,1]` context-only or context/target `ClipBatch` values from SSv2 `.webm` or EGO4D `.mp4`. |
 | `encoders.py` | Only encoder seam: immutable specs/fingerprints, normalization/precision/frame microbatching, private registry, pinned V-JEPA2, SigLIP2, and DINOv3 adapters, real smoke CLI. |
 | `make_subset.py` | Builds `ssv2_tiny` as symlinks plus `manifest.json`. |
@@ -956,6 +956,13 @@ series. The differentiable intervention logs `loss/rollout`,
 `rollout/target_displacement_valid` flag marks whether the target displacement is
 nonzero enough to interpret either ratio or the displacement cosine.
 
+Locked two-step runs additionally forward only stable 4/8-step copy-ratio and
+condition-shuffle decision keys. `evaluate_two_step_rollout.py` preserves the complete
+1/2/4/8 grid in versioned JSON, while `preflight_two_step_rollout.py` provides the
+CUDA-only exact three-call treatment graph without an optimizer update or checkpoint.
+The two inherited arm YAMLs use the named `two_step_rollout_v1` protocol to validate
+the Run-60 hash and all matched scientific fields; only `lambda_rollout` differs.
+
 Offline probes (not part of the training loop):
 
 - `drift_probe.py` measures WITHIN-video temporal drift on a pinned probe set:
@@ -988,11 +995,13 @@ Future Phase-2/3 diagnostics, not implemented yet:
 - decoder dependency test with shuffled `e_hat`.
 - full `eval.py`.
 
-## 12. Single YAML configuration and compact CLI
+## 12. Strict YAML configuration and compact CLI
 
-`config.py` supplies typed fallback defaults. `configs/train.yaml` is the only editable experiment
-recipe and `train.py` reads it on every invocation; there is no `--config` selector. Resolution is
-dataclass defaults → the single YAML → seven scientific CLI overrides → operator overrides.
+`config.py` supplies typed fallback defaults. `configs/train.yaml` remains the default recipe;
+`train.py --config` selects a strict experiment YAML, which may use one relative `extends` chain.
+Resolution is dataclass defaults → recursively merged YAML → seven scientific CLI overrides →
+operator overrides. Named protocol validation runs after all overrides so a locked recipe cannot
+be silently weakened.
 Duplicate/unknown keys, legacy or audit-owned fields, and scalar types are validated before model
 construction. Every YAML leaf documents its choices or reasonable range inline. The YAML path and
 content hash are audit-recorded but excluded from scientific parity, which binds the fully resolved

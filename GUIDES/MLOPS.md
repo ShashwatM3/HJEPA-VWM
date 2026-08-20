@@ -201,7 +201,8 @@ Warm start loads only the validated online bottleneck and matched decoder, initi
 EMA target from the loaded online bottleneck, and starts fresh flow/optimizer/step/RNG/sampler/W&B
 state. Never use `--resume` as a substitute for a pretraining transfer.
 
-Losses, schedules, modes, and optimizer settings always come from `configs/train.yaml`. Only dataset,
+Losses, schedules, modes, and optimizer settings come from the selected strict YAML (default
+`configs/train.yaml`; locked experiments use `train.py --config <yaml>`). Only dataset,
 encoder, `N_c`, `D_c`, bottleneck mixer width, and the controlled temporal-target selector remain
 scientific CLI overrides.
 

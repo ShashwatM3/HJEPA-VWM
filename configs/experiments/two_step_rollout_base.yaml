@@ -1,0 +1,50 @@
+extends: ../train.yaml
+
+# Locked scientific base shared by both Investigation 23 arms.
+seed: 42
+encoder:
+  alias: dinov3_vitb16
+  revision: 5931719e67bbdb9737e363e781fb0c67687896bc
+  precision: bf16
+  frame_microbatch: 32
+model:
+  n_c: 64
+  d_c: 512
+  bottleneck_mixer_dim: 512
+  condition_dropout: 0.0
+train:
+  optimization_scope: fc_only
+  global_batch: 64
+  max_steps: 5000
+  lambda_var: 0.0
+  lambda_cov: 0.0
+  lambda_slot: 0.0
+  lambda_sigreg: 0.0
+  lambda_recon: 0.0
+  lambda_recon_pred: 0.0
+  recon_residual_target: false
+  predict_residual: false
+  flow_source: present
+  flow_bottleneck_checkpoint: /workspace/ckpt/inv019_bottleneck_shape_covvar/inv019_covvar_dinov3_n64_d512_m512/phase1_step15000.pt
+  rollout_ramp_steps: 1500
+  horizon_k: 16
+  frame_stride: 2
+  precision: bf16
+  checkpoint_every: 2500
+data:
+  dataset: ego4d
+runtime:
+  mode: train
+  warm_start_from: /workspace/ckpt/inv019_bottleneck_shape_covvar/inv019_covvar_dinov3_n64_d512_m512/phase1_step15000.pt
+  require_wandb: true
+wandb:
+  entity: smahalanobis-uc-davis
+  project: hjepa-vwm
+  group: inv023_two_step_rollout
+protocol:
+  name: two_step_rollout_v1
+  fixed_bottleneck_sha256: 931c27b47df3331a1968b7d33afc74556e5779c02a1997989bf27324cf9270b1
+  common_global_batch: 64
+  evaluation_batch_size: 16
+  evaluation_steps: [1, 2, 4, 8]
+  evaluation_checkpoints: [2500, 5000]

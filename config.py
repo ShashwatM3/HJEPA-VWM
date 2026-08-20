@@ -2,13 +2,15 @@
 
 Naming map from AGENT_FILES/AGENT-BEHAVIOUR/CODE_DESIGN.md §3.
 Architecture reference: AGENT_FILES/AGENTS.md and GUIDES/latest_brief.md (narrative only).
-Typed fallback defaults live in this file; the canonical editable recipe is
-``configs/train.yaml``. Seven reviewed scientific fields retain direct CLI overrides.
+Typed fallback defaults live in this file; ``configs/train.yaml`` is the default recipe and
+locked experiments may select strict inherited YAMLs. Seven reviewed scientific fields retain
+direct CLI overrides.
 """
 
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 import os
 import types
@@ -428,12 +430,25 @@ class WandbConfig:
 
 
 @dataclass
+class ProtocolConfig:
+    """Optional fail-fast contract for one narrowly locked experiment."""
+
+    name: Literal["", "two_step_rollout_v1"] = ""
+    fixed_bottleneck_sha256: str = ""
+    common_global_batch: int = 64
+    evaluation_batch_size: int = 16
+    evaluation_steps: tuple[int, ...] = (1, 2, 4, 8)
+    evaluation_checkpoints: tuple[int, ...] = (2_500, 5_000)
+
+
+@dataclass
 class ExperimentConfig:
     """Resolved training, runtime, and tracking configuration loaded from one YAML file."""
 
     config: Config
     runtime: RuntimeConfig
     wandb: WandbConfig
+    protocol: ProtocolConfig
     source_path: str
 
 
@@ -579,6 +594,39 @@ def _apply_config_mapping(target: object, values: dict[str, Any], section: str) 
             setattr(target, name, _coerce_config_value(value, annotations[name], location))
 
 
+def _merge_experiment_mappings(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    """Deep-merge one inherited YAML recipe without mutating either input."""
+    merged = dict(base)
+    for key, value in override.items():
+        if key in merged and isinstance(merged[key], dict) and isinstance(value, dict):
+            merged[key] = _merge_experiment_mappings(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def _load_experiment_mapping(path: Path, chain: tuple[Path, ...] = ()) -> dict[str, Any]:
+    """Load a strict YAML mapping and resolve its optional relative ``extends`` parent."""
+    resolved = path.resolve()
+    if resolved in chain:
+        cycle = " -> ".join(str(item) for item in (*chain, resolved))
+        raise ValueError(f"Experiment config inheritance cycle: {cycle}")
+    payload = yaml.load(resolved.read_text(encoding="utf-8"), Loader=_UniqueKeyLoader)
+    if payload is None:
+        payload = {}
+    if not isinstance(payload, dict):
+        raise TypeError("Experiment config root must be a mapping")
+    parent = payload.pop("extends", None)
+    if parent is None:
+        return payload
+    if not isinstance(parent, str) or not parent:
+        raise TypeError("extends must be a non-empty relative YAML path")
+    parent_path = (resolved.parent / parent).resolve()
+    return _merge_experiment_mappings(
+        _load_experiment_mapping(parent_path, (*chain, resolved)), payload
+    )
+
+
 def load_experiment_config(path: str | Path) -> ExperimentConfig:
     """Load one strict YAML recipe over the shipped dataclass defaults.
 
@@ -591,36 +639,38 @@ def load_experiment_config(path: str | Path) -> ExperimentConfig:
         Resolved experiment configuration and its source path.
     """
     config_path = Path(path)
-    payload = yaml.load(
-        config_path.read_text(encoding="utf-8"),
-        Loader=_UniqueKeyLoader,
-    )
-    if payload is None:
-        payload = {}
-    if not isinstance(payload, dict):
-        raise TypeError("Experiment config root must be a mapping")
+    payload = _load_experiment_mapping(config_path)
+    resolved_recipe_sha256 = hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
     runtime_values = payload.pop("runtime", {})
     wandb_values = payload.pop("wandb", {})
+    protocol_values = payload.pop("protocol", {})
     if not isinstance(runtime_values, dict):
         raise TypeError("runtime must be a mapping")
     if not isinstance(wandb_values, dict):
         raise TypeError("wandb must be a mapping")
+    if not isinstance(protocol_values, dict):
+        raise TypeError("protocol must be a mapping")
     config = Config()
     runtime = RuntimeConfig()
     wandb_config = WandbConfig()
+    protocol = ProtocolConfig()
     _apply_config_mapping(config, payload, "config")
     config.hf_cache_dir = config.encoder.hf_cache_dir
     _apply_config_mapping(runtime, runtime_values, "runtime")
     _apply_config_mapping(wandb_config, wandb_values, "wandb")
+    _apply_config_mapping(protocol, protocol_values, "protocol")
     valid_modes = {"train", "stage0", "preflight", "resource_preflight"}
     if runtime.mode not in valid_modes:
         choices = ", ".join(sorted(valid_modes))
         raise ValueError(f"runtime.mode must be one of {choices}; got {runtime.mode!r}")
     config.experiment_config_path = str(config_path.resolve())
-    config.experiment_config_sha256 = hashlib.sha256(config_path.read_bytes()).hexdigest()
+    config.experiment_config_sha256 = resolved_recipe_sha256
     return ExperimentConfig(
         config=config,
         runtime=runtime,
         wandb=wandb_config,
+        protocol=protocol,
         source_path=str(config_path.resolve()),
     )

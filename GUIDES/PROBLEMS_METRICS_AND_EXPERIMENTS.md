@@ -71,6 +71,12 @@ small to divide by or align against; both ratios and the displacement cosine are
 the `teacher_forced_random_tau_` prefix because their state contains future-target
 information and cannot determine a GO verdict.
 
+The locked pair also logs stable diagnostic-cadence
+`eval/rollout_{4,8}_copy_ratio` and
+`eval/rollout_{4,8}_condition_shuffle_degradation` keys. They decide the primary
+copy gate and correct-condition usefulness. The full solver grid and artifact identities
+remain in `hjepa-two-step-rollout-evaluation-v1` JSON instead of dynamic W&B series.
+
 The current story is:
 
 - Early runs failed because `c_t` collapsed or training exploded.

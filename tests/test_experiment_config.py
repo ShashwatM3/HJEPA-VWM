@@ -168,7 +168,7 @@ def test_cli_keeps_only_seven_scientific_sweep_overrides(
 
     args = train.parse_args()
 
-    assert not hasattr(args, "config")
+    assert args.config == train.EXPERIMENT_CONFIG_PATH
     assert args.data == "ego4d"
     assert args.encoder == "dinov3_vitb16"
     assert args.n_c == 16
@@ -182,8 +182,7 @@ def test_cli_keeps_only_seven_scientific_sweep_overrides(
         "argv",
         ["train.py", "--config", "configs/another.yaml"],
     )
-    with pytest.raises(SystemExit):
-        train.parse_args()
+    assert train.parse_args().config == Path("configs/another.yaml")
 
 
 def test_scientific_cli_group_contains_exactly_seven_options() -> None:

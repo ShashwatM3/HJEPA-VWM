@@ -30,6 +30,8 @@ HJEPA-VWM/
 ├── parse_logs.py          # Console log → JSON
 ├── run_history.py         # W&B Public API export + reports
 ├── evaluate_checkpoint_diagnostics.py # Paired encoder/latent checkpoint cosine evaluator
+├── evaluate_two_step_rollout.py       # Locked fixed-batch 1/2/4/8 rollout evaluator
+├── preflight_two_step_rollout.py      # CUDA-only exact three-call treatment graph
 ├── drift_probe.py         # Encoder-generic within-video feature-vs-latent drift probe
 ├── rank_probe.py          # Encoder-generic effective-rank probe over the shared cache
 ├── whiten_stats.py        # Encoder/dataset/seed-bound offline whitening statistics
@@ -118,12 +120,16 @@ Override dataset parent locally: `export JEPA_DATA_ROOT=/path/to/data`.
 | `python train.py --stage0-only` | Synthetic one-step sanity (encoder load + shapes) |
 | `python train.py --resource-preflight ...` | Exact one-step forward/backward/diagnostic memory and throughput report |
 | `python train.py --preflight-only --provenance-out run.json ...` | Materialize a no-step immutable run identity for paired comparison |
-| `python train.py` | Run the repository's single `configs/train.yaml` recipe |
+| `python train.py` | Run the default `configs/train.yaml` recipe |
+| `python train.py --config <yaml>` | Run a strict locked/inherited experiment recipe |
+| `python evaluate_two_step_rollout.py ...` | Emit locked 1/2/4/8 checkpoint rollout JSON |
+| `python preflight_two_step_rollout.py ...` | CUDA-only exact treatment-graph memory preflight |
 | `python train.py --encoder dinov3_vitb16 --n-c 16 --d-c 512` | Full experiment with only active sweep axes overridden |
 
 Configuration interface:
 
-- **Single YAML recipe:** `configs/train.yaml`, always loaded; encoder details, batch/schedule,
+- **Default YAML recipe:** `configs/train.yaml`; locked recipes may inherit it and are selected
+  with `--config`. Encoder details, batch/schedule,
   losses, reconstruction/whitening modes, decoder/background architecture, optimizer/AGC,
   cadence, runtime, and W&B defaults. Every leaf has allowed-value/range guidance inline.
 - **Seven scientific CLI overrides:** `--data`, `--encoder`, `--n-c`, `--d-c`,
@@ -148,6 +154,8 @@ KANBAN evidence.
 | `run_history.py` | Pulls full metric history from W&B Public API; `--report` for Phase 1 summaries |
 | `evaluate_checkpoint_diagnostics.py` | Restores current Phase-1 checkpoints through the strict loader and reports paired encoder/live-bottleneck cross-video cosine on one corrected fixed source-diverse batch |
 | `evaluate_noiseless_flow.py` | Runs inference-only present/future slot-alignment and fresh-CoarseFlow validation on a fixed source-unique batch |
+| `evaluate_two_step_rollout.py` | Loads locked 2500/5000 checkpoints and atomically writes identity-bound 1/2/4/8 rollout JSON |
+| `preflight_two_step_rollout.py` | Measures exact treatment-shaped CUDA forward/backward peak memory without optimizer or checkpoint writes |
 | `scripts/inv020_{preflight,train}_{present,noise}_k16.sh` | Shell-validated zero-condition-dropout Investigation 20 fixed-bottleneck commands |
 | `drift_probe.py` | Encoder-generic within-video detailed/latent drift; strict versioned feature cache; checkpoint EncoderSpec/whitener reconstruction; JSON/PNG plus optional W&B artifact |
 | `rank_probe.py` | Encoder-generic raw/effective rank over the shared strict probe manifest/cache; frame layouts add pre-concatenation per-frame norms/ranks; identity-bearing JSON/plot plus optional W&B artifact |
@@ -193,6 +201,7 @@ Prefer the **W&B MCP server** in Cursor for interactive metric pulls (see
 | `tests/test_present_recon_only.py` | Present-only mode gradient routing |
 | `tests/test_fc_only_optimization.py` | Fixed B/B_EMA/D, F_c-only updates, and frozen-state hash guards |
 | `tests/test_rollout_loss.py` | Two-step rollout gradient path, ramped objective, fixed-present scope, metrics, and zero-weight parity |
+| `tests/test_two_step_rollout_protocol.py` | Locked pair, validation, evaluator schema/determinism, W&B, and preflight side-effect contracts |
 | `tests/test_sigreg.py` | SIGReg loss and logging RNG isolation |
 | `tests/test_bottleneck_attention.py` | Bottleneck latent-stack identity-at-init + sharp-attention diagnostics |
 | `tests/test_evaluate_checkpoint_diagnostics.py` | Offline evaluator restoration, fixed-batch, one-forward, inference/eval, output, and failure contracts with fake modules |

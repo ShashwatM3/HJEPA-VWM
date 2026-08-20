@@ -29,7 +29,7 @@ except ModuleNotFoundError:  # pragma: no cover
     Tensor = object  # type: ignore[misc,assignment]
     nn = None  # type: ignore[assignment]
 
-from config import Config, load_experiment_config
+from config import Config, ProtocolConfig, load_experiment_config
 from data import ClipBatch, build_dataloader, build_fixed_diagnostic_batch
 from diagnostics import (
     _no_drop,
@@ -1926,16 +1926,22 @@ def _run_diagnostics_impl(
     else:
         metrics.update(baseline_metrics)
     if cfg.train.flow_bottleneck_checkpoint:
-        metrics.update(
-            flow_euler_rollouts(
-                coarse_flow,
-                abstract,
-                target_abstract,
-                abstract,
-                abstract,
-                steps=(1, 2, 4, 8),
-            )
+        rollout_diagnostics = flow_euler_rollouts(
+            coarse_flow,
+            abstract,
+            target_abstract,
+            abstract,
+            abstract,
+            steps=(1, 2, 4, 8),
         )
+        metrics.update(rollout_diagnostics)
+        for count in (4, 8):
+            metrics[f"eval/rollout_{count}_copy_ratio"] = rollout_diagnostics[
+                f"rollout_{count}step_normal_coarse_to_copy_loss_ratio"
+            ]
+            metrics[f"eval/rollout_{count}_condition_shuffle_degradation"] = (
+                rollout_diagnostics[f"rollout_{count}step_condition_shuffle_degradation"]
+            )
     metrics.update(gradient_health(nn.ModuleList([bottleneck, coarse_flow, decoder])))
     metrics.update(
         reconstruction_readouts(
@@ -2505,6 +2511,10 @@ _WANDB_CORE_KEYS = frozenset(
         "rollout/displacement_cosine",
         "rollout/displacement_norm_ratio",
         "rollout/target_displacement_valid",
+        "eval/rollout_4_copy_ratio",
+        "eval/rollout_8_copy_ratio",
+        "eval/rollout_4_condition_shuffle_degradation",
+        "eval/rollout_8_condition_shuffle_degradation",
     }
 )
 
@@ -2830,9 +2840,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
     optimization scope. The remaining flags are operator controls, not hyperparameters.
     """
     parser = argparse.ArgumentParser(
-        description="Train HJEPA-VWM Phase 1 from the repository's single configs/train.yaml."
+        description="Train HJEPA-VWM Phase 1 from a strict YAML recipe."
     )
     operator = parser.add_argument_group("operator controls")
+    operator.add_argument(
+        "--config",
+        type=Path,
+        default=EXPERIMENT_CONFIG_PATH,
+        help="Strict experiment YAML; defaults to configs/train.yaml.",
+    )
     scientific = parser.add_argument_group("scientific hot overrides")
     inv020 = parser.add_argument_group("Investigation 20 fixed-flow controls")
     scientific.add_argument(
@@ -3178,6 +3194,79 @@ def finalize_training_config(cfg: Config) -> None:
         raise ValueError("cfg.data.num_workers must be non-negative")
 
 
+def validate_experiment_protocol(cfg: Config, protocol: ProtocolConfig) -> None:
+    """Apply fail-fast locks only when a named experiment protocol requests them."""
+    if not protocol.name:
+        return
+    if protocol.name != "two_step_rollout_v1":
+        raise ValueError(f"protocol.name is unsupported: {protocol.name!r}")
+    expected = {
+        "seed": (cfg.seed, 42),
+        "model.n_c": (cfg.model.n_c, 64),
+        "model.d_c": (cfg.model.d_c, 512),
+        "model.condition_dropout": (cfg.model.condition_dropout, 0.0),
+        "train.optimization_scope": (cfg.train.optimization_scope, "fc_only"),
+        "train.flow_source": (cfg.train.flow_source, "present"),
+        "train.predict_residual": (cfg.train.predict_residual, False),
+        "train.global_batch": (cfg.train.global_batch, protocol.common_global_batch),
+        "train.max_steps": (cfg.train.max_steps, 5_000),
+        "train.checkpoint_every": (cfg.train.checkpoint_every, 2_500),
+        "train.horizon_k": (cfg.train.horizon_k, 16),
+        "train.frame_stride": (cfg.train.frame_stride, 2),
+        "train.precision": (cfg.train.precision, "bf16"),
+        "train.rollout_ramp_steps": (cfg.train.rollout_ramp_steps, 1_500),
+        "train.lambda_var": (cfg.train.lambda_var, 0.0),
+        "train.lambda_cov": (cfg.train.lambda_cov, 0.0),
+        "train.lambda_slot": (cfg.train.lambda_slot, 0.0),
+        "train.lambda_sigreg": (cfg.train.lambda_sigreg, 0.0),
+        "train.lambda_recon": (cfg.train.lambda_recon, 0.0),
+        "train.lambda_recon_pred": (cfg.train.lambda_recon_pred, 0.0),
+        "encoder.alias": (cfg.encoder.alias, "dinov3_vitb16"),
+        "encoder.precision": (cfg.encoder.precision, "bf16"),
+        "data.dataset": (cfg.data.dataset, "ego4d"),
+    }
+    for field_name, (actual, required) in expected.items():
+        if actual != required:
+            raise ValueError(
+                f"protocol.two_step_rollout_v1 requires {field_name}={required!r}; "
+                f"got {actual!r}"
+            )
+    if cfg.train.lambda_rollout not in {0.0, 0.1}:
+        raise ValueError(
+            "protocol.two_step_rollout_v1 requires train.lambda_rollout to be 0.0 "
+            f"(control) or 0.1 (treatment); got {cfg.train.lambda_rollout!r}"
+        )
+    if not cfg.train.flow_bottleneck_checkpoint:
+        raise ValueError(
+            "protocol.two_step_rollout_v1 requires train.flow_bottleneck_checkpoint "
+            "to name the frozen Run-60 checkpoint"
+        )
+    if len(protocol.fixed_bottleneck_sha256) != 64:
+        raise ValueError(
+            "protocol.two_step_rollout_v1 requires protocol.fixed_bottleneck_sha256 "
+            "to be a 64-character SHA-256"
+        )
+    from provenance import sha256_file
+
+    actual_hash = sha256_file(cfg.train.flow_bottleneck_checkpoint)
+    if actual_hash != protocol.fixed_bottleneck_sha256:
+        raise ValueError(
+            "protocol.two_step_rollout_v1 requires train.flow_bottleneck_checkpoint "
+            f"sha256={protocol.fixed_bottleneck_sha256}; got {actual_hash}"
+        )
+    if protocol.evaluation_steps != (1, 2, 4, 8):
+        raise ValueError(
+            "protocol.two_step_rollout_v1 requires protocol.evaluation_steps=(1, 2, 4, 8); "
+            f"got {protocol.evaluation_steps!r}"
+        )
+    if protocol.evaluation_checkpoints != (2_500, 5_000):
+        raise ValueError(
+            "protocol.two_step_rollout_v1 requires "
+            "protocol.evaluation_checkpoints=(2500, 5000); "
+            f"got {protocol.evaluation_checkpoints!r}"
+        )
+
+
 def validate_optimization_initialization(
     cfg: Config,
     *,
@@ -3215,7 +3304,7 @@ def validate_optimization_initialization(
 def main() -> None:
     """Run the requested Phase 1 command (Stage 0 sanity or Stage 1 training)."""
     args = parse_args()
-    experiment = load_experiment_config(EXPERIMENT_CONFIG_PATH)
+    experiment = load_experiment_config(args.config)
     cfg = experiment.config
     runtime = experiment.runtime
     wandb_config = experiment.wandb
@@ -3320,6 +3409,7 @@ def main() -> None:
         "id": args.wandb_run_id if args.wandb_run_id is not None else wandb_config.run_id,
     }
     finalize_training_config(cfg)
+    validate_experiment_protocol(cfg, experiment.protocol)
     validate_optimization_initialization(
         cfg,
         mode=mode,

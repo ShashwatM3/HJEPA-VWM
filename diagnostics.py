@@ -512,6 +512,7 @@ def flow_euler_rollouts(
     batch_mean_loss = torch.mean((batch_mean - future) ** 2)
     true_displacement = future - source
     true_norm = torch.linalg.vector_norm(true_displacement.flatten(1), dim=1)
+    target_displacement_valid = bool(copy_loss.detach().float().item() > 1e-8)
     conditions = {
         "normal": condition,
         "zero": torch.zeros_like(condition),
@@ -545,20 +546,42 @@ def flow_euler_rollouts(
                 )
                 predicted_displacement = state - source
                 predicted_norm = torch.linalg.vector_norm(predicted_displacement.flatten(1), dim=1)
-                alignment = torch.nn.functional.cosine_similarity(
-                    predicted_displacement.flatten(1), true_displacement.flatten(1), dim=1
-                ).mean()
+                alignment = (
+                    torch.nn.functional.cosine_similarity(
+                        predicted_displacement.flatten(1), true_displacement.flatten(1), dim=1
+                    ).mean()
+                    if target_displacement_valid
+                    else error.new_tensor(float("nan"))
+                )
                 prefix = f"rollout_{count}step_{label}"
                 results[f"{prefix}_endpoint_mse"] = float(error.item())
                 results[f"{prefix}_coarse_to_copy_loss_ratio"] = float(
-                    (error / copy_loss.clamp_min(1e-8)).item()
+                    (error / copy_loss).item()
+                    if target_displacement_valid
+                    else float("nan")
+                )
+                results[f"{prefix}_endpoint_to_batch_mean_ratio"] = float(
+                    (error / batch_mean_loss).item()
+                    if float(batch_mean_loss.detach().float().item()) > 1e-8
+                    else float("nan")
                 )
                 results[f"{prefix}_endpoint_cosine_distance"] = float(cosine.item())
                 results[f"{prefix}_displacement_norm"] = float(predicted_norm.mean().item())
                 results[f"{prefix}_displacement_alignment"] = float(alignment.item())
+                results[f"{prefix}_displacement_norm_ratio"] = float(
+                    (predicted_norm.mean() / true_norm.mean()).item()
+                    if target_displacement_valid
+                    else float("nan")
+                )
+            normal_mse = results[f"rollout_{count}step_normal_endpoint_mse"]
+            shuffled_mse = results[f"rollout_{count}step_shuffled_endpoint_mse"]
+            results[f"rollout_{count}step_condition_shuffle_degradation"] = (
+                shuffled_mse - normal_mse
+            )
     results["rollout_copy_present_endpoint_mse"] = float(copy_loss.item())
     results["rollout_batch_mean_endpoint_mse"] = float(batch_mean_loss.item())
     results["rollout_true_displacement_norm"] = float(true_norm.mean().item())
+    results["rollout_target_displacement_valid"] = float(target_displacement_valid)
     return results
 
 

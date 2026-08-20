@@ -1,0 +1,7 @@
+extends: two_step_rollout_base.yaml
+
+checkpoint_dir: /workspace/ckpt/inv023_two_step_rollout_control
+train:
+  lambda_rollout: 0.0
+wandb:
+  name: Investigation 23 · Rollout endpoint consistency · Control, rollout weight 0
