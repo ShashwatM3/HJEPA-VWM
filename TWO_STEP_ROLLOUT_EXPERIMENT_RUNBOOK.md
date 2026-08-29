@@ -121,3 +121,34 @@ cadence adds only stable `eval/rollout_{4,8}_copy_ratio` and
 - **Stop/invalid:** any NaN, skipped update, instability warning, frozen-state/hash change, dataset
   fingerprint mismatch, checkpoint/config mismatch, or sustained treatment-only gradient/AGC
   collapse. One isolated AGC clip is diagnostic, not by itself a stop.
+
+## Locked 15,000-step confirmation continuation
+
+The completed 5,000-step arms remain immutable. The confirmation protocol references their
+2,500/5,000 checkpoints by path and SHA-256, restores the exact step-5,000
+model/optimizer/RNG/sampler state, and writes only to new confirmation directories.
+
+- Control source: /workspace/ckpt/inv023_two_step_rollout_control/phase1_step5000.pt,
+  SHA-256 fa7bf9546a834d6db7f3d80f25fd0cb0a42e1dba662930f08900a42e27d2a429.
+- Treatment source: /workspace/ckpt/inv023_two_step_rollout_treatment/phase1_step5000.pt,
+  SHA-256 0da168b31fcaf008a3488c3930d205115ebe94495c1fe4097f255fc1b386090f.
+- New checkpoints per arm: 5500, 7500, 10000, 15000.
+- Deterministic evaluations: referenced original 5000, then new 7500, 10000, 15000.
+- Inspect every 50-step log from 5350 through 5450; preserve the step-5500 checkpoint.
+- Confirmation resumes set runtime.resume_wandb_run false; each arm creates a new W&B run
+  whose first training log is global step 5000.
+
+No-step validation:
+
+    python train.py --config configs/experiments/two_step_rollout_confirmation_control.yaml --preflight-only --provenance-out /workspace/forensics/inv023_confirmation/control_provenance.json
+    python train.py --config configs/experiments/two_step_rollout_confirmation_treatment.yaml --preflight-only --provenance-out /workspace/forensics/inv023_confirmation/treatment_provenance.json
+
+Sequential launch commands (do not run without explicit approval):
+
+    PYTHONUNBUFFERED=1 python train.py --config configs/experiments/two_step_rollout_confirmation_control.yaml
+    PYTHONUNBUFFERED=1 python train.py --config configs/experiments/two_step_rollout_confirmation_treatment.yaml
+
+Deterministic confirmation evaluations:
+
+    python evaluate_two_step_rollout.py --config configs/experiments/two_step_rollout_confirmation_control.yaml --checkpoints /workspace/ckpt/inv023_two_step_rollout_control/phase1_step5000.pt /workspace/ckpt/inv023_two_step_rollout_confirmation_control/phase1_step7500.pt /workspace/ckpt/inv023_two_step_rollout_confirmation_control/phase1_step10000.pt /workspace/ckpt/inv023_two_step_rollout_confirmation_control/phase1_step15000.pt --output /workspace/forensics/inv023_confirmation/control_rollout_evaluation.json
+    python evaluate_two_step_rollout.py --config configs/experiments/two_step_rollout_confirmation_treatment.yaml --checkpoints /workspace/ckpt/inv023_two_step_rollout_treatment/phase1_step5000.pt /workspace/ckpt/inv023_two_step_rollout_confirmation_treatment/phase1_step7500.pt /workspace/ckpt/inv023_two_step_rollout_confirmation_treatment/phase1_step10000.pt /workspace/ckpt/inv023_two_step_rollout_confirmation_treatment/phase1_step15000.pt --output /workspace/forensics/inv023_confirmation/treatment_rollout_evaluation.json

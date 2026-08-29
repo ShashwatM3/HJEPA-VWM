@@ -1,0 +1,18 @@
+extends: two_step_rollout_base.yaml
+
+train:
+  max_steps: 15000
+  checkpoint_steps: [5500, 7500, 10000, 15000]
+runtime:
+  warm_start_from: null
+  resume_wandb_run: false
+  require_wandb: true
+wandb:
+  group: inv023_two_step_rollout_confirmation
+protocol:
+  name: two_step_rollout_confirmation_v1
+  source_completed_updates: 5000
+  source_checkpoint_commit: 017a972780c09974742137696cca78e7b2b47538
+  approved_protocol_migration: true
+  scheduler_horizon_steps: 15000
+  evaluation_checkpoints: [5000, 7500, 10000, 15000]

@@ -1,0 +1,16 @@
+extends: two_step_rollout_confirmation_base.yaml
+
+checkpoint_dir: /workspace/ckpt/inv023_two_step_rollout_confirmation_control
+runtime:
+  resume: /workspace/ckpt/inv023_two_step_rollout_control/phase1_step5000.pt
+wandb:
+  name: Investigation 23 · Rollout endpoint consistency · Confirmation control to 15,000 steps
+protocol:
+  source_checkpoint_path: /workspace/ckpt/inv023_two_step_rollout_control/phase1_step5000.pt
+  source_checkpoint_sha256: fa7bf9546a834d6db7f3d80f25fd0cb0a42e1dba662930f08900a42e27d2a429
+  historical_checkpoint_paths:
+    - /workspace/ckpt/inv023_two_step_rollout_control/phase1_step2500.pt
+    - /workspace/ckpt/inv023_two_step_rollout_control/phase1_step5000.pt
+  historical_checkpoint_sha256s:
+    - ea24ee02f779b4d23ee0eea79c3eeacbc04959e7418a9185a9e8c18cd1a33ac5
+    - fa7bf9546a834d6db7f3d80f25fd0cb0a42e1dba662930f08900a42e27d2a429

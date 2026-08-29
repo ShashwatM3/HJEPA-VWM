@@ -822,6 +822,8 @@ LR schedule:
 - `apply_lr_schedule` updates every optimizer group from peak base LRs.
 - `peak_base_lrs` rebuilds base LRs from the current config so resuming does not
   double-apply saved scheduled LRs.
+- `checkpoint_steps`, when non-empty, is a sorted/unique completed-update schedule that
+  replaces the periodic `checkpoint_every` cadence.
 
 AGC and global clipping:
 
@@ -863,6 +865,10 @@ Checkpoints:
   `next_step`, train count, and physical batch before mutating state, then passes that
   exact saved position to the first resumed dataloader. It also restores RNG and resumes
   at the saved `next_step`.
+- `two_step_rollout_confirmation_v1` narrowly permits the locked INV023 step-5000
+  checkpoints to continue under changed `max_steps` and `checkpoint_steps` only; it
+  binds source/historical paths and SHA-256 values, writes to new directories, and
+  starts a fresh W&B run at global step 5000.
 - `--warm-start-from` is mutually exclusive with resume. It accepts only a current
   present-only v2 checkpoint after exact encoder, dataset, feature-space, bottleneck, and
   decoder validation; transfers the live online `B` and matched `D`; copies the loaded
@@ -1060,7 +1066,7 @@ Dataclass fallback training defaults (not the active YAML values):
 | `whiten_features`, `whiten_stats_path`, `whiten_eps` | `False`, `""`, `1e-4` |
 | `horizon_k`, `frame_stride` | `4`, `2` |
 | `precision` | `bf16` |
-| `log_every`, `diag_every`, `checkpoint_every` | `50`, `500`, `2500` |
+| `log_every`, `diag_every`, `checkpoint_every`, `checkpoint_steps` | `50`, `500`, `2500`, `()` |
 
 Data/path defaults:
 

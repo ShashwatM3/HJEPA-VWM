@@ -39,6 +39,28 @@ def _canonical_config_hash(config: dict[str, Any]) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+def _checkpoint_config_matches(
+    saved: dict[str, Any],
+    current: dict[str, Any],
+    *,
+    confirmation: bool,
+    step: int,
+) -> bool:
+    """Allow only the confirmation duration/schedule delta on its referenced step-5000 source."""
+    left = json.loads(json.dumps(saved))
+    right = json.loads(json.dumps(current))
+    for payload in (left, right):
+        payload.pop("checkpoint_dir", None)
+        payload.pop("experiment_config_path", None)
+        payload.pop("experiment_config_sha256", None)
+    if confirmation and step == 5_000:
+        for payload in (left, right):
+            train = payload.get("train") or {}
+            train.pop("max_steps", None)
+            train.pop("checkpoint_steps", None)
+    return left == right
+
+
 def fixed_batch_identity(batch: ClipBatch, dataset_fingerprint: str) -> dict[str, Any]:
     """Return a stable identity for the exact ordered fixed evaluation examples."""
     payload = {
@@ -49,12 +71,12 @@ def fixed_batch_identity(batch: ClipBatch, dataset_fingerprint: str) -> dict[str
     return {**payload, "sha256": hashlib.sha256(encoded).hexdigest()}
 
 
-def validate_checkpoint_steps(observed: tuple[int, ...]) -> None:
-    """Require the two pre-registered persistence checkpoints in order."""
-    if observed != CHECKPOINT_STEPS:
-        raise ValueError(
-            f"Locked evaluation requires checkpoint steps {CHECKPOINT_STEPS}; got {observed}"
-        )
+def validate_checkpoint_steps(
+    observed: tuple[int, ...], expected: tuple[int, ...] = CHECKPOINT_STEPS
+) -> None:
+    """Require the protocol-selected persistence checkpoints in exact order."""
+    if observed != expected:
+        raise ValueError(f"Locked evaluation requires checkpoint steps {expected}; got {observed}")
 
 
 def build_evaluation_artifact(
@@ -179,13 +201,20 @@ def evaluate_checkpoints(
         checkpoint = torch.load(path, map_location="cpu", weights_only=False)
         step = int(checkpoint.get("completed_updates", checkpoint.get("global_step", -1)))
         observed_steps.append(step)
-        if checkpoint.get("dataset_identity", {}).get("fingerprint") != dataset_identity["fingerprint"]:
+        if (
+            checkpoint.get("dataset_identity", {}).get("fingerprint")
+            != dataset_identity["fingerprint"]
+        ):
             raise ValueError(f"Checkpoint {path} dataset fingerprint differs from fixed batch")
         saved_config = checkpoint.get("config")
         if not isinstance(saved_config, dict):
             raise ValueError(f"Checkpoint {path} is missing resolved config")
-        if _canonical_config_hash(saved_config) != _canonical_config_hash(
-            json.loads(json.dumps(cfg, default=lambda value: value.__dict__))
+        current_config = json.loads(json.dumps(cfg, default=lambda value: value.__dict__))
+        if not _checkpoint_config_matches(
+            saved_config,
+            current_config,
+            confirmation=experiment.protocol.name == "two_step_rollout_confirmation_v1",
+            step=step,
         ):
             raise ValueError(f"Checkpoint {path} config hash does not match {config_path}")
         flow_state = checkpoint.get("coarse_flow")
@@ -204,7 +233,7 @@ def evaluate_checkpoints(
                 "metrics": metrics,
             }
         )
-    validate_checkpoint_steps(tuple(observed_steps))
+    validate_checkpoint_steps(tuple(observed_steps), experiment.protocol.evaluation_checkpoints)
     artifact = build_evaluation_artifact(
         config_path=config_path,
         config_sha256=cfg.experiment_config_sha256,
@@ -221,7 +250,7 @@ def main() -> None:
     """Parse one locked arm and atomically write its structured evaluation artifact."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=Path, required=True)
-    parser.add_argument("--checkpoints", type=Path, nargs=2, required=True)
+    parser.add_argument("--checkpoints", type=Path, nargs="+", required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     artifact = evaluate_checkpoints(args.config, tuple(args.checkpoints), args.output)

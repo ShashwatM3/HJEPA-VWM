@@ -240,3 +240,122 @@ def test_preflight_helper_changes_no_parameters_and_has_no_side_effect_api() -> 
     assert all(torch.equal(value, before[name]) for name, value in flow.state_dict().items())
     assert "optimizer" not in treatment_graph_loss.__code__.co_names
     assert "save_checkpoint" not in treatment_graph_loss.__code__.co_names
+
+
+def test_confirmation_configs_preserve_science_and_lock_verified_sources() -> None:
+    from config import load_experiment_config
+    from train import validate_confirmation_resume, validate_experiment_protocol
+
+    root = Path(__file__).resolve().parents[1] / "configs" / "experiments"
+    control = load_experiment_config(root / "two_step_rollout_confirmation_control.yaml")
+    treatment = load_experiment_config(root / "two_step_rollout_confirmation_treatment.yaml")
+    left = _scientific_payload(control)
+    right = _scientific_payload(treatment)
+    assert left["train"].pop("lambda_rollout") == 0.0
+    assert right["train"].pop("lambda_rollout") == 0.1
+    assert left == right
+    for experiment in (control, treatment):
+        validate_experiment_protocol(experiment.config, experiment.protocol)
+        assert validate_confirmation_resume(
+            experiment.config,
+            experiment.protocol,
+            resume=experiment.runtime.resume,
+            resume_wandb_run=experiment.runtime.resume_wandb_run,
+        ) == {
+            "approved": True,
+            "source_checkpoint_commit": "017a972780c09974742137696cca78e7b2b47538",
+            "allowed_config_changes": ["checkpoint_steps", "max_steps"],
+        }
+        assert experiment.runtime.resume_wandb_run is False
+        assert experiment.config.checkpoint_dir not in {
+            "/workspace/ckpt/inv023_two_step_rollout_control",
+            "/workspace/ckpt/inv023_two_step_rollout_treatment",
+        }
+
+
+def test_confirmation_provenance_allows_only_preregistered_train_fields() -> None:
+    from provenance import compare_checkpoint_provenance
+
+    saved = {
+        "schema": "hjepa-run-provenance-v1",
+        "common_identity": "old",
+        "common": {
+            "config": {"train": {"max_steps": 5000, "checkpoint_steps": [], "horizon_k": 16}},
+            "runtime": {"git_commit": "old", "git_dirty": False, "torch": "2.4.1"},
+            "dataset_fingerprint": "dataset",
+        },
+    }
+    expected = copy.deepcopy(saved)
+    expected["common_identity"] = "new"
+    expected["common"]["config"]["train"]["max_steps"] = 15000
+    expected["common"]["config"]["train"]["checkpoint_steps"] = [5500, 7500, 10000, 15000]
+    expected["common"]["runtime"]["git_commit"] = "new"
+    expected["common"]["runtime"]["git_dirty"] = False
+    allowed = frozenset({"max_steps", "checkpoint_steps"})
+    migration = {
+        "approved": True,
+        "source_checkpoint_commit": "old",
+        "continuation_implementation_commit": "new",
+        "allowed_config_changes": ["checkpoint_steps", "max_steps"],
+    }
+    compare_checkpoint_provenance(
+        saved, expected, allowed_config_changes=allowed, protocol_migration=migration
+    )
+    expected["common"]["runtime"]["git_dirty"] = True
+    with pytest.raises(ValueError, match="clean commit"):
+        compare_checkpoint_provenance(
+            saved, expected, allowed_config_changes=allowed, protocol_migration=migration
+        )
+    expected["common"]["runtime"]["git_dirty"] = False
+    expected["common"]["config"]["train"]["horizon_k"] = 12
+    with pytest.raises(ValueError, match="beyond allowed continuation fields"):
+        compare_checkpoint_provenance(
+            saved, expected, allowed_config_changes=allowed, protocol_migration=migration
+        )
+
+
+def test_explicit_checkpoint_schedule_is_sorted_unique_and_replaces_cadence() -> None:
+    from config import Config
+    from train import finalize_training_config, should_save_checkpoint
+
+    cfg = Config()
+    cfg.train.max_steps = 15_000
+    cfg.train.checkpoint_steps = (5_500, 7_500, 10_000, 15_000)
+    finalize_training_config(cfg)
+    assert [step for step in range(5_000, 15_001) if should_save_checkpoint(step, cfg)] == [
+        5_500,
+        7_500,
+        10_000,
+        15_000,
+    ]
+    cfg.train.checkpoint_steps = (5_500, 5_500)
+    with pytest.raises(ValueError, match="sorted and unique"):
+        finalize_training_config(cfg)
+
+
+def test_confirmation_resume_creates_new_wandb_run_and_preserves_step_continuity(tmp_path) -> None:
+    from train import prepare_wandb_init_options, validate_wandb_step
+
+    checkpoint = tmp_path / "source.pt"
+    torch.save({"wandb_run_id": "completed-original"}, checkpoint)
+    fresh = prepare_wandb_init_options(str(checkpoint), False, {"name": "confirmation", "id": None})
+    assert fresh == {"name": "confirmation"}
+    reopened = prepare_wandb_init_options(str(checkpoint), True, {"name": "legacy", "id": None})
+    assert reopened["id"] == "completed-original"
+    assert reopened["resume"] == "must"
+    with pytest.raises(ValueError, match="cannot specify an existing run ID"):
+        prepare_wandb_init_options(str(checkpoint), False, {"id": "completed-original"})
+    validate_wandb_step(5_000, 5_000)
+    validate_wandb_step(5_050, 5_000)
+    with pytest.raises(ValueError, match="precedes continuation start"):
+        validate_wandb_step(4_999, 5_000)
+
+
+def test_checkpoint_writer_remains_atomic() -> None:
+    import inspect
+
+    import train
+
+    source = inspect.getsource(train.save_checkpoint)
+    assert "atomic_torch_save(payload, path)" in source
+    assert "torch.save(" not in source

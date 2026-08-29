@@ -434,6 +434,13 @@ def apply_lr_schedule(
     return scale
 
 
+def should_save_checkpoint(completed_updates: int, cfg: Config) -> bool:
+    """Return whether this completed-update boundary requires an atomic checkpoint."""
+    if cfg.train.checkpoint_steps:
+        return completed_updates in cfg.train.checkpoint_steps
+    return completed_updates % cfg.train.checkpoint_every == 0
+
+
 def peak_base_lrs(
     bottleneck: nn.Module,
     coarse_flow: nn.Module,
@@ -1188,6 +1195,8 @@ def load_checkpoint(
     allow_dataset_transfer: bool = False,
     expected_run_provenance: dict[str, Any] | None = None,
     sampler_state_out: dict[str, int] | None = None,
+    allowed_provenance_config_changes: frozenset[str] = frozenset(),
+    protocol_migration: dict[str, Any] | None = None,
 ) -> int:
     """Load a Phase 1 checkpoint and return its global step (encoder untouched).
 
@@ -1269,6 +1278,8 @@ def load_checkpoint(
                 saved_provenance,
                 expected_run_provenance,
                 allow_dataset_transfer=allow_dataset_transfer,
+                allowed_config_changes=allowed_provenance_config_changes,
+                protocol_migration=protocol_migration,
             )
         saved_sampler = ckpt.get("sampler_state")
         if saved_sampler is not None:
@@ -2235,11 +2246,33 @@ def _prepare_run(
     )
 
 
+def bind_protocol_migration(
+    provenance: dict[str, Any],
+    migration: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Bind an approved checkpoint migration to the exact clean implementation revision."""
+    if migration is None:
+        return None
+    runtime = (provenance.get("common") or {}).get("runtime") or {}
+    implementation_commit = runtime.get("git_commit")
+    if not implementation_commit or runtime.get("git_dirty") is not False:
+        raise ValueError("Confirmation continuation requires a clean committed worktree.")
+    bound = {
+        **migration,
+        "continuation_implementation_commit": implementation_commit,
+    }
+    provenance["protocol_migration"] = bound
+    return bound
+
+
 def materialize_preflight(
     cfg: Config,
     output: str | Path,
     tracking_identity: dict[str, Any] | None = None,
     warm_start_from: str | None = None,
+    resume: str | None = None,
+    allowed_provenance_config_changes: frozenset[str] = frozenset(),
+    protocol_migration: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the exact no-step run and atomically write its resolved provenance.
 
@@ -2260,10 +2293,27 @@ def materialize_preflight(
     prepared = _prepare_run(
         cfg,
         device,
+        resume=resume,
         warm_start_from=warm_start_from,
         tracking_identity=tracking_identity,
     )
-    modules, *_, provenance = prepared
+    modules, _, optimizer, mean_tracker, whitener, dataset_identity, _, provenance = prepared
+    bound_protocol_migration = bind_protocol_migration(provenance, protocol_migration)
+    if resume:
+        restored_sampler_state: dict[str, int] = {}
+        load_checkpoint(
+            resume,
+            modules,
+            optimizer,
+            mean_tracker=mean_tracker,
+            whitener=whitener,
+            expected_encoder_spec=modules[0].spec,
+            expected_dataset_identity=dataset_identity,
+            expected_run_provenance=provenance,
+            sampler_state_out=restored_sampler_state,
+            allowed_provenance_config_changes=allowed_provenance_config_changes,
+            protocol_migration=bound_protocol_migration,
+        )
     verify_provenance_frozen_state(modules, cfg, provenance)
     atomic_json_save(provenance, output)
     print(f"Wrote resolved run provenance: {output}")
@@ -2561,6 +2611,32 @@ def _select_wandb_metrics(metrics: dict[str, float], cfg: Config) -> dict[str, f
     return {key: metrics[key] for key in selected_keys if key in metrics}
 
 
+def prepare_wandb_init_options(
+    resume: str | None,
+    resume_wandb_run: bool,
+    wandb_options: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Resolve tracking identity without coupling exact state resume to an old W&B run."""
+    options = dict(wandb_options or {})
+    if resume and resume_wandb_run and not options.get("id"):
+        options["id"] = torch.load(resume, map_location="cpu", weights_only=False).get(
+            "wandb_run_id"
+        )
+    if resume and not resume_wandb_run:
+        if options.get("id"):
+            raise ValueError("A fresh W&B continuation run cannot specify an existing run ID.")
+        options.pop("id", None)
+    if options.get("id"):
+        options["resume"] = "must"
+    return options
+
+
+def validate_wandb_step(current_step: int, start_step: int) -> None:
+    """Reject tracking steps that move backward across an exact continuation boundary."""
+    if current_step < start_step:
+        raise ValueError(f"W&B step {current_step} precedes continuation start step {start_step}.")
+
+
 def run_training(
     cfg: Config,
     steps: int,
@@ -2573,6 +2649,9 @@ def run_training(
     reset_optimizer: bool = False,
     allow_dataset_transfer: bool = False,
     allow_legacy_checkpoint: bool = False,
+    resume_wandb_run: bool = True,
+    allowed_provenance_config_changes: frozenset[str] = frozenset(),
+    protocol_migration: dict[str, Any] | None = None,
 ) -> None:
     """Run strict, resumable Stage 1 training on the selected dataset/encoder."""
     _require_torch()
@@ -2601,6 +2680,7 @@ def run_training(
     ) = prepared
     encoder, bottleneck, target_bottleneck, coarse_flow, decoder = modules
     encoder_spec = encoder.spec
+    bound_protocol_migration = bind_protocol_migration(provenance, protocol_migration)
     restored_sampler_state: dict[str, int] = {}
     start_step = (
         load_checkpoint(
@@ -2616,6 +2696,8 @@ def run_training(
             allow_dataset_transfer=allow_dataset_transfer,
             expected_run_provenance=provenance,
             sampler_state_out=restored_sampler_state,
+            allowed_provenance_config_changes=allowed_provenance_config_changes,
+            protocol_migration=bound_protocol_migration,
         )
         if resume
         else 0
@@ -2675,13 +2757,7 @@ def run_training(
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     resolved_provenance_path = Path(provenance_out or checkpoint_dir / "run_provenance.json")
     atomic_json_save(provenance, resolved_provenance_path)
-    options = dict(wandb_options or {})
-    if resume and not options.get("id"):
-        options["id"] = torch.load(resume, map_location="cpu", weights_only=False).get(
-            "wandb_run_id"
-        )
-    if options.get("id"):
-        options["resume"] = "must"
+    options = prepare_wandb_init_options(resume, resume_wandb_run, wandb_options)
     try:
         import wandb
 
@@ -2718,6 +2794,7 @@ def run_training(
     def log_to_wandb(metrics: dict[str, float], current_step: int) -> None:
         """Apply identical strict/optional failure policy at every logging cadence."""
         nonlocal wandb, run
+        validate_wandb_step(current_step, start_step)
         if wandb is None:
             return
         try:
@@ -2788,7 +2865,7 @@ def run_training(
             elif diagnostic_due:
                 log_to_wandb(metrics, step)
             next_step = step + 1
-            if next_step % cfg.train.checkpoint_every == 0:
+            if should_save_checkpoint(next_step, cfg):
                 verify_frozen_state_hashes(modules, cfg, frozen_hashes)
                 save_checkpoint(
                     checkpoint_dir / f"phase1_step{next_step}.pt",
@@ -3188,6 +3265,13 @@ def finalize_training_config(cfg: Config) -> None:
             raise ValueError(f"train.{field_name} must be positive")
     if cfg.train.checkpoint_every > cfg.train.max_steps:
         raise ValueError("train.checkpoint_every must be <= train.max_steps")
+    if cfg.train.checkpoint_steps:
+        if tuple(sorted(set(cfg.train.checkpoint_steps))) != cfg.train.checkpoint_steps:
+            raise ValueError("train.checkpoint_steps must be sorted and unique")
+        if cfg.train.checkpoint_steps[0] <= 0:
+            raise ValueError("train.checkpoint_steps must contain positive completed-update steps")
+        if cfg.train.checkpoint_steps[-1] > cfg.train.max_steps:
+            raise ValueError("train.checkpoint_steps cannot exceed train.max_steps")
     if cfg.data.dataset not in {"ssv2", "ssv2_tiny", "ego4d", "ego4d_tiny"}:
         raise ValueError(f"cfg.data.dataset is unsupported: {cfg.data.dataset!r}")
     if cfg.data.num_workers < 0:
@@ -3198,8 +3282,9 @@ def validate_experiment_protocol(cfg: Config, protocol: ProtocolConfig) -> None:
     """Apply fail-fast locks only when a named experiment protocol requests them."""
     if not protocol.name:
         return
-    if protocol.name != "two_step_rollout_v1":
+    if protocol.name not in {"two_step_rollout_v1", "two_step_rollout_confirmation_v1"}:
         raise ValueError(f"protocol.name is unsupported: {protocol.name!r}")
+    confirmation = protocol.name == "two_step_rollout_confirmation_v1"
     expected = {
         "seed": (cfg.seed, 42),
         "model.n_c": (cfg.model.n_c, 64),
@@ -3209,7 +3294,7 @@ def validate_experiment_protocol(cfg: Config, protocol: ProtocolConfig) -> None:
         "train.flow_source": (cfg.train.flow_source, "present"),
         "train.predict_residual": (cfg.train.predict_residual, False),
         "train.global_batch": (cfg.train.global_batch, protocol.common_global_batch),
-        "train.max_steps": (cfg.train.max_steps, 5_000),
+        "train.max_steps": (cfg.train.max_steps, 15_000 if confirmation else 5_000),
         "train.checkpoint_every": (cfg.train.checkpoint_every, 2_500),
         "train.horizon_k": (cfg.train.horizon_k, 16),
         "train.frame_stride": (cfg.train.frame_stride, 2),
@@ -3259,12 +3344,91 @@ def validate_experiment_protocol(cfg: Config, protocol: ProtocolConfig) -> None:
             "protocol.two_step_rollout_v1 requires protocol.evaluation_steps=(1, 2, 4, 8); "
             f"got {protocol.evaluation_steps!r}"
         )
-    if protocol.evaluation_checkpoints != (2_500, 5_000):
+    required_evaluations = (5_000, 7_500, 10_000, 15_000) if confirmation else (2_500, 5_000)
+    if protocol.evaluation_checkpoints != required_evaluations:
         raise ValueError(
-            "protocol.two_step_rollout_v1 requires "
-            "protocol.evaluation_checkpoints=(2500, 5000); "
-            f"got {protocol.evaluation_checkpoints!r}"
+            f"{protocol.name} requires protocol.evaluation_checkpoints="
+            f"{required_evaluations!r}; got {protocol.evaluation_checkpoints!r}"
         )
+    if confirmation:
+        required_checkpoints = (5_500, 7_500, 10_000, 15_000)
+        if cfg.train.checkpoint_steps != required_checkpoints:
+            raise ValueError(
+                f"{protocol.name} requires train.checkpoint_steps={required_checkpoints!r}; "
+                f"got {cfg.train.checkpoint_steps!r}"
+            )
+        if protocol.source_completed_updates != 5_000:
+            raise ValueError(f"{protocol.name} requires source_completed_updates=5000")
+        if (
+            protocol.scheduler_horizon_steps != cfg.train.stage1_steps
+            or cfg.train.stage1_steps != 15_000
+        ):
+            raise ValueError(f"{protocol.name} requires the unchanged 15000-step scheduler horizon")
+
+
+CONFIRMATION_PROVENANCE_CHANGES = frozenset({"max_steps", "checkpoint_steps"})
+
+
+def validate_confirmation_resume(
+    cfg: Config,
+    protocol: ProtocolConfig,
+    *,
+    resume: str | None,
+    resume_wandb_run: bool,
+) -> dict[str, Any] | None:
+    """Validate the exact INV023 source and return its approved migration record."""
+    if protocol.name != "two_step_rollout_confirmation_v1":
+        return None
+    from provenance import sha256_file
+
+    if resume != protocol.source_checkpoint_path:
+        raise ValueError(
+            f"{protocol.name} requires resume={protocol.source_checkpoint_path!r}; got {resume!r}"
+        )
+    if not resume or sha256_file(resume) != protocol.source_checkpoint_sha256:
+        raise ValueError(f"{protocol.name} source checkpoint SHA-256 mismatch")
+    if resume_wandb_run:
+        raise ValueError(f"{protocol.name} must create a new W&B run")
+    if Path(cfg.checkpoint_dir) in {
+        Path("/workspace/ckpt/inv023_two_step_rollout_control"),
+        Path("/workspace/ckpt/inv023_two_step_rollout_treatment"),
+    }:
+        raise ValueError(f"{protocol.name} refuses an original INV023 output directory")
+    paths = protocol.historical_checkpoint_paths
+    hashes = protocol.historical_checkpoint_sha256s
+    if len(paths) != 2 or len(hashes) != 2:
+        raise ValueError(f"{protocol.name} requires exact 2500/5000 artifact references")
+    observed_steps: list[int] = []
+    for path_text, expected_hash in zip(paths, hashes, strict=True):
+        path = Path(path_text)
+        if not path.is_file() or sha256_file(path) != expected_hash:
+            raise ValueError(f"{protocol.name} historical checkpoint mismatch: {path}")
+        checkpoint = torch.load(path, map_location="cpu", weights_only=False)
+        observed_steps.append(int(checkpoint.get("completed_updates", -1)))
+    if tuple(observed_steps) != (2_500, 5_000) or paths[-1] != resume:
+        raise ValueError(f"{protocol.name} historical references must be ordered 2500/5000")
+    source = torch.load(resume, map_location="cpu", weights_only=False)
+    source_runtime = ((source.get("run_provenance") or {}).get("common") or {}).get("runtime") or {}
+    if (
+        not protocol.approved_protocol_migration
+        or protocol.source_checkpoint_commit != "017a972780c09974742137696cca78e7b2b47538"
+    ):
+        raise ValueError(f"{protocol.name} requires the explicitly approved source commit")
+    if (
+        source_runtime.get("git_commit") != protocol.source_checkpoint_commit
+        or source_runtime.get("git_dirty") is not False
+    ):
+        raise ValueError(f"{protocol.name} source checkpoint commit/cleanliness mismatch")
+    if int(source.get("completed_updates", -1)) != protocol.source_completed_updates:
+        raise ValueError(f"{protocol.name} source checkpoint is not step 5000")
+    saved_rollout = ((source.get("config") or {}).get("train") or {}).get("lambda_rollout")
+    if saved_rollout != cfg.train.lambda_rollout:
+        raise ValueError(f"{protocol.name} source arm rollout weight mismatch")
+    return {
+        "approved": True,
+        "source_checkpoint_commit": protocol.source_checkpoint_commit,
+        "allowed_config_changes": sorted(CONFIRMATION_PROVENANCE_CHANGES),
+    }
 
 
 def validate_optimization_initialization(
@@ -3410,6 +3574,15 @@ def main() -> None:
     }
     finalize_training_config(cfg)
     validate_experiment_protocol(cfg, experiment.protocol)
+    protocol_migration = validate_confirmation_resume(
+        cfg,
+        experiment.protocol,
+        resume=resume,
+        resume_wandb_run=runtime.resume_wandb_run,
+    )
+    allowed_provenance_changes = (
+        CONFIRMATION_PROVENANCE_CHANGES if protocol_migration is not None else frozenset()
+    )
     validate_optimization_initialization(
         cfg,
         mode=mode,
@@ -3425,6 +3598,9 @@ def main() -> None:
             output,
             tracking_identity=wandb_options,
             warm_start_from=warm_start_from,
+            resume=resume,
+            allowed_provenance_config_changes=allowed_provenance_changes,
+            protocol_migration=protocol_migration,
         )
     elif mode == "resource_preflight":
         output = provenance_out or "logs/preflight/resource_preflight.json"
@@ -3441,6 +3617,9 @@ def main() -> None:
             reset_optimizer=reset_optimizer,
             allow_dataset_transfer=allow_dataset_transfer,
             allow_legacy_checkpoint=allow_legacy_checkpoint,
+            resume_wandb_run=runtime.resume_wandb_run,
+            allowed_provenance_config_changes=allowed_provenance_changes,
+            protocol_migration=protocol_migration,
         )
     else:
         raise ValueError(

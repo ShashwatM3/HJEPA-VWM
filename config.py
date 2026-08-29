@@ -319,6 +319,9 @@ class TrainConfig:
     log_every: int = 50
     diag_every: int = 500
     checkpoint_every: int = 2_500  # finer checkpoints on the shorter 15k run
+    # Optional exact completed-update schedule. Empty preserves the historical
+    # checkpoint_every cadence; a non-empty schedule replaces that cadence.
+    checkpoint_steps: tuple[int, ...] = ()
 
 
 @dataclass
@@ -416,6 +419,9 @@ class RuntimeConfig:
     reset_optimizer: bool = False
     allow_dataset_transfer: bool = False
     allow_legacy_checkpoint: bool = False
+    # Exact state continuation does not imply reopening the old tracking run.
+    # Confirmation runs deliberately set this false.
+    resume_wandb_run: bool = True
 
 
 @dataclass
@@ -433,12 +439,20 @@ class WandbConfig:
 class ProtocolConfig:
     """Optional fail-fast contract for one narrowly locked experiment."""
 
-    name: Literal["", "two_step_rollout_v1"] = ""
+    name: Literal["", "two_step_rollout_v1", "two_step_rollout_confirmation_v1"] = ""
     fixed_bottleneck_sha256: str = ""
     common_global_batch: int = 64
     evaluation_batch_size: int = 16
     evaluation_steps: tuple[int, ...] = (1, 2, 4, 8)
     evaluation_checkpoints: tuple[int, ...] = (2_500, 5_000)
+    source_completed_updates: int = 0
+    scheduler_horizon_steps: int = 0
+    source_checkpoint_path: str = ""
+    source_checkpoint_sha256: str = ""
+    source_checkpoint_commit: str = ""
+    approved_protocol_migration: bool = False
+    historical_checkpoint_paths: tuple[str, ...] = ()
+    historical_checkpoint_sha256s: tuple[str, ...] = ()
 
 
 @dataclass

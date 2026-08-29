@@ -1,0 +1,18 @@
+extends: two_step_rollout_confirmation_base.yaml
+
+checkpoint_dir: /workspace/ckpt/inv023_two_step_rollout_confirmation_treatment
+train:
+  lambda_rollout: 0.10
+runtime:
+  resume: /workspace/ckpt/inv023_two_step_rollout_treatment/phase1_step5000.pt
+wandb:
+  name: Investigation 23 · Rollout endpoint consistency · Confirmation treatment 0.10 to 15,000
+protocol:
+  source_checkpoint_path: /workspace/ckpt/inv023_two_step_rollout_treatment/phase1_step5000.pt
+  source_checkpoint_sha256: 0da168b31fcaf008a3488c3930d205115ebe94495c1fe4097f255fc1b386090f
+  historical_checkpoint_paths:
+    - /workspace/ckpt/inv023_two_step_rollout_treatment/phase1_step2500.pt
+    - /workspace/ckpt/inv023_two_step_rollout_treatment/phase1_step5000.pt
+  historical_checkpoint_sha256s:
+    - 68be8e6376abb5851436740ae2363d965714d720f9952713ddc2c66dbdc2fb52
+    - 0da168b31fcaf008a3488c3930d205115ebe94495c1fe4097f255fc1b386090f

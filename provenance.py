@@ -783,6 +783,8 @@ def compare_checkpoint_provenance(
     expected: dict[str, Any],
     *,
     allow_dataset_transfer: bool = False,
+    allowed_config_changes: frozenset[str] = frozenset(),
+    protocol_migration: dict[str, Any] | None = None,
 ) -> None:
     """Validate resume provenance with an explicit, narrow dataset-transfer policy.
 
@@ -800,6 +802,56 @@ def compare_checkpoint_provenance(
     for label, payload in (("saved", saved), ("expected", expected)):
         if not isinstance(payload, dict) or payload.get("schema") != "hjepa-run-provenance-v1":
             raise ValueError(f"Checkpoint {label} run provenance has an unsupported schema.")
+    if allowed_config_changes:
+        if allow_dataset_transfer:
+            raise ValueError(
+                "Config-change and dataset-transfer resume policies cannot be combined."
+            )
+        required_migration = {
+            "approved",
+            "source_checkpoint_commit",
+            "continuation_implementation_commit",
+            "allowed_config_changes",
+        }
+        if (
+            not isinstance(protocol_migration, dict)
+            or set(protocol_migration) != required_migration
+        ):
+            raise ValueError("Confirmation resume requires explicit protocol-migration provenance.")
+        if protocol_migration["approved"] is not True:
+            raise ValueError("Confirmation protocol migration is not explicitly approved.")
+        if protocol_migration["allowed_config_changes"] != sorted(allowed_config_changes):
+            raise ValueError("Protocol migration does not match allowed continuation fields.")
+        saved_common = json.loads(json.dumps(saved.get("common", {})))
+        expected_common = json.loads(json.dumps(expected.get("common", {})))
+        saved_runtime = saved_common.pop("runtime", {})
+        expected_runtime = expected_common.pop("runtime", {})
+        source_commit = protocol_migration["source_checkpoint_commit"]
+        implementation_commit = protocol_migration["continuation_implementation_commit"]
+        if (
+            saved_runtime.get("git_commit") != source_commit
+            or saved_runtime.get("git_dirty") is not False
+        ):
+            raise ValueError("Source checkpoint was not produced by the approved clean commit.")
+        if (
+            expected_runtime.get("git_commit") != implementation_commit
+            or expected_runtime.get("git_dirty") is not False
+        ):
+            raise ValueError("Continuation implementation must run from its recorded clean commit.")
+        for runtime in (saved_runtime, expected_runtime):
+            runtime.pop("git_commit", None)
+            runtime.pop("git_dirty", None)
+        if saved_runtime != expected_runtime:
+            raise ValueError(
+                "Checkpoint runtime differs beyond the approved code revision migration."
+            )
+        for common in (saved_common, expected_common):
+            train = (common.get("config") or {}).get("train") or {}
+            for field_name in allowed_config_changes:
+                train.pop(field_name, None)
+        if saved_common != expected_common:
+            raise ValueError("Checkpoint provenance differs beyond allowed continuation fields.")
+        return
     if not allow_dataset_transfer:
         if saved.get("common_identity") != expected.get("common_identity"):
             raise ValueError("Checkpoint run provenance differs in encoder-independent fields.")
